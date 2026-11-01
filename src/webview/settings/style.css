@@ -467,26 +467,7 @@ td.cap {
   margin: 0 0 0 148px !important;
 }
 
-/* ── curated catalog — filter toolbar over compact rows, one expandable
-   connect form ─────────────────────────────────────────────────────── */
-.cat-filter {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 2px 0 8px;
-}
-
-.cat-row {
-  padding: 8px 0;
-  border-top: 1px solid var(--pb-border);
-}
-
-.cat-filter + .cat-row {
-  border-top: none;
-  padding-top: 2px;
-}
-
+/* ── a curated entry's details in the add card ──────────────────────── */
 /* the entry's one-line description, under its header row, indented to the
    name (icon width + row gap) */
 .cat-desc {

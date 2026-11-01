@@ -15,8 +15,8 @@ import {
   parseLines,
   type CurrentFileInfo,
   type DiagnosticInfo,
-  type McpServerTokenParams,
-  type McpServerTokenResult,
+  type McpServerHeadersParams,
+  type McpServerHeadersResult,
   type IpcNotification,
   type IpcRequest,
   type IpcResponse,
@@ -60,10 +60,11 @@ export interface IpcHostHooks {
    * session that is gone. */
   sessionRoots(contextToken: string): readonly string[];
   /** The one other thing spawned subprocesses need from the extension host
-   * that isn't editor state: a currently-valid credential for an MCP
-   * server — only for a bridge the server was given to under this token,
-   * refreshed transparently if needed. */
-  getMcpServerToken(contextToken: string, patchbayMcpServerId: PatchbayMcpServerId): Promise<McpServerTokenResult | null>;
+   * that isn't editor state: the headers a request to an MCP server
+   * carries, a currently-valid credential among them — only for a bridge
+   * the server was given to under this token, refreshed transparently if
+   * needed. */
+  getMcpServerHeaders(contextToken: string, patchbayMcpServerId: PatchbayMcpServerId): Promise<McpServerHeadersResult | null>;
 }
 
 export class IpcHost {
@@ -151,10 +152,10 @@ export class IpcHost {
           request.contextToken,
           request.params as RequestUserInputParams,
         );
-      case "getMcpServerToken":
-        return this.hooks.getMcpServerToken(
+      case "getMcpServerHeaders":
+        return this.hooks.getMcpServerHeaders(
           request.contextToken,
-          (request.params as McpServerTokenParams).patchbayMcpServerId,
+          (request.params as McpServerHeadersParams).patchbayMcpServerId,
         );
     }
   }

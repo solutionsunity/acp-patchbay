@@ -21,11 +21,9 @@ export const IPC_ENV = {
   socket: "ACP_PATCHBAY_IPC",
   /** The session the process serves. */
   contextToken: "ACP_PATCHBAY_CONTEXT_TOKEN",
-  /** A bridged server's id, its URL, and how its credential goes on the wire. */
+  /** A bridged server's id and its URL. */
   serverId: "ACP_PATCHBAY_MCP_SERVER_ID",
   serverUrl: "ACP_PATCHBAY_MCP_SERVER_URL",
-  authHeader: "ACP_PATCHBAY_AUTH_HEADER",
-  authPrefix: "ACP_PATCHBAY_AUTH_PREFIX",
 } as const;
 
 /** Where the channel named `name` listens: a named pipe on Windows, which
@@ -50,22 +48,24 @@ export interface IpcRequest {
     | "getRoots"
     | "watchRoots"
     | "requestUserInput"
-    | "getMcpServerToken";
+    | "getMcpServerHeaders";
   params?: unknown;
 }
 
-/** Params of `getMcpServerToken`: which server's credential the
- * bridge is presenting. */
-export interface McpServerTokenParams {
+/** Params of `getMcpServerHeaders`: which server the bridge is sending
+ * a request to. */
+export interface McpServerHeadersParams {
   patchbayMcpServerId: PatchbayMcpServerId;
 }
 
-/** Result of `getMcpServerToken` — null unless the server was given to
- * the caller's attach through the bridge and is still connected, switched
- * on and reaching that agent (never silently substitutes another one's
- * credential, never partially connects). */
-export interface McpServerTokenResult {
-  accessToken: string;
+/** Result of `getMcpServerHeaders` — the headers the request carries, a
+ * credential among them, fresh: a sign-in's token refreshed when near its
+ * expiry. Null unless the server was given to the caller's attach through
+ * the bridge and is still connected, on in this workspace and reaching
+ * that agent (never silently substitutes another one's credential, never
+ * partially connects). */
+export interface McpServerHeadersResult {
+  headers: Record<string, string>;
 }
 
 /** Result of `getRoots`: the session's complete root list — the cwd, the

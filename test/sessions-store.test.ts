@@ -3391,7 +3391,7 @@ describe("context tokens — what the IPC socket admits (#72)", () => {
     const h = harness();
     const configs = h.stores.mcpServerConfigs;
     const routed = { routing: "auto", workspaces: "auto", transport: "auto" } as const;
-    await configs.upsert({ id: "remote" as PatchbayMcpServerId, name: "Remote", source: { kind: "custom-http", url: "http://127.0.0.1:9/mcp", authType: "none", headerName: "Authorization", valuePrefix: "Bearer " }, ...routed });
+    await configs.upsert({ id: "remote" as PatchbayMcpServerId, name: "Remote", source: { kind: "custom-http", url: "http://127.0.0.1:9/mcp", oauth: false }, ...routed });
     await configs.upsert({ id: "local" as PatchbayMcpServerId, name: "Local", source: { kind: "custom-stdio", command: process.execPath, args: [] }, ...routed });
     const composing = vi.spyOn(h.orchestrator.mcpServers, "mcpServersFor");
     return { ...h, minted: () => composing.mock.calls.map(([, contextToken]) => contextToken) };

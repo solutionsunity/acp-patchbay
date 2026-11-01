@@ -60,6 +60,7 @@ export interface OrchestratorHarness {
     authLocks: AuthLockStore;
     mcpServerConfigs: McpServerConfigStore;
     mcpServerTokens: McpServerTokenStore;
+    mcpServerHeaders: SecretEnvStore;
     sessionFiles: SessionFilesStore;
     usedCapabilities: UsedCapabilityStore;
     composerKnobs: ComposerKnobsStore;
@@ -176,6 +177,7 @@ export function orchestratorHarness(cwd: string, opts: OrchestratorHarnessOption
     authLocks: new AuthLockStore(machineKV),
     mcpServerConfigs: new McpServerConfigStore(machineKV),
     mcpServerTokens: new McpServerTokenStore(secrets),
+    mcpServerHeaders: new SecretEnvStore(secrets, SECRET_FAMILIES.mcpServer, () => {}, "headers"),
     sessionFiles: new SessionFilesStore(join(paths.globalStorage, "session-files")),
     usedCapabilities: new UsedCapabilityStore(machineKV),
     composerKnobs: new ComposerKnobsStore(machineKV),

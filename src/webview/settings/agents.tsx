@@ -4,8 +4,8 @@
 // Agents: stat tiles + Add Agent, one card per known
 // agent — status live, capabilities claimed-until-exercised, knobs offering
 // only what the agent actually offered.
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import type { AgentConfigView, AgentSummary, AuthMethodView, RegistryAgentView, SettingsState } from "../../shared/protocol";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import type { AgentConfigView, AgentSummary, AuthMethodView, SettingsState } from "../../shared/protocol";
 import { formatCommandLine } from "../../shared/command-line";
 import { count } from "../../shared/count";
 import { agentCardControls, runnableLoginMethods } from "./card-controls";
@@ -18,12 +18,10 @@ import { VersionChip } from "../shared/version-chip";
 import { Field, Toggle } from "./controls";
 import { formatEnvLines, parseEnvLines } from "./parse-env";
 import { SortableItem, SortableList } from "./sortable";
+import { AddTiles, SearchPicker } from "./add-controls";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type { PatchbayAgentId } from "../../shared/ids";
@@ -149,103 +147,6 @@ function AgentIcon({ icon }: { icon: string | null | undefined }) {
   return <span aria-hidden className="inline-block h-4 w-4 shrink-0" style={mask} />;
 }
 
-/** Searchable registry picker — the "Add Agent" full scenario: type to
- * filter, click to pick, clear to search again. Fully
- * controlled — the only local state is whether the dropdown is open, so a
- * parent reset (after Add, or on mode toggle) can't leave it out of sync. */
-function RegistryCombobox(props: {
-  entries: readonly RegistryAgentView[];
-  /** Registry ids an agent was already added from — marked, never hidden:
-   * adding one again adds a second agent. */
-  added: ReadonlySet<string>;
-  query: string;
-  selectedId: string;
-  onQueryChange(query: string): void;
-  onSelect(registryId: string): void; // "" clears the selection
-  /** The dropdown opened: the list is about to be read. */
-  onBrowse(): void;
-}) {
-  const [open, setOpen] = useState(false);
-  const selected = props.entries.find((r) => r.id === props.selectedId);
-
-  return (
-    <div className="flex items-center gap-1.5">
-      <Popover
-        open={open}
-        onOpenChange={(next) => {
-          setOpen(next);
-          if (next) props.onBrowse();
-        }}
-      >
-        <PopoverTrigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
-            role="combobox"
-            aria-expanded={open}
-            className="w-72 justify-between font-normal"
-          >
-            {selected !== undefined ? selected.name : "search the registry…"}
-            <Icon name="chevron-down" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-72 p-0" align="start">
-          <Command>
-            <CommandInput
-              placeholder="search the registry…"
-              value={props.query}
-              onValueChange={(q) => {
-                props.onQueryChange(q);
-                if (props.selectedId !== "") props.onSelect("");
-              }}
-            />
-            <CommandList>
-              <CommandEmpty>
-                {props.entries.length === 0
-                  ? "no registry agents — try Refresh registry"
-                  : `no matches for \u201c${props.query}\u201d`}
-              </CommandEmpty>
-              {props.entries.map((r) => (
-                <CommandItem
-                  key={r.id}
-                  value={r.name}
-                  disabled={r.unavailableReason !== null}
-                  title={r.description}
-                  onSelect={() => {
-                    props.onSelect(r.id);
-                    props.onQueryChange(r.name);
-                    setOpen(false);
-                  }}
-                >
-                  {r.id === props.selectedId && <Icon name="check" />}
-                  <AgentIcon icon={r.icon} />
-                  {r.name}
-                  {props.added.has(r.id) && <span className="note"> — added</span>}
-                  {r.unavailableReason !== null && <span className="note"> — {r.unavailableReason}</span>}
-                </CommandItem>
-              ))}
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
-      {props.selectedId !== "" && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          aria-label="Clear selection"
-          onClick={() => {
-            props.onSelect("");
-            props.onQueryChange("");
-          }}
-        >
-          <Icon name="close" />
-        </Button>
-      )}
-    </div>
-  );
-}
-
 /** Registry search or custom command — the one way
  * to add an agent, which is also how it's activated: persisted, connected,
  * and (by default) Verified in one action. A registry agent already added
@@ -305,9 +206,17 @@ function AddAgentRow(props: {
       )}
       <div className="connect-form mt-2">
         {mode === "registry" ? (
-          <RegistryCombobox
-            entries={props.state.registryAgents}
-            added={added}
+          <SearchPicker
+            entries={props.state.registryAgents.map((r) => ({
+              id: r.id,
+              name: r.name,
+              description: r.description,
+              icon: <AgentIcon icon={r.icon} />,
+              added: added.has(r.id),
+              unavailable: r.unavailableReason,
+            }))}
+            placeholder="search the registry…"
+            emptySource="no registry agents — try Refresh registry"
             query={registryQuery}
             selectedId={registryId}
             onQueryChange={setRegistryQuery}
@@ -396,34 +305,6 @@ function LoginControl(props: {
         Log in
       </Button>
     </span>
-  );
-}
-
-/** Stat tiles + whatever rides the same row (the Add Agent tile-button) —
- * one container so they share sizing and rhythm. The first surface converted
- * to shadcn primitives. */
-const TILE = "min-w-24 flex-none rounded-lg px-4 py-2.5 text-center";
-
-function StatTiles({ state, children }: { state: SettingsState; children?: ReactNode }) {
-  const running = state.agents.filter((a) => a.status === "running").length;
-  const tiles = [
-    { n: state.agents.length, label: "agents", icon: "hubot" },
-    { n: running, label: "running", icon: "pulse" },
-    { n: state.sessionsActiveToday, label: "active today", icon: "comment-discussion" },
-  ];
-  return (
-    <div className="mb-3.5 flex flex-wrap gap-2.5">
-      {tiles.map((t) => (
-        <Card className={TILE} key={t.label}>
-          <div className="flex items-center justify-center gap-1.5 text-[22px] font-semibold">
-            <span className="text-muted-foreground"><Icon name={t.icon} /></span>
-            {t.n}
-          </div>
-          <div className="text-[11px] text-muted-foreground">{t.label}</div>
-        </Card>
-      ))}
-      {children}
-    </div>
   );
 }
 
@@ -577,22 +458,16 @@ export function AgentsSection(props: {
         Any command line that speaks ACP. Status is live; capabilities are
         claimed until exercised.
       </div>
-      <StatTiles state={state}>
-        {/* Add Agent as a tile-shaped Button — same box as the counter
-            Cards, but it reads as an action: accent icon, hover lift.
-            ml-auto: the action tile sits right, the counters stay left. */}
-        <Button
-          variant="outline"
-          className={`${TILE} ml-auto h-auto flex-col items-center gap-0 border-border bg-card font-normal text-foreground shadow-sm hover:border-brand hover:bg-accent hover:text-foreground aria-expanded:border-brand aria-expanded:bg-accent`}
-          onClick={() => setAddOpen(!addOpen)}
-          aria-expanded={addOpen}
-        >
-          <div className="text-[22px] font-semibold text-brand">
-            <Icon name={addOpen ? "chevron-up" : "add"} />
-          </div>
-          <div className="text-[11px] text-muted-foreground">{addOpen ? "close" : "add agent"}</div>
-        </Button>
-      </StatTiles>
+      <AddTiles
+        tiles={[
+          { n: state.agents.length, label: "agents", icon: "hubot" },
+          { n: state.agents.filter((a) => a.status === "running").length, label: "running", icon: "pulse" },
+          { n: state.sessionsActiveToday, label: "active today", icon: "comment-discussion" },
+        ]}
+        addLabel="add agent"
+        open={addOpen}
+        onToggle={() => setAddOpen(!addOpen)}
+      />
       {addOpen && (
         <AddAgentRow
           state={state}

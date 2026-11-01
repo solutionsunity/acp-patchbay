@@ -17,7 +17,7 @@
 // top process.
 import type { ChildProcess } from "node:child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
@@ -31,7 +31,7 @@ import { PRODUCT } from "../shared/product";
 type StdioTarget = { kind: "stdio"; command: string; args: readonly string[]; env: Readonly<Record<string, string>>; cwd: string };
 
 export type ProbeTarget =
-  | { kind: "http"; url: string; header: { name: string; value: string } | null }
+  | { kind: "http"; url: string; headers: Readonly<Record<string, string>> }
   /** Probing stdio means *executing* the configured command — only ever on
    * the user's explicit act (connect, switching it on, refresh), never on a sweep.
    * `cwd` is required, never defaulted: the probe is only truthful if it
@@ -47,6 +47,12 @@ export interface ProbeOutcome {
 }
 
 export type ProbeFn = (target: ProbeTarget, signal?: AbortSignal, log?: Logger) => Promise<ProbeOutcome>;
+
+/** Whether a remote server turned the handshake away asking for a sign-in
+ * — a 401, which MCP's authorization answers with its discovery. */
+export function asksForSignIn(err: unknown): boolean {
+  return err instanceof StreamableHTTPError && err.code === 401;
+}
 
 /** No limit of ours on the handshake: it ends when the server answers, its
  * process ends, the network fails it, or the user stops it. The SDK sets a
@@ -161,10 +167,7 @@ export async function probeMcpServer(target: ProbeTarget, signal?: AbortSignal, 
     target.kind === "http"
       ? new StreamableHTTPClientTransport(new URL(target.url), {
           fetch: doorFetch({ log, what: "MCP probe", class: "essential" }),
-          requestInit:
-            target.header !== null
-              ? { headers: { [target.header.name]: target.header.value } }
-              : undefined,
+          requestInit: Object.keys(target.headers).length > 0 ? { headers: { ...target.headers } } : undefined,
         })
       : new ChildTransport(target);
   const client = new Client(PRODUCT);

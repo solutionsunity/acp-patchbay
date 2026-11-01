@@ -76,7 +76,13 @@ describe("reading a configuration file", () => {
     expect(r.savedRoots).toEqual([{ path: "/home/me/notes", workspaces: "auto" }]);
     expect(r.secrets).toEqual({
       agents: { claude: { ANTHROPIC_API_KEY: "sk-1" } },
-      mcpServers: { keyed: { env: {}, key: "secret-abc" }, local: { env: { TOKEN: "t-1" } }, context7: { env: {}, key: "ctx-key" } },
+      // A custom server's key, written beside the header its record named,
+      // reads as that header; a curated entry's key stays its key.
+      mcpServers: {
+        keyed: { env: {}, headers: { Authorization: "Bearer secret-abc" } },
+        local: { env: { TOKEN: "t-1" }, headers: {} },
+        context7: { env: {}, headers: {}, key: "ctx-key" },
+      },
     });
   });
 

@@ -3,11 +3,12 @@
 
 // Env-var *values* live in SecretStorage: env is how
 // agents and stdio MCP servers commonly take API keys, and the machine store is
-// for non-sensitive config only — so config records carry no env at all.
-// One JSON record per id, one instance per record family (agents:
-// `acpPatchbay.agent.<id>.env`, MCP servers:
-// `acpPatchbay.integration.<id>.env` — the same key family the token store
-// uses, under the name the values were first stored by). Values are read at
+// for non-sensitive config only — so config records carry no env at all. A
+// remote MCP server's headers are the same kind of map, carrying its key,
+// and live the same way. One JSON record per id, one instance per record
+// family and map (agents: `acpPatchbay.agent.<id>.env`, MCP servers:
+// `acpPatchbay.integration.<id>.env` and `….headers` — the same key family
+// the token store uses, under the name the values were first stored by). Values are read at
 // the moment reality needs them — agent spawn (agents-store.ts connect),
 // MCP-server attach (mcp-servers-store.ts mcpServersFor) — and shown back to
 // their owner in the Settings forms.
@@ -25,10 +26,14 @@ export class SecretEnvStore {
     /** Where a malformed stored record is reported — by its id, never its
      * value. */
     private readonly log: (message: string) => void = () => {},
+    /** What the map is — the key's last part: a launch's `env`, or the
+     * `headers` a remote MCP server is sent (names to whole values, a key
+     * among them). */
+    private readonly what: "env" | "headers" = "env",
   ) {}
 
   private key(id: string): string {
-    return `${this.prefix}.${id}.env`;
+    return `${this.prefix}.${id}.${this.what}`;
   }
 
   async get(id: string): Promise<Record<string, string>> {
@@ -44,7 +49,7 @@ export class SecretEnvStore {
     if (env.success) return env.data;
     // Never trusted blind, never gone in silence: reported by its id, since
     // the value is a secret.
-    this.log(`the stored env for ${id} is malformed — read as empty`);
+    this.log(`the stored ${this.what} for ${id} is malformed — read as empty`);
     return {};
   }
 

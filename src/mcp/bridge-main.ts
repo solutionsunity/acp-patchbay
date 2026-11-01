@@ -8,7 +8,7 @@
 // declared support is broken). Spawned by the *agent* as an mcpServers
 // entry, exactly like
 // src/mcp/server-main.ts — plain Node, no vscode import, reaches the
-// orchestrator only through the same IPC socket for a fresh token and the
+// orchestrator only through the same IPC socket for the server's headers and the
 // session's roots.
 //
 // A pipe between two MCP SDK transports, not a protocol implementation:
@@ -38,48 +38,38 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { IpcClient } from "./ipc-client";
-import { IPC_ENV, type McpServerTokenParams, type RootsResult } from "./ipc-protocol";
+import { IPC_ENV, type McpServerHeadersParams, type McpServerHeadersResult, type RootsResult } from "./ipc-protocol";
 import type { PatchbayMcpServerId } from "../shared/ids";
 
 const socketPath = process.env[IPC_ENV.socket] ?? "";
 const contextToken = process.env[IPC_ENV.contextToken] ?? "";
 const patchbayMcpServerId = (process.env[IPC_ENV.serverId] ?? "") as PatchbayMcpServerId;
 const url = process.env[IPC_ENV.serverUrl] ?? "";
-// How the credential rides the request — per-server data, since not
-// every service takes `Authorization: Bearer` (Stitch wants a raw key in
-// `X-Goog-Api-Key`). Absent header name =
-// this server sends no credential at all (authType "none").
-const authHeader = process.env[IPC_ENV.authHeader] ?? "";
-const authPrefix = process.env[IPC_ENV.authPrefix] ?? "";
 
 let onRootsChanged: () => void = () => {};
 const ipc = new IpcClient(socketPath, contextToken, () => onRootsChanged());
 
-async function currentToken(): Promise<string | null> {
-  if (authHeader === "") return null;
-  const params: McpServerTokenParams = { patchbayMcpServerId };
-  const result = (await ipc.request("getMcpServerToken", params)) as { accessToken: string } | null;
-  return result?.accessToken ?? null;
+/** The server's headers as patchbay holds them now — a key, a fresh
+ * sign-in token — or none, when it no longer gives the server to this
+ * session. Per-server data: not every service takes `Authorization:
+ * Bearer` (Stitch wants a raw key in `X-Goog-Api-Key`). */
+async function currentHeaders(): Promise<Record<string, string>> {
+  const params: McpServerHeadersParams = { patchbayMcpServerId };
+  const result = (await ipc.request("getMcpServerHeaders", params)) as McpServerHeadersResult | null;
+  return result?.headers ?? {};
 }
 
-/** The SDK transport's fetch, with the credential injected fresh per request
- * — the token never sits in a header object that outlives one call. On 401
- * the orchestrator refreshes transparently inside getMcpServerToken, so
- * one immediate retry distinguishes "patchbay held a stale token" from "the
- * server rejected a fresh one". */
+/** The SDK transport's fetch, with the headers injected fresh per request
+ * — a credential never sits in a header object that outlives one call. On
+ * 401 the orchestrator refreshes transparently inside getMcpServerHeaders,
+ * so one immediate retry distinguishes "patchbay held a stale token" from
+ * "the server rejected a fresh one". */
 async function authedFetch(input: string | URL, init?: RequestInit): Promise<Response> {
-  const attempt = async (token: string | null) =>
-    fetch(input, {
-      ...init,
-      headers: {
-        ...Object.fromEntries(new Headers(init?.headers).entries()),
-        ...(token !== null ? { [authHeader]: `${authPrefix}${token}` } : {}),
-      },
-    });
-  let response = await attempt(await currentToken());
-  if (response.status === 401 && authHeader !== "") {
-    response = await attempt(await currentToken());
-  }
+  const attempt = async (headers: Record<string, string>) =>
+    fetch(input, { ...init, headers: { ...Object.fromEntries(new Headers(init?.headers).entries()), ...headers } });
+  const first = await currentHeaders();
+  let response = await attempt(first);
+  if (response.status === 401 && Object.keys(first).length > 0) response = await attempt(await currentHeaders());
   return response;
 }
 

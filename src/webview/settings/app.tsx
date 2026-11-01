@@ -143,21 +143,12 @@ export function App({ state }: { state: SettingsState }) {
         {section === "mcpServers" && (
           <McpServersSection
             state={state}
-            onConnectKey={(catalogId, name, token, url, workspaces) =>
-              send({ kind: "connectCatalogKey", catalogId, name, token, url, workspaces })
+            onConnectKey={(catalogId, name, token, url, reach) =>
+              send({ kind: "connectCatalogKey", catalogId, name, token, url, ...reach })
             }
-            onConnectOAuth={(catalogId, name, url, workspaces) =>
-              send({ kind: "connectCatalogOAuth", catalogId, name, url, workspaces })
-            }
-            onAddCustom={(name, source, routing, workspaces) =>
-              send({ kind: "addCustomMcpServer", name, source, routing, workspaces })
-            }
-            onImportJson={(json) => send({ kind: "importMcpServersJson", json })}
-            onAddImported={(importId, names, workspaces) => send({ kind: "addImportedMcpServers", importId, names, workspaces })}
-            onCancelImport={(importId) => send({ kind: "cancelMcpServersImport", importId })}
-            onUpdateJson={(patchbayMcpServerId, json) =>
-              send({ kind: "updateMcpServerJson", patchbayMcpServerId, json })
-            }
+            onConnectOAuth={(catalogId, name, url, reach) => send({ kind: "connectCatalogOAuth", catalogId, name, url, ...reach })}
+            onAddCustom={(card, name, draft, reach, signIn) => send({ kind: "addCustomMcpServer", card, name, draft, ...reach, signIn })}
+            onUpdate={(patchbayMcpServerId, draft, signIn) => send({ kind: "updateMcpServer", patchbayMcpServerId, draft, signIn })}
             onCancelConnect={(key) =>
               send({ kind: "cancelMcpServerConnect", key })
             }

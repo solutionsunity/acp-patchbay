@@ -118,22 +118,22 @@ describe("an import's plan", () => {
       ...empty,
       agents: [{ ...claude, id: "local-claude" as PatchbayAgentId }],
       mcpServers: [{ ...local, id: "here" as PatchbayMcpServerId, routing: ["local-claude" as PatchbayAgentId] } satisfies McpServerConfig],
-      serverSecrets: { here: { env: { TOKEN: "t-1" } } },
+      serverSecrets: { here: { env: { TOKEN: "t-1" }, headers: {} } },
     }, here);
     expect(of(plan, "mcpServer:local")).toMatchObject({ fate: "unchanged" });
     expect(plan.serverIds.get("local")).toBe("here");
   });
 
-  it("a header server's key and where a server is on are compared; an OAuth sign-in never is", async () => {
+  it("a server's headers and where it is on are compared; an OAuth sign-in never is", async () => {
     const read = await golden();
     const keyed = read.mcpServers.find((s) => s.id === "keyed")!;
     const github = read.mcpServers.find((s) => s.id === "github")!;
     const plan = planImport(read, {
       ...empty,
       mcpServers: [{ ...keyed, workspaces: [] }, github],
-      serverSecrets: { keyed: { env: {}, key: "older-key" } },
+      serverSecrets: { keyed: { env: {}, headers: { Authorization: "Bearer older-key" } } },
     }, here);
-    expect(of(plan, "mcpServer:keyed").differs).toEqual(["where it is on", "API key"]);
+    expect(of(plan, "mcpServer:keyed").differs).toEqual(["where it is on", "headers"]);
     expect(of(plan, "mcpServer:github")).toMatchObject({ fate: "unchanged", flags: [] });
   });
 

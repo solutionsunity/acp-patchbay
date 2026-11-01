@@ -350,7 +350,11 @@ export class SessionsStore {
     private readonly mcpServersFor: (
       contextToken: string,
       patchbayAgentId: PatchbayAgentId,
-    ) => Promise<{ servers: McpServer[]; given: readonly AttachedServer[] }> = async () => ({ servers: [], given: [] }),
+    ) => Promise<{ servers: McpServer[]; given: readonly AttachedServer[]; withheld: readonly string[] }> = async () => ({
+      servers: [],
+      given: [],
+      withheld: [],
+    }),
     /** Output-channel seam (logger.ts). */
     private readonly log: Logger = nullLogger,
   ) {
@@ -585,10 +589,12 @@ export class SessionsStore {
      * session then has none, a reattached one keeps what it holds. */
     knobs: NormalizedKnobs | undefined;
     missing: string[];
+    /** Why each server that couldn't be given wasn't. */
+    withheld: readonly string[];
   }> {
     // Unguessable: the token is what the IPC socket admits a request by.
     const contextToken = randomUUID();
-    const { servers: mcpServers, given } = await unlessAborted(this.mcpServersFor(contextToken, patchbayAgentId), signal);
+    const { servers: mcpServers, given, withheld } = await unlessAborted(this.mcpServersFor(contextToken, patchbayAgentId), signal);
     this.tokens.set(contextToken, {
       patchbayAgentId,
       given,
@@ -622,6 +628,7 @@ export class SessionsStore {
         contextToken,
         knobs: r.knobs,
         missing,
+        withheld,
       };
     }
     const sessionId = this.known.get(target.patchbaySessionId)?.sessionId;
@@ -635,12 +642,13 @@ export class SessionsStore {
       signal,
     );
     this.hooks.onRealSessionAttached?.(patchbayAgentId, sessionId);
-    this.sayMissingRoots(target.patchbaySessionId, missing);
+    this.sayLeftOut(target.patchbaySessionId, missing, withheld);
     return {
       sessionId,
       contextToken,
       knobs: r.knobs,
       missing,
+      withheld,
     };
   }
 
@@ -680,17 +688,22 @@ export class SessionsStore {
     return this.hooks.rootExists?.(path) ?? true;
   }
 
-  /** Says, in the session, which roots its last lifecycle request skipped
-   * — never a silent narrowing of what the user set up. */
-  private sayMissingRoots(patchbaySessionId: PatchbaySessionId, missing: readonly string[]): void {
-    if (missing.length === 0) return;
+  /** Says, in the session, what its last lifecycle request left out —
+   * the roots gone from disk, the MCP servers that couldn't be given —
+   * never a silent narrowing of what the user set up. */
+  private sayLeftOut(patchbaySessionId: PatchbaySessionId, missing: readonly string[], withheld: readonly string[]): void {
+    const texts = [
+      ...(missing.length === 0
+        ? []
+        : [
+            `Not found on disk, so neither the agent nor the MCP servers got ${missing.length === 1 ? "this root" : "these roots"}: ${missing.join(", ")}. Restore the folder, or remove it from the roots (saved ones in Settings › Saved roots).`,
+          ]),
+      ...withheld,
+    ];
+    if (texts.length === 0) return;
     const blocks = this.hooks.currentTranscript?.(patchbaySessionId) ?? [];
-    const marker: ChatBlock = {
-      kind: "patchbayNotice",
-      id: newBlockId("patchbay"),
-      text: `Not found on disk, so neither the agent nor the MCP servers got ${missing.length === 1 ? "this root" : "these roots"}: ${missing.join(", ")}. Restore the folder, or remove it from the roots (saved ones in Settings › Saved roots).`,
-    };
-    this.stream.emitter(patchbaySessionId)({ kind: "transcriptSeeded", patchbaySessionId, blocks: [...blocks, marker] });
+    const markers: ChatBlock[] = texts.map((text) => ({ kind: "patchbayNotice", id: newBlockId("patchbay"), text }));
+    this.stream.emitter(patchbaySessionId)({ kind: "transcriptSeeded", patchbaySessionId, blocks: [...blocks, ...markers] });
   }
 
   /** Says, at the end of a transcript its agent replayed, that a turn its
@@ -746,7 +759,7 @@ export class SessionsStore {
 
   private async mintSession(patchbayAgentId: PatchbayAgentId, agentName: string, cwd: string): Promise<PatchbaySessionId> {
     const saved = this.savedRootsFor(cwd);
-    const { sessionId, contextToken, knobs, missing } = await this.attachSession({ via: "new" }, patchbayAgentId, {
+    const { sessionId, contextToken, knobs, missing, withheld } = await this.attachSession({ via: "new" }, patchbayAgentId, {
       cwd,
       roots: [...this.rootsFor(null, cwd), ...saved],
     });
@@ -772,7 +785,7 @@ export class SessionsStore {
       this.save(patchbaySessionId, { roots: seeded });
       this.hooks.emit({ kind: "contextRootsChanged", patchbaySessionId, roots: seeded });
     }
-    this.sayMissingRoots(patchbaySessionId, missing);
+    this.sayLeftOut(patchbaySessionId, missing, withheld);
     this.hooks.rootsChanged?.(patchbaySessionId);
     this.log.info(`session ${patchbaySessionId} created with ${patchbayAgentId}`);
     this.publishKnobs(patchbaySessionId, knobs ?? NO_KNOBS);
@@ -794,7 +807,7 @@ export class SessionsStore {
     if (parent === undefined) throw new Error(`unknown session ${patchbaySessionId}`);
     const { patchbayAgentId } = parent;
     const added = this.addedRootsOf(patchbaySessionId);
-    const { sessionId, contextToken, knobs, missing } = await this.attachSession(
+    const { sessionId, contextToken, knobs, missing, withheld } = await this.attachSession(
       { via: "fork", from: patchbaySessionId },
       patchbayAgentId,
       {},
@@ -819,7 +832,7 @@ export class SessionsStore {
     });
     this.save(forkId, { forkedFrom: parent.sessionId, ...(added.length > 0 ? { roots: added } : {}) });
     if (added.length > 0) this.hooks.emit({ kind: "contextRootsChanged", patchbaySessionId: forkId, roots: added });
-    this.sayMissingRoots(forkId, missing);
+    this.sayLeftOut(forkId, missing, withheld);
     this.hooks.rootsChanged?.(forkId);
     this.log.info(`session ${forkId} forked from ${patchbaySessionId} with ${patchbayAgentId}`);
     this.publishKnobs(forkId, knobs ?? NO_KNOBS);
@@ -1819,7 +1832,7 @@ export class SessionsStore {
     const row = this.known.get(patchbaySessionId);
     if (row === undefined) throw new Error(`unknown session ${patchbaySessionId}`);
     const { patchbayAgentId, sessionId: was } = row;
-    const { sessionId, contextToken, knobs, missing } = await this.attachSession(
+    const { sessionId, contextToken, knobs, missing, withheld } = await this.attachSession(
       { via: "new" },
       patchbayAgentId,
       { roots: this.rootsFor(patchbaySessionId, this.cwd()) },
@@ -1854,7 +1867,7 @@ export class SessionsStore {
     this.hooks.sessionIdChanged?.(patchbaySessionId);
     // A birth like any other: the session says what was skipped, and its
     // servers hear its list once it exists.
-    this.sayMissingRoots(patchbaySessionId, missing);
+    this.sayLeftOut(patchbaySessionId, missing, withheld);
     this.hooks.rootsChanged?.(patchbaySessionId);
     // The empty shell, only while its process still exists — a dead
     // connection took it along.

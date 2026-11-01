@@ -3,8 +3,8 @@
 
 // What leaves this machine when the user exports their configuration: the
 // machine store's own entries, each under the key it is stored by and as
-// stored there, beside the secrets those entries name — the env values and
-// header keys their owner typed. An OAuth token never leaves: a provider
+// stored there, beside the secrets those entries name — the env values,
+// headers and keys their owner typed. An OAuth token never leaves: a provider
 // that rotates refresh tokens can revoke the sign-in on both machines once
 // the second one refreshes a token the first already spent. The file is
 // the user's to keep and move; nothing in it is shaped for anything but
@@ -56,6 +56,7 @@ export interface ExportSources {
   mcpServers: {
     ids(): readonly string[];
     env(id: string): Promise<Env>;
+    headers(id: string): Promise<Env>;
     headerKey(id: string): Promise<string | undefined>;
   };
 }
@@ -73,7 +74,7 @@ export interface ConfigurationFile {
    * stored has no row. */
   secrets: {
     agents?: Record<string, { env: Env }>;
-    mcpServers?: Record<string, { env?: Env; key?: string }>;
+    mcpServers?: Record<string, { env?: Env; headers?: Env; key?: string }>;
   };
 }
 
@@ -100,12 +101,14 @@ export async function exportConfiguration(
     secrets.agents = agents;
   }
   if (parts.has("mcpServers")) {
-    const servers: Record<string, { env?: Env; key?: string }> = {};
+    const servers: Record<string, { env?: Env; headers?: Env; key?: string }> = {};
     for (const id of sources.mcpServers.ids()) {
       const env = await sources.mcpServers.env(id);
+      const headers = await sources.mcpServers.headers(id);
       const key = await sources.mcpServers.headerKey(id);
       const row = {
         ...(Object.keys(env).length > 0 ? { env } : {}),
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
         ...(key !== undefined ? { key } : {}),
       };
       if (Object.keys(row).length > 0) servers[id] = row;

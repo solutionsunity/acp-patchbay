@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **Adding an MCP server is one card at the top, checked before it's
+  saved.** As on the Agents page, the add tile opens one card: pick a
+  curated server from a search, or add your own as a command, a URL, or
+  JSON — two views of the same server, either way. Pasting several servers
+  opens a card for each. Every add ends on who gets it — the workspaces,
+  then the agents — and is checked against the server first: a wrong key,
+  a failing command or an unset variable leaves nothing stored and the card
+  open with the reason; a server that asks for a sign-in gets a Sign in
+  button; on success the card closes into the new server's card. Editing a
+  server opens the same form. The config is the shape other clients write
+  — `mcpServers` with `type`, `command`, `args`, `env`, `url` and
+  `headers`, read from `servers` too — so pasted `headers` are kept (they
+  were dropped before), and `${VAR}`, `${VAR:-default}` and `${env:VAR}`
+  are filled in from the agent's environment when the server is handed
+  over, never stored filled in; `${input:…}` and `${workspaceFolder}` are
+  refused with the reason, and `type: "sse"` too. A custom server's key
+  moves into the header it was sent in, and an exported file from an
+  earlier version reads the same way. (#130)
 - **MCP servers and saved roots can be on in some workspaces.** Each MCP
   server and each saved root is on in every workspace, in the ones you
   pick, or in every one but those. A server's card switch turns it on or

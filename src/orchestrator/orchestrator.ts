@@ -197,6 +197,7 @@ export class Orchestrator {
   readonly spawnRegistry: SpawnRegistryStore;
   private readonly agentEnv: SecretEnvStore;
   private readonly mcpServerEnv: SecretEnvStore;
+  private readonly mcpServerHeaders: SecretEnvStore;
   readonly acpRegistry: AcpRegistryStore;
   readonly permissionRules: PermissionRulesStore;
   readonly machinePermissionRules: MachineRulesStore;
@@ -309,6 +310,12 @@ export class Orchestrator {
     this.mcpServerEnv = new SecretEnvStore(place.secrets, SECRET_FAMILIES.mcpServer, (m) =>
       log.warn(`MCP server env: ${m}`),
     );
+    this.mcpServerHeaders = new SecretEnvStore(
+      place.secrets,
+      SECRET_FAMILIES.mcpServer,
+      (m) => log.warn(`MCP server headers: ${m}`),
+      "headers",
+    );
     this.mcpServerTokens = new McpServerTokenStore(place.secrets);
     // The management side's tools for MCP servers: a line per server (its
     // probe, its remove) and one per connect under way, and the gates over
@@ -320,8 +327,7 @@ export class Orchestrator {
     const mcpServers = new McpServersStore(
       loadCatalog(),
       this.mcpServerConfigs,
-      this.mcpServerTokens,
-      this.mcpServerEnv,
+      { env: this.mcpServerEnv, headers: this.mcpServerHeaders, tokens: this.mcpServerTokens },
       { emit: (...events) => this.settings.emit(...events) },
       { busy: (patchbayMcpServerId) => serverLine.held(patchbayMcpServerId), connecting: () => connectLine.holding() },
       {
@@ -332,6 +338,7 @@ export class Orchestrator {
       },
       this.workspaceCwd,
       this.workspace,
+      (patchbayAgentId) => this.agentEnv.get(patchbayAgentId),
       {
         redirectUri: () => this.ports.redirectUri(),
         authorize: async (authorizationUrl, state, signal) => {
@@ -633,9 +640,11 @@ export class Orchestrator {
           const patchbaySessionId = this.sessions.sessionOfToken(contextToken);
           return patchbaySessionId === undefined ? [] : this.sessions.rootsOf(patchbaySessionId);
         },
-        getMcpServerToken: (contextToken, patchbayMcpServerId) => {
+        getMcpServerHeaders: async (contextToken, patchbayMcpServerId) => {
           const patchbayAgentId = this.sessions.bridgedTo(contextToken, patchbayMcpServerId);
-          return patchbayAgentId === undefined ? Promise.resolve(null) : this.mcpServers.credentialFor(patchbayMcpServerId, patchbayAgentId);
+          if (patchbayAgentId === undefined) return null;
+          const headers = await this.mcpServers.headersFor(patchbayMcpServerId, patchbayAgentId);
+          return headers === null ? null : { headers };
         },
       },
       ports.editor,
@@ -830,6 +839,7 @@ export class Orchestrator {
       mcpServers: {
         ids: () => this.mcpServerConfigs.list().map((c) => c.id),
         env: (id) => this.mcpServerEnv.get(id),
+        headers: (id) => this.mcpServers.headers(id as PatchbayMcpServerId),
         headerKey: (id) => this.mcpServers.headerKey(id as PatchbayMcpServerId),
       },
     });
@@ -967,6 +977,7 @@ export class Orchestrator {
       mcpServerConfigs: this.mcpServerConfigs,
       mcpServerEnv: this.mcpServerEnv,
       headerKey: (id) => this.mcpServers.headerKey(id as PatchbayMcpServerId),
+      headers: (id) => this.mcpServers.headers(id as PatchbayMcpServerId),
       preferences: this.preferences,
       machineRules: this.machinePermissionRules,
       machineWriteScope: this.machineWriteScope,
@@ -989,7 +1000,6 @@ export class Orchestrator {
       this.agentView.emit({ kind: "sessionClosed", patchbaySessionId: session.id });
     }
     this.agentView.emit({ kind: "chatConnectResolved" });
-    this.mcpServers.dropImport();
     if (this.configImport !== null) {
       this.configImport = null;
       this.settings.emit({ kind: "configImportChanged", configImport: null });

@@ -914,32 +914,23 @@ export class OrchestratorHost {
       // already.
       case "connectCatalogKey":
         void this.orchestrator.mcpServerGates
-          .connectWithKey(action.catalogId, action.name, action.token, action.url, action.workspaces)
+          .connectWithKey(action.catalogId, action.name, action.token, action.url, action)
           .catch(() => {});
         break;
       case "connectCatalogOAuth":
         void this.orchestrator.mcpServerGates
-          .connectOAuth(action.catalogId, action.name, action.url, action.workspaces)
+          .connectOAuth(action.catalogId, action.name, action.url, action)
           .catch(() => {});
         break;
       case "addCustomMcpServer":
         void this.orchestrator.mcpServerGates
-          .addCustom(action.name, action.source, action.routing, action.workspaces)
+          .addCustom(action.card, action.name, action.draft, action, action.signIn)
           .catch(() => {});
         break;
-      case "importMcpServersJson":
-        void this.orchestrator.mcpServerGates.importJson(action.json).catch(this.orchestrator.logCatch("import MCP servers"));
-        break;
-      case "addImportedMcpServers":
+      case "updateMcpServer":
         void this.orchestrator.mcpServerGates
-          .addImported(action.importId, action.names, action.workspaces)
-          .catch(this.orchestrator.logCatch("add imported MCP servers"));
-        break;
-      case "cancelMcpServersImport":
-        void this.orchestrator.mcpServers.cancelImport(action.importId);
-        break;
-      case "updateMcpServerJson":
-        void this.orchestrator.mcpServers.updateFromJson(action.patchbayMcpServerId, action.json);
+          .updateCustom(action.patchbayMcpServerId, action.draft, action.signIn)
+          .catch(() => {});
         break;
       case "cancelMcpServerConnect":
         void this.orchestrator.mcpServerGates.cancel(action.key).catch(this.orchestrator.logCatch(`cancel ${action.key}`));

@@ -42,6 +42,7 @@ async function machine(resolves = true) {
     composerKnobs: new ComposerKnobsStore(kv),
     mcpServerConfigs: new McpServerConfigStore(kv),
     mcpServerEnv: new SecretEnvStore(secrets, SECRET_FAMILIES.mcpServer),
+    mcpServerHeaders: new SecretEnvStore(secrets, SECRET_FAMILIES.mcpServer, () => {}, "headers"),
     mcpServerTokens: new McpServerTokenStore(secrets),
     preferences: new PreferencesStore(kv),
     machineRules: new MachineRulesStore(kv),
@@ -62,12 +63,13 @@ async function machine(resolves = true) {
   const local = () =>
     localConfiguration({
       ...stores,
-      // As McpServersStore reads it: a header server's key only.
+      // As McpServersStore reads it: a curated server's key only.
       headerKey: async (id) => {
         const server = stores.mcpServerConfigs.get(id as PatchbayMcpServerId);
         if (server === undefined || authTypeOf(server.source) !== "header") return undefined;
         return (await stores.mcpServerTokens.get(id as PatchbayMcpServerId))?.accessToken;
       },
+      headers: (id) => stores.mcpServerHeaders.get(id),
     });
   return { stores, targets, local, resolved };
 }
@@ -88,7 +90,7 @@ describe("landing an import", () => {
     expect(m.resolved).toEqual(["6f1c2a9e-3b7d-4e21-9a5f-0c8d2e4b7a13"]);
     // The version an agent last answered with is this machine's to learn.
     expect(m.stores.agentConfigs.get("claude" as PatchbayAgentId)?.lastSeenVersion).toBeNull();
-    expect((await m.stores.mcpServerTokens.get("keyed" as PatchbayMcpServerId))?.accessToken).toBe("secret-abc");
+    expect(await m.stores.mcpServerHeaders.get("keyed")).toEqual({ Authorization: "Bearer secret-abc" });
     expect(await m.stores.mcpServerTokens.get("github" as PatchbayMcpServerId)).toBeNull();
     expect(await m.stores.mcpServerEnv.get("local")).toEqual({ TOKEN: "t-1" });
     expect(m.stores.preferences.get()).toMatchObject({ knobSource: "last-session", idleCloseMinutes: 45 });

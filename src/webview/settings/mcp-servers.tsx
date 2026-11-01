@@ -1,114 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// MCP Servers: curated and custom are the same mechanism, routed per
-// agent; a copied config carries what its owner typed, never an OAuth token.
+// MCP Servers: curated and custom are the same mechanism — on in the
+// workspaces chosen and routed per agent; a copied config carries what
+// its owner typed, never an OAuth token. One add card at the top, as on
+// the Agents page; a custom server's edit opens the same form.
 import { Dot } from "../shared/dot";
 import { useState } from "react";
-import type {
-  McpServerConnectView,
-  McpServerProbeView,
-  McpServerRoutingView,
-  McpServerSourceView,
-  SettingsState,
-} from "../../shared/protocol";
+import type { McpServerProbeView, McpServerRoutingView, SettingsState } from "../../shared/protocol";
 import { count } from "../../shared/count";
-import { addedMcpServerName, mcpServerName } from "../../shared/names";
-import { Icon } from "../shared/icon";
-import { filterCatalog, MECHANISMS, mechanismsOf, type Mechanism } from "./catalog-filter";
-import { ConfirmButton, Field } from "./controls";
-import { AgentScope, WorkspaceScope } from "./scope-control";
-import { parseEnvLines } from "./parse-env";
-import { SortableItem, SortableList } from "./sortable";
-import { Badge, badgeVariants } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
-import type { PatchbayMcpServerId } from "../../shared/ids";
+import type { McpDraft } from "../../shared/mcp-config";
 import { NO_WORKSPACE_TO_SAVE } from "../../shared/protocol";
 import { withOne, type Reach } from "../../shared/reach";
 import type { WorkspaceId } from "../../shared/workspace";
+import type { PatchbayMcpServerId } from "../../shared/ids";
+import { Icon } from "../shared/icon";
 import { whereSaid } from "../shared/where";
-
-/** A curated entry's vendor mark (mcp-catalog.ts's curated-only exception
- * to the Codicons rule — inline SVG, fill=currentColor, so it themes
- * exactly like a codicon). Sized to the codicon grid so it sits in a row
- * like one. */
-function EntryIcon(props: { glyph: { viewBox: string; path: string } }) {
-  return (
-    <svg
-      width={16}
-      height={16}
-      viewBox={props.glyph.viewBox}
-      fill="currentColor"
-      className="shrink-0"
-      aria-hidden="true"
-    >
-      <path d={props.glyph.path} />
-    </svg>
-  );
-}
-
-/** One spelling per mechanism — label and color — worn by the catalog rows
- * and, as toggles, by the catalog filter: the same chip means the same
- * thing in both places. */
-const MECHANISM_LABEL: Record<Mechanism, string> = { key: "key", oauth: "OAuth", local: "local" };
-const MECHANISM_CLASS: Record<Mechanism, string> = {
-  key: "border-consumed/40 text-consumed",
-  oauth: "border-brand/40 text-brand",
-  local: "border-ok/40 text-ok",
-};
-
-function MechanismChip(props: { mechanism: Mechanism }) {
-  return <Badge className={MECHANISM_CLASS[props.mechanism]}>{MECHANISM_LABEL[props.mechanism]}</Badge>;
-}
-
-/** The chip as a filter toggle — lit in its mechanism color when pressed,
- * muted outline otherwise; `aria-pressed` carries the state. */
-function MechanismToggle(props: { mechanism: Mechanism; pressed: boolean; onToggle(): void }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={props.pressed}
-      title={`only entries offering ${MECHANISM_LABEL[props.mechanism]}`}
-      className={cn(
-        badgeVariants(),
-        "cursor-pointer",
-        props.pressed ? cn(MECHANISM_CLASS[props.mechanism], "bg-current/10") : "hover:text-foreground",
-      )}
-      onClick={props.onToggle}
-    >
-      {MECHANISM_LABEL[props.mechanism]}
-    </button>
-  );
-}
-
-/** Who gets a server: the workspaces it is on in, then the agents it is
- * routed to — a session gets it where both say so. */
-function WhoGetsIt(props: {
-  of: string;
-  here: WorkspaceId | null;
-  workspaces: Reach<WorkspaceId>;
-  onWorkspaces(workspaces: Reach<WorkspaceId>): void;
-  agents: SettingsState["agents"];
-  routing: McpServerRoutingView;
-  onRouting(routing: McpServerRoutingView): void;
-}) {
-  return (
-    <div className="mt-2 flex flex-col gap-1.5">
-      <h3 className="m-0 text-[12px] font-semibold" title="a session gets the server where both say so">
-        Who gets it
-      </h3>
-      <WorkspaceScope of={props.of} here={props.here} workspaces={props.workspaces} onChange={props.onWorkspaces} />
-      <span className="note m-0">and</span>
-      <AgentScope agents={props.agents} routing={props.routing} onChange={props.onRouting} />
-    </div>
-  );
-}
+import { AddTiles } from "./add-controls";
+import { ConfirmButton } from "./controls";
+import { EditServerForm, EntryIcon, McpAddCards, WhoGetsIt, type WhoGets } from "./mcp-add";
+import { SortableItem, SortableList } from "./sortable";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 
 /** The connect-time probe read-out (protocol.ts McpServerProbeView) —
  * provider-side truth, always timestamped: "reachable, N tools", never
@@ -206,224 +121,12 @@ function firstLine(text: string): string {
   return line.length > 140 ? `${line.slice(0, 140)}…` : line;
 }
 
-/** Why an MCP server's name is typed once — said wherever one is named. */
-const NAME_IS_FINAL = `it can't be changed later: agents keep the server's tools and "always allow" rules under its name`;
-
-/** An MCP server's name, typed once: it is the key agents keep the
- * server's tools and "always allow" rules under, so it never changes after
- * the add. Shown as the add will store it, while it is typed. */
-function McpNameField(props: { value: string; taken: readonly string[]; onChange(value: string): void }) {
-  const blank = mcpServerName(props.value) === "";
-  return (
-    <>
-      <Field label="name">
-        <Input
-          type="text"
-          placeholder="my-server"
-          value={props.value}
-          onInput={(e) => props.onChange((e.target as HTMLInputElement).value)}
-        />
-      </Field>
-      <div className="note m-0 basis-full">
-        {blank ? (
-          "a name is needed"
-        ) : (
-          <>
-            agents get it as <span className="font-mono">{addedMcpServerName(props.value, props.taken)}</span>
-          </>
-        )}{" "}
-        — {NAME_IS_FINAL}
-      </div>
-    </>
-  );
-}
-
-/** One compact catalog row: name · mechanism chips · Docs · `Connect…`
- * expanding the entry's own form inline. The two mechanisms are presented
- * as the alternatives they are — key paste `— or —` OAuth — never an
- * undifferentiated run of inputs. */
-function CatalogRow(props: {
-  entry: SettingsState["mcpCatalog"][number];
-  /** This entry's connect under way or failed. */
-  flow: McpServerConnectView | undefined;
-  /** The names the servers already stored hold. */
-  taken: readonly string[];
-  expanded: boolean;
-  onToggle(): void;
-  onConnectKey(name: string, token: string, url?: string): void;
-  onConnectOAuth(name: string, url?: string): void;
-  onCancelConnect(): void;
-  onUseLocal(): void;
-}) {
-  const { entry, flow } = props;
-  const [name, setName] = useState(entry.name);
-  const [key, setKey] = useState("");
-  const [url, setUrl] = useState("");
-  const pending = flow?.status === "running";
-  const nameMissing = mcpServerName(name) === "";
-  const userUrlValue = entry.userUrl ? url.trim() : undefined;
-  const urlMissing = entry.userUrl && url.trim() === "";
-  // A gated remote with a verified local server is still connectable —
-  // locally (Figma: remote is catalog-allowlisted, the desktop Dev Mode
-  // server is open).
-  const offersAnything = entry.connectable || entry.local !== null;
-
-  return (
-    <div className="cat-row">
-      <div className="row flex-wrap">
-        {/* no color class — inherits the row's text color either way */}
-        <EntryIcon glyph={entry.brandIcon} />
-        <span className="nm min-w-0">{entry.name}</span>
-        {[...mechanismsOf(entry)].map((m) => (
-          <MechanismChip key={m} mechanism={m} />
-        ))}
-        <span className="flex-1" />
-        <Button asChild variant="outline" size="icon" className="size-8">
-          <a href={entry.docsUrl} title="Docs" aria-label={`${entry.name} docs`}>
-            <Icon name="book" />
-          </a>
-        </Button>
-        {offersAnything ? (
-          <Button variant={props.expanded ? "outline" : "default"} size="sm" onClick={props.onToggle} disabled={pending}>
-            {pending ? (
-              <>
-                <Icon name="loading" spin /> Connecting…
-              </>
-            ) : props.expanded ? (
-              <>
-                <Icon name="chevron-up" /> Close
-              </>
-            ) : (
-              <>
-                <Icon name="plug" /> Connect…
-              </>
-            )}
-          </Button>
-        ) : (
-          <Badge>not connectable yet</Badge>
-        )}
-      </div>
-      {/* what the catalog search can hit is on the row, whole — never
-          truncated, never behind a hover */}
-      <div className="cat-desc">{entry.description}</div>
-      {entry.note !== "" && (props.expanded || !offersAnything) && (
-        <div className="note mx-0 mb-0 mt-1.5">
-          {entry.note}
-        </div>
-      )}
-      {props.expanded && offersAnything && (
-        <>
-          {entry.connectable && (
-            <div className="connect-form">
-              <McpNameField value={name} taken={props.taken} onChange={setName} />
-            </div>
-          )}
-          {entry.userUrl && (
-            <div className="connect-form">
-              <Field
-                label="endpoint URL"
-                hint="per-account service — no fixed URL exists; both connect paths use this endpoint (find yours via Docs)"
-              >
-                <Input
-                  type="text"
-                  placeholder="https://…"
-                  value={url}
-                  onInput={(e) => setUrl((e.target as HTMLInputElement).value)}
-                />
-              </Field>
-            </div>
-          )}
-          {entry.headerAuth !== null && (
-            <div className="connect-form">
-              <Field label="API key" hint={entry.headerAuth.hint}>
-                <div className="ctl-row">
-                  <Input
-                    type="password"
-                    placeholder={entry.headerAuth.hint || "API key…"}
-                    value={key}
-                    onInput={(e) => setKey((e.target as HTMLInputElement).value)}
-                  />
-                  {entry.headerAuth.keyUrl !== "" && (
-                    <Button asChild variant="outline" size="sm">
-                      <a href={entry.headerAuth.keyUrl} title={entry.headerAuth.hint}>
-                        Get a key <Icon name="link-external" />
-                      </a>
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    disabled={pending || key.trim() === "" || urlMissing || nameMissing}
-                    onClick={() => props.onConnectKey(name, key.trim(), userUrlValue)}
-                  >
-                    Connect with key
-                  </Button>
-                </div>
-              </Field>
-            </div>
-          )}
-          {entry.headerAuth !== null && entry.oauth && <div className="or-divider">— or —</div>}
-          {entry.oauth && (
-            <div className="connect-form">
-              <div className="form-actions">
-                <Button
-                  variant="outline" size="sm"
-                  disabled={pending || urlMissing || nameMissing}
-                  onClick={() => props.onConnectOAuth(name, userUrlValue)}
-                >
-                  Connect with OAuth (browser)…
-                </Button>
-              </div>
-            </div>
-          )}
-          {entry.local !== null && (
-            <>
-              <div className="or-divider">
-                {entry.connectable ? "— or run it locally —" : "run it locally:"}
-              </div>
-              <div className="connect-form">
-                <div className="form-actions">
-                  <Button variant="outline" size="sm" onClick={props.onUseLocal}>
-                    Use local server…
-                  </Button>
-                  <span className="note m-0 self-center">
-                    {entry.local.note} — prefills the custom form below, nothing runs until you add it
-                  </span>
-                </div>
-              </div>
-            </>
-          )}
-        </>
-      )}
-      {pending && (
-        <div className="note mx-0 mb-0 mt-1.5">
-          Waiting for authorization in your browser…{" "}
-          <Button variant="outline" size="sm" onClick={props.onCancelConnect}>
-            Cancel
-          </Button>
-        </div>
-      )}
-      {flow?.status === "failed" && (
-        <div className="note mx-0 mb-0 mt-1.5">
-          Connect failed: {flow.reason}{" "}
-          <Button variant="outline" size="sm" onClick={props.onCancelConnect} title="clear this note">
-            Dismiss
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-
 export function McpServersSection(props: {
   state: SettingsState;
-  onConnectKey(catalogId: string, name: string, token: string, url: string | undefined, workspaces: Reach<WorkspaceId>): void;
-  onConnectOAuth(catalogId: string, name: string, url: string | undefined, workspaces: Reach<WorkspaceId>): void;
-  onAddCustom(name: string, source: McpServerSourceView, routing: McpServerRoutingView, workspaces: Reach<WorkspaceId>): void;
-  onImportJson(json: string): void;
-  onAddImported(importId: number, names: readonly string[], workspaces: Reach<WorkspaceId>): void;
-  onCancelImport(importId: number): void;
-  onUpdateJson(patchbayMcpServerId: PatchbayMcpServerId, json: string): void;
+  onConnectKey(catalogId: string, name: string, token: string, url: string | undefined, reach: WhoGets): void;
+  onConnectOAuth(catalogId: string, name: string, url: string | undefined, reach: WhoGets): void;
+  onAddCustom(card: string, name: string, draft: McpDraft, reach: WhoGets, signIn: boolean): void;
+  onUpdate(patchbayMcpServerId: PatchbayMcpServerId, draft: McpDraft, signIn: boolean): void;
   /** `key` is the connect's own, off the published connect. */
   onCancelConnect(key: string): void;
   onSetWorkspaces(patchbayMcpServerId: PatchbayMcpServerId, workspaces: Reach<WorkspaceId>): void;
@@ -435,115 +138,24 @@ export function McpServersSection(props: {
   onReorder(patchbayMcpServerIds: PatchbayMcpServerId[]): void;
 }) {
   const { state } = props;
-  const [expandedCatalogId, setExpandedCatalogId] = useState<string | null>(null);
-  // The catalog's narrowing (catalog-filter.ts) — render state only; the
-  // list it narrows is the orchestrator's.
-  const [catalogQuery, setCatalogQuery] = useState("");
-  const [catalogMechanisms, setCatalogMechanisms] = useState<ReadonlySet<Mechanism>>(new Set());
-  const [adding, setAdding] = useState<"stdio" | "http" | "json" | null>(null);
-  const [editingJsonId, setEditingJsonId] = useState<string | null>(null);
-  // Card body (command line, JSON edit, routing) is collapsed by default —
+  const here = state.workspace;
+  // Open by default only when there's nothing to collapse to — otherwise
+  // the add tile is the one way in, as on the Agents page.
+  const [addOpen, setAddOpen] = useState(state.mcpServers.length === 0);
+  const [editing, setEditing] = useState<PatchbayMcpServerId | null>(null);
+  // Card body (command line, edit, who gets it) is collapsed by default —
   // the header row carries status and actions; the gear opens the rest.
   const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({});
   // The probe strip's tool list — its own toggle, independent of the gear.
   const [openTools, setOpenTools] = useState<Record<string, boolean>>({});
-  const [jsonDraft, setJsonDraft] = useState("");
-  const [importText, setImportText] = useState("");
-  const [name, setName] = useState("");
-  const [command, setCommand] = useState("");
-  const [argsText, setArgsText] = useState("");
-  const [envText, setEnvText] = useState("");
-  const [url, setUrl] = useState("");
-  const [authType, setAuthType] = useState<"none" | "header" | "oauth">("none");
-  const [headerName, setHeaderName] = useState("Authorization");
-  const [token, setToken] = useState("");
-  // The names typed into the import under review — render state for that
-  // review only; a newer one starts from its own entries' names.
-  const [reviewNames, setReviewNames] = useState<{ id: number; names: readonly string[] } | null>(null);
 
-  const taken = state.mcpServers.map((s) => s.name);
-  const here = state.workspace;
-  // A new server is on where it was added.
-  const newWorkspaces: Reach<WorkspaceId> = here === null ? "auto" : [here];
-  const review = state.mcpImportReview;
-  const namesInReview =
-    review === null ? [] : reviewNames?.id === review.id ? reviewNames.names : review.entries.map((e) => e.name);
-  // Each entry takes its name beside the stored ones and the entries above
-  // it — the order Add all adds them in.
-  const reviewStored: string[] = [];
-  for (const n of namesInReview) reviewStored.push(addedMcpServerName(n, [...taken, ...reviewStored]));
-
-  /** One shared form under three entry points (blank add, local prefill,
-   * import) — every transition clears it, so a half-filled prefill from an
-   * earlier detour never leaks into a fresh add. */
-  const resetCustomForm = () => {
-    setName("");
-    setCommand("");
-    setArgsText("");
-    setEnvText("");
-    setUrl("");
-    setAuthType("none");
-    setHeaderName("Authorization");
-    setToken("");
-    setImportText("");
-  };
-  const openAdd = (mode: "stdio" | "http" | "json" | null) => {
-    resetCustomForm();
-    setAdding(mode);
-  };
-
-  /** Prefill from a curated entry's verified local server — the user
-   * completes what's theirs (env values / a running desktop app) and
-   * clicks Add; nothing runs before that. */
-  const useLocal = (entryName: string, local: NonNullable<SettingsState["mcpCatalog"][number]["local"]>) => {
-    resetCustomForm();
-    setName(mcpServerName(`${entryName}-local`));
-    if (local.kind === "stdio") {
-      setAdding("stdio");
-      setCommand(local.command);
-      setArgsText(local.args.join("\n"));
-      setEnvText(local.envKeys.map((k) => `${k}=`).join("\n"));
-    } else {
-      setAdding("http");
-      setUrl(local.url);
-      setAuthType("none");
-    }
-  };
-
-  const submitCustom = () => {
-    if (mcpServerName(name) === "") return;
-    // What was typed, as typed: the store decides the header's prefix.
-    const source: McpServerSourceView =
-      adding === "stdio"
-        ? {
-            kind: "custom-stdio",
-            command: command.trim(),
-            args: argsText.split("\n").map((a) => a.trim()).filter((a) => a !== ""),
-            env: parseEnvLines(envText),
-          }
-        : {
-            kind: "custom-http",
-            url: url.trim(),
-            authType,
-            headerName: authType === "header" ? headerName.trim() : undefined,
-            token: authType === "header" ? token : undefined,
-          };
-    props.onAddCustom(name.trim(), source, "auto", newWorkspaces);
-    setAdding(null);
-    setName("");
-    setCommand("");
-    setArgsText("");
-    setEnvText("");
-    setUrl("");
-    setToken("");
-    setHeaderName("Authorization");
-  };
-
-  // Every entry stays in the catalog: one service can be connected more
-  // than once (two accounts), each connection a server of its own.
-  const available = state.mcpCatalog;
-  const narrowed = catalogQuery.trim() !== "" || catalogMechanisms.size > 0;
-  const shown = filterCatalog(available, catalogQuery, catalogMechanisms);
+  /** A server just added: its card is the one to look at. */
+  const focusServer = (patchbayMcpServerId: PatchbayMcpServerId) =>
+    requestAnimationFrame(() => {
+      const card = document.getElementById(`mcp-server-${patchbayMcpServerId}`);
+      card?.scrollIntoView({ block: "nearest" });
+      card?.focus();
+    });
 
   return (
     <section className="section">
@@ -553,6 +165,26 @@ export function McpServersSection(props: {
         routed per agent. Kept on this machine, never repo-committed; a copied config carries what
         you typed, never an OAuth token.
       </div>
+      <AddTiles
+        tiles={[
+          { n: state.mcpServers.length, label: "servers", icon: "server" },
+          { n: state.mcpServers.filter((s) => s.onHere).length, label: "on here", icon: "pass" },
+        ]}
+        addLabel="add server"
+        open={addOpen}
+        onToggle={() => setAddOpen(!addOpen)}
+      />
+      {addOpen && (
+        <McpAddCards
+          state={state}
+          onConnectKey={props.onConnectKey}
+          onConnectOAuth={props.onConnectOAuth}
+          onAddCustom={props.onAddCustom}
+          onCancelConnect={props.onCancelConnect}
+          onEmpty={() => setAddOpen(false)}
+          onAdded={focusServer}
+        />
+      )}
 
       {/* Patchbay's own servers: read-only — what they serve and whether they
           answer, nothing to switch, route, or remove. */}
@@ -579,9 +211,7 @@ export function McpServersSection(props: {
       ))}
       {state.mcpServers.length === 0 && (
         <div className="card">
-          <div className="note m-0">
-            No servers connected yet — pick one from the catalog below, or add your own.
-          </div>
+          <div className="note m-0">No servers added yet — add one above.</div>
         </div>
       )}
       <SortableList
@@ -589,15 +219,15 @@ export function McpServersSection(props: {
         onReorder={props.onReorder}
       >
         {state.mcpServers.map((server) => {
-          // Editing JSON forces the body open — the form lives there.
-          const detailsOpen = openDetails[server.id] === true || editingJsonId === server.id;
+          // Editing forces the body open — the form lives there.
+          const detailsOpen = openDetails[server.id] === true || editing === server.id;
           // A connected curated server keeps its catalog icon (the catalog
           // entry is still the id's source of truth; custom servers have none).
           const catalogEntry = state.mcpCatalog.find((r) => r.id === server.catalogId);
           return (
             <SortableItem key={server.id} id={server.id}>
               {(handle) => (
-                <div className="card">
+                <div className="card" id={`mcp-server-${server.id}`} tabIndex={-1}>
                   <div className="row flex-wrap">
                     {handle}
                     <Dot status={server.connected && server.onHere ? "running" : "stopped"} />
@@ -648,7 +278,7 @@ export function McpServersSection(props: {
                       aria-label={detailsOpen ? "Hide settings" : "Settings"}
                       aria-expanded={detailsOpen}
                       onClick={() => {
-                        if (editingJsonId === server.id) setEditingJsonId(null);
+                        if (editing === server.id) setEditing(null);
                         setOpenDetails({ ...openDetails, [server.id]: !detailsOpen });
                       }}
                     >
@@ -674,54 +304,21 @@ export function McpServersSection(props: {
                     on in {whereSaid(server.workspaces, here)}
                     {!server.onHere && " — configured with its credential intact, given to no session here"}
                   </div>
-                  {!detailsOpen ? null : server.editJson !== undefined && editingJsonId === server.id ? (
-                    <div className="connect-form">
-                      <Field label="server JSON" hint="the mcpServers entry for this server — saved as written">
-                        <Textarea
-                          rows={7}
-                          className="resize-y font-mono"
-                          value={jsonDraft}
-                          onInput={(e) => setJsonDraft((e.target as HTMLTextAreaElement).value)}
-                        />
-                      </Field>
-                      <div className="form-actions">
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            props.onUpdateJson(server.id, jsonDraft);
-                            setEditingJsonId(null);
-                          }}
-                        >
-                          Save
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => setEditingJsonId(null)}>
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  ) : server.editJson !== undefined ? (
+                  {detailsOpen && server.draft !== undefined && editing === server.id ? (
+                    <EditServerForm
+                      server={{ ...server, draft: server.draft }}
+                      connect={state.mcpConnects.find((c) => c.kind === "server" && c.subject === server.id)}
+                      onSave={(draft, signIn) => props.onUpdate(server.id, draft, signIn)}
+                      onCancelConnect={props.onCancelConnect}
+                      onClose={() => setEditing(null)}
+                    />
+                  ) : detailsOpen && server.draft !== undefined ? (
                     <div className="row mt-1.5">
-                      <Button
-                        variant="outline" size="sm"
-                        onClick={() => {
-                          setJsonDraft(server.editJson!);
-                          setEditingJsonId(server.id);
-                        }}
-                      >
-                        <Icon name="json" /> Edit JSON…
+                      <Button variant="outline" size="sm" onClick={() => setEditing(server.id)}>
+                        <Icon name="edit" /> Edit…
                       </Button>
                     </div>
                   ) : null}
-                  {state.mcpConnects
-                    .filter((c) => c.kind === "server" && c.subject === server.id && c.status === "failed")
-                    .map((c) => (
-                      <div className="note mt-1.5" key={c.key}>
-                        {c.reason}{" "}
-                        <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(c.key)} title="clear this note">
-                          Dismiss
-                        </Button>
-                      </div>
-                    ))}
                   {detailsOpen && (
                     <WhoGetsIt
                       of="this server"
@@ -753,296 +350,6 @@ export function McpServersSection(props: {
           );
         })}
       </SortableList>
-
-      <div className="card">
-        <h2 className="mt-0">Add a custom MCP server</h2>
-        {adding === null ? (
-          <div className="row gap-2.5">
-            <Button variant="outline" size="sm" onClick={() => openAdd("stdio")}>
-              <Icon name="terminal" /> Command (stdio)
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => openAdd("http")}>
-              <Icon name="globe" /> URL (with auth)
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => openAdd("json")}>
-              <Icon name="json" /> Import JSON…
-            </Button>
-          </div>
-        ) : adding === "json" ? (
-          <div className="connect-form">
-            <Textarea
-              rows={8}
-              className="w-full resize-y font-mono"
-              placeholder={'the well-known shape: {"mcpServers": {"my-server": {"command": "npx", "args": ["-y", "pkg"], "env": {"KEY": "value"}}}}'}
-              value={importText}
-              onInput={(e) => setImportText((e.target as HTMLTextAreaElement).value)}
-            />
-            <div className="note m-0 basis-full">
-              each entry becomes a server — you review their names before anything is added;
-              entries that don't validate are skipped, labeled below
-            </div>
-            <Button
-              size="sm"
-              disabled={importText.trim() === ""}
-              onClick={() => {
-                props.onImportJson(importText);
-                setImportText("");
-                setAdding(null);
-              }}
-            >
-              Review…
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => openAdd(null)}>
-              Cancel
-            </Button>
-          </div>
-        ) : (
-          <div className="connect-form">
-            <McpNameField value={name} taken={taken} onChange={setName} />
-            {adding === "stdio" ? (
-              <>
-                <Field label="command" hint="the executable — quotes supported">
-                  <Input
-                    type="text"
-                    placeholder="npx"
-                    value={command}
-                    onInput={(e) => setCommand((e.target as HTMLInputElement).value)}
-                  />
-                </Field>
-                <Field label="arguments" hint="one per line — no quoting needed">
-                  <Textarea
-                    rows={2}
-                    className="resize-y"
-                    placeholder={"-y\nsome-mcp-server"}
-                    value={argsText}
-                    onInput={(e) => setArgsText((e.target as HTMLTextAreaElement).value)}
-                  />
-                </Field>
-                <Field label="environment variables" hint="KEY=value, one per line">
-                  <Textarea
-                    rows={2}
-                    className="resize-y"
-                    placeholder={"MY_API_KEY=…"}
-                    value={envText}
-                    onInput={(e) => setEnvText((e.target as HTMLTextAreaElement).value)}
-                  />
-                </Field>
-                <div className="note m-0 basis-full">
-                  values go to VS Code SecretStorage and are handed to the agent only when it
-                  spawns this server
-                </div>
-              </>
-            ) : (
-              <>
-                <Field label="endpoint URL">
-                  <Input type="text" placeholder="https://…" value={url} onInput={(e) => setUrl((e.target as HTMLInputElement).value)} />
-                </Field>
-                <Field label="authentication">
-                  <Select
-                    value={authType}
-                    onValueChange={(v) => setAuthType(v as "none" | "header" | "oauth")}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">no auth</SelectItem>
-                      <SelectItem value="header">API key (header)</SelectItem>
-                      <SelectItem value="oauth">OAuth (browser)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                {authType === "header" && (
-                  <>
-                    <Field
-                      label="header name"
-                      hint='header carrying the key — "Authorization" sends it as Bearer, any other name sends the raw key'
-                    >
-                      <Input
-                        type="text"
-                        placeholder="Authorization"
-                        value={headerName}
-                        onInput={(e) => setHeaderName((e.target as HTMLInputElement).value)}
-                      />
-                    </Field>
-                    <Field label="API key" hint="stored in VS Code SecretStorage only">
-                      <Input
-                        type="password"
-                        placeholder="key…"
-                        value={token}
-                        onInput={(e) => setToken((e.target as HTMLInputElement).value)}
-                      />
-                    </Field>
-                  </>
-                )}
-              </>
-            )}
-            <div className="form-actions">
-              <Button
-                size="sm"
-                disabled={
-                  mcpServerName(name) === "" ||
-                  (adding === "stdio"
-                    ? command.trim() === ""
-                    : url.trim() === "" || (authType === "header" && token.trim() === ""))
-                }
-                onClick={submitCustom}
-              >
-                Add
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => openAdd(null)}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        )}
-        {review !== null && (
-          <div className="connect-form">
-            <div className="note m-0 basis-full">Name each imported server — {NAME_IS_FINAL}.</div>
-            {review.entries.map((entry, i) => {
-              const typed = namesInReview[i] ?? entry.name;
-              return (
-                <div key={i} className="flex basis-full flex-col gap-0.5">
-                  <div className="row gap-2">
-                    <Input
-                      type="text"
-                      className="w-56"
-                      aria-label={`name for ${entry.summary}`}
-                      value={typed}
-                      onInput={(e) => {
-                        const names = [...namesInReview];
-                        names[i] = (e.target as HTMLInputElement).value;
-                        setReviewNames({ id: review.id, names });
-                      }}
-                    />
-                    <span className="note m-0">
-                      {mcpServerName(typed) === "" ? (
-                        "a name is needed"
-                      ) : (
-                        <>
-                          agents get <span className="font-mono">{reviewStored[i]}</span>
-                        </>
-                      )}
-                    </span>
-                  </div>
-                  <span className="mono">{entry.summary}</span>
-                </div>
-              );
-            })}
-            <div className="form-actions">
-              <Button
-                size="sm"
-                disabled={namesInReview.some((n) => mcpServerName(n) === "")}
-                onClick={() => props.onAddImported(review.id, namesInReview, newWorkspaces)}
-              >
-                Add all
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => props.onCancelImport(review.id)}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        )}
-        {state.mcpConnects
-          .filter((c) => c.kind === "custom")
-          .map((c) =>
-            c.status === "running" ? (
-              <div className="note mt-1.5" key={c.key}>
-                Adding "{c.subject}" — waiting for authorization in your browser…{" "}
-                <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(c.key)}>
-                  Cancel
-                </Button>
-              </div>
-            ) : (
-              <div className="note mt-1.5" key={c.key}>
-                Adding "{c.subject}" failed — nothing was stored: {c.reason}{" "}
-                <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(c.key)} title="clear this note">
-                  Dismiss
-                </Button>
-              </div>
-            ),
-          )}
-        {state.mcpConnects
-          .filter((c) => c.kind === "import" && c.status === "failed")
-          .map((c) => (
-            <div className="note mt-1.5" key={c.key}>
-              Import: {c.reason}{" "}
-              <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(c.key)} title="clear this note">
-                Dismiss
-              </Button>
-            </div>
-          ))}
-      </div>
-
-      <div className="card">
-        <h2 className="mt-0">Curated catalog</h2>
-        <div className="sub mb-1">
-          Each entry offers exactly the mechanisms its vendor opens — key paste, MCP-spec OAuth, or
-          both. Each connect adds a server to the list above; connect one twice for two accounts.
-        </div>
-        {available.length > 0 && (
-          <div className="cat-filter">
-            <Input
-              type="text"
-              className="w-56"
-              placeholder="search name or description…"
-              aria-label="Search the catalog"
-              value={catalogQuery}
-              onInput={(e) => setCatalogQuery((e.target as HTMLInputElement).value)}
-            />
-            {MECHANISMS.map((m) => (
-              <MechanismToggle
-                key={m}
-                mechanism={m}
-                pressed={catalogMechanisms.has(m)}
-                onToggle={() => {
-                  const next = new Set(catalogMechanisms);
-                  if (!next.delete(m)) next.add(m);
-                  setCatalogMechanisms(next);
-                }}
-              />
-            ))}
-            {narrowed && (
-              <span className="note m-0">
-                {shown.length} of {available.length}
-              </span>
-            )}
-          </div>
-        )}
-        {shown.map((entry) => {
-          const flow = state.mcpConnects.find((c) => c.kind === "catalog" && c.subject === entry.id);
-          return (
-            <CatalogRow
-              key={entry.id}
-              entry={entry}
-              flow={flow}
-              taken={taken}
-              expanded={expandedCatalogId === entry.id}
-              onToggle={() => setExpandedCatalogId(expandedCatalogId === entry.id ? null : entry.id)}
-              onConnectKey={(name, token, url) => props.onConnectKey(entry.id, name, token, url, newWorkspaces)}
-              onConnectOAuth={(name, url) => props.onConnectOAuth(entry.id, name, url, newWorkspaces)}
-              onCancelConnect={() => {
-                if (flow !== undefined) props.onCancelConnect(flow.key);
-              }}
-              onUseLocal={() => {
-                if (entry.local !== null) useLocal(entry.name, entry.local);
-              }}
-            />
-          );
-        })}
-        {shown.length === 0 && available.length > 0 ? (
-          <div className="note m-0">
-            No curated entry matches.{" "}
-            <Button
-              variant="outline" size="sm"
-              onClick={() => {
-                setCatalogQuery("");
-                setCatalogMechanisms(new Set());
-              }}
-            >
-              Clear filter
-            </Button>
-          </div>
-        ) : null}
-      </div>
     </section>
   );
 }

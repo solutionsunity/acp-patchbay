@@ -38,7 +38,8 @@ async function machine() {
   const machineWriteScope = new MachineWriteScopeStore(kv);
   const agentEnv = new SecretEnvStore(secrets, SECRET_FAMILIES.agent);
   const mcpServerEnv = new SecretEnvStore(secrets, SECRET_FAMILIES.mcpServer);
-  const keys: Record<string, string> = { keyed: "secret-abc", context7: "ctx-key" };
+  const keys: Record<string, string> = { context7: "ctx-key" };
+  const headers: Record<string, Record<string, string>> = { keyed: { Authorization: "Bearer secret-abc" } };
 
   // An id from before patchbay minted them, on a registry agent.
   await agentConfigs.add({
@@ -87,7 +88,7 @@ async function machine() {
   await mcpServerConfigs.add({
     id: "keyed" as PatchbayMcpServerId,
     name: "Keyed",
-    source: { kind: "custom-http", url: "https://example.test/mcp", authType: "header", headerName: "Authorization", valuePrefix: "Bearer " },
+    source: { kind: "custom-http", url: "https://example.test/mcp", oauth: false },
     routing: "auto",
     workspaces: "auto",
     transport: "auto",
@@ -136,6 +137,7 @@ async function machine() {
     mcpServers: {
       ids: () => mcpServerConfigs.list().map((c) => c.id),
       env: (id) => mcpServerEnv.get(id),
+      headers: async (id) => headers[id] ?? {},
       headerKey: async (id) => keys[id],
     },
   };
@@ -165,7 +167,7 @@ describe("configuration export", () => {
     // A record with nothing secret stored has no row.
     expect(file.secrets).toEqual({
       agents: { claude: { env: { ANTHROPIC_API_KEY: "sk-1" } } },
-      mcpServers: { keyed: { key: "secret-abc" }, local: { env: { TOKEN: "t-1" } }, context7: { key: "ctx-key" } },
+      mcpServers: { keyed: { headers: { Authorization: "Bearer secret-abc" } }, local: { env: { TOKEN: "t-1" } }, context7: { key: "ctx-key" } },
     });
   });
 
@@ -203,7 +205,7 @@ describe("configuration export", () => {
       {
         entries: [new PreferencesStore(empty), new MachineRulesStore(empty), new MachineWriteScopeStore(empty), new SavedRootsStore(empty)],
         agents: { ids: () => [], env: async () => ({}) },
-        mcpServers: { ids: () => [], env: async () => ({}), headerKey: async () => undefined },
+        mcpServers: { ids: () => [], env: async () => ({}), headers: async () => ({}), headerKey: async () => undefined },
       },
       at,
     );

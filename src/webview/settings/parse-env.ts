@@ -17,3 +17,22 @@ export function formatEnvLines(env: Readonly<Record<string, string>>): string {
     .map(([key, value]) => `${key}=${value}`)
     .join("\n");
 }
+
+// `Name: value` lines ↔ record, for a remote server's headers; a line with
+// no name before its colon is skipped. The value is kept as typed, past
+// the one space after the colon.
+export function parseHeaderLines(text: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const colon = line.indexOf(":");
+    if (colon <= 0) continue;
+    headers[line.slice(0, colon).trim()] = line.slice(colon + 1).replace(/^ /, "");
+  }
+  return headers;
+}
+
+export function formatHeaderLines(headers: Readonly<Record<string, string>>): string {
+  return Object.entries(headers)
+    .map(([name, value]) => `${name}: ${value}`)
+    .join("\n");
+}

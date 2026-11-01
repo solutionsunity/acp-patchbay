@@ -42,23 +42,59 @@ export const mcpServerSourceSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("custom-http"),
     url: z.string().min(1),
-    /** "none" needs no secret; "header" sends the stored key as
-     * `{headerName}: {valuePrefix}{key}`; "oauth" runs the MCP-spec OAuth
-     * flow against the URL and sends `Authorization: Bearer <token>`. */
-    authType: z.enum(["none", "header", "oauth"]).default("none"),
-    headerName: z.string().default("Authorization"),
-    valuePrefix: z.string().default("Bearer "),
+    // No headers here on purpose: they carry keys, so their values live in
+    // SecretStorage beside a stdio server's env.
+    /** Signed in through MCP's authorization flow — the one the server
+     * asked for with a 401 — and so sent `Authorization: Bearer <token>`
+     * from the token store. */
+    oauth: z.boolean(),
   }),
 ]);
 export type McpServerSource = z.infer<typeof mcpServerSourceSchema>;
 
-/** How a server authenticates: a curated entry by the mechanism its
- * connect used, a custom http server by its own setting; a stdio server
- * takes no credential of patchbay's. */
+/** Which credential of patchbay's a server presents: a curated entry the
+ * one its connect stored — a key, or a sign-in — a custom remote server
+ * its sign-in, if it has one; its headers are its own, not patchbay's
+ * credential. A stdio server presents none. */
 export function authTypeOf(source: McpServerSource): "none" | "header" | "oauth" {
   if (source.kind === "catalog") return source.authMode;
-  if (source.kind === "custom-http") return source.authType;
+  if (source.kind === "custom-http") return source.oauth ? "oauth" : "none";
   return "none";
+}
+
+/** A custom remote server as 0.88 and before kept it: its key, if it had
+ * one, sent as `{headerName}: {valuePrefix}{key}`. */
+type CustomHttpBefore090 = {
+  kind: "custom-http";
+  url?: unknown;
+  authType?: unknown;
+  headerName?: unknown;
+  valuePrefix?: unknown;
+};
+
+function customHttpBefore090(source: unknown): source is CustomHttpBefore090 {
+  return typeof source === "object" && source !== null && (source as { kind?: unknown }).kind === "custom-http";
+}
+
+/** The headers each of an earlier version's custom remote servers sent
+ * with its key — what its record named, filled with the key `keyOf` finds:
+ * the token store's on this machine, an export file's in an import. */
+export function headersBefore090(
+  records: readonly unknown[],
+  keyOf: (id: string) => string | undefined,
+): Map<string, Record<string, string>> {
+  const headers = new Map<string, Record<string, string>>();
+  for (const r of records) {
+    if (typeof r !== "object" || r === null) continue;
+    const { id, source } = r as { id?: unknown; source?: unknown };
+    if (typeof id !== "string" || !customHttpBefore090(source) || source.authType !== "header") continue;
+    const key = keyOf(id);
+    if (key === undefined) continue;
+    const name = typeof source.headerName === "string" && source.headerName !== "" ? source.headerName : "Authorization";
+    const prefix = typeof source.valuePrefix === "string" ? source.valuePrefix : "Bearer ";
+    headers.set(id, { [name]: `${prefix}${key}` });
+  }
+  return headers;
 }
 
 export const mcpServerConfigSchema = z.object({
@@ -99,20 +135,28 @@ export class McpServerConfigStore extends NamedRecordStore<McpServerConfig> {
     // version kept them are copied, never moved — a window still on that
     // version keeps its own key — so every migration below runs on the
     // copy. Each was switched on or off for every workspace: on becomes
-    // every workspace, off none.
+    // every workspace, off none. A custom remote server keeps whether it
+    // signed in; the header its key went in leaves the record — its
+    // headers are secrets now (`headersBefore090` moves them).
     const earlier = kv.get<unknown>(STORAGE_KEYS.mcpServersBefore090);
-    if (kv.get<unknown>(KEY) === undefined && Array.isArray(earlier)) {
+    const copies = kv.get<unknown>(KEY) === undefined && Array.isArray(earlier);
+    if (copies) {
       void kv.update(
         KEY,
         earlier.map((r: unknown) => {
           if (typeof r !== "object" || r === null) return r;
-          const { active, ...rest } = r as { active?: unknown };
-          return { ...rest, workspaces: active === false ? [] : "auto" };
+          const { active, source, ...rest } = r as { active?: unknown; source?: unknown };
+          return {
+            ...rest,
+            source: customHttpBefore090(source) ? { kind: "custom-http", url: source.url, oauth: source.authType === "oauth" } : source,
+            workspaces: active === false ? [] : "auto",
+          };
         }),
       );
     }
     super(kv, KEY, mcpServerConfigSchema);
     this.machine = kv;
+    this.copiedBefore090 = copies ? (earlier as unknown[]) : null;
     // Once, at construction: a server connected from the catalog before the
     // catalog was named so is stored as `{ kind: "registry", registryId }` —
     // rewritten as `{ kind: "catalog", catalogId }`, every other field as
@@ -139,6 +183,11 @@ export class McpServerConfigStore extends NamedRecordStore<McpServerConfig> {
   }
 
   private readonly machine: KV;
+
+  /** The earlier version's records, as this store copied them at its
+   * construction — null when it copied none. What the headers of their
+   * custom remote servers are moved from, once. */
+  readonly copiedBefore090: readonly unknown[] | null;
 
   /** Every record goes — the earlier version's copy with them. */
   override async wipe(): Promise<void> {

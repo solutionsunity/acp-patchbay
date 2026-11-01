@@ -7,6 +7,7 @@
 // same reducers to its canonical state, so a snapshot is always replay-consistent.
 
 import type { PatchbayAgentId, PatchbayAskId, PatchbayMcpServerId, PatchbaySessionId } from "./ids";
+import type { McpDraft } from "./mcp-config";
 import type { Reach } from "./reach";
 import type { WorkspaceId } from "./workspace";
 
@@ -264,33 +265,47 @@ export type Action =
    * whether a knob rides ACP's config-option surface or the legacy modes
    * fallback; the orchestrator's knob processor (knobs.ts) routes it. */
   | { kind: "setSessionKnob"; patchbaySessionId: PatchbaySessionId; knobId: string; value: string | boolean }
-  /** `name` is the one the server goes to agents under — final once added. */
-  | { kind: "connectCatalogKey"; catalogId: string; name: string; token: string; url?: string; workspaces: Reach<WorkspaceId> }
-  | { kind: "connectCatalogOAuth"; catalogId: string; name: string; url?: string; workspaces: Reach<WorkspaceId> }
-  /** The id is minted orchestrator-side — the storage/SecretStorage key,
-   * an internal concern the user never names; the name is cut to what
-   * agents keep, and one another server holds gets a number. */
+  /** `name` is the one the server goes to agents under — final once added.
+   * Each add carries who gets it: the workspaces it is on in, then the
+   * agents it is routed to. */
   | {
-      kind: "addCustomMcpServer";
+      kind: "connectCatalogKey";
+      catalogId: string;
       name: string;
-      source: McpServerSourceView;
+      token: string;
+      url?: string;
       routing: McpServerRoutingView;
       workspaces: Reach<WorkspaceId>;
     }
-  /** The well-known `{"mcpServers": {...}}` JSON (Claude Desktop / Cursor /
-   * VS Code shape) — parsed orchestrator-side into a review
-   * (`importReview`), failures labeled per entry; nothing is added yet. */
-  | { kind: "importMcpServersJson"; json: string }
-  /** The review answered: each entry added as a custom server under the
-   * name at its index. */
-  | { kind: "addImportedMcpServers"; importId: number; names: readonly string[]; workspaces: Reach<WorkspaceId> }
-  | { kind: "cancelMcpServersImport"; importId: number }
-  /** Replaces one custom server's config from its edited mcpServers entry
-   * JSON — env (and a header key) stored exactly as written. */
-  | { kind: "updateMcpServerJson"; patchbayMcpServerId: PatchbayMcpServerId; json: string }
-  /** Abandons a connect under way — nothing is stored, and a browser tab
-   * still open dies unanswered — or dismisses a failure's note. `key` is
-   * the store's own, read off the published connect, never built here. */
+  | {
+      kind: "connectCatalogOAuth";
+      catalogId: string;
+      name: string;
+      url?: string;
+      routing: McpServerRoutingView;
+      workspaces: Reach<WorkspaceId>;
+    }
+  /** An add card's server — checked before it is stored, signed in first
+   * with `signIn` (the server asked for it). `card` is the card's own key
+   * for the attempt, minted by the view, so the outcome finds its card. The
+   * id is minted orchestrator-side — the storage/SecretStorage key, an
+   * internal concern the user never names; the name is cut to what agents
+   * keep, and one another server holds gets a number. */
+  | {
+      kind: "addCustomMcpServer";
+      card: string;
+      name: string;
+      draft: McpDraft;
+      routing: McpServerRoutingView;
+      workspaces: Reach<WorkspaceId>;
+      signIn: boolean;
+    }
+  /** A custom server's edit, from the same form — checked as an add is. */
+  | { kind: "updateMcpServer"; patchbayMcpServerId: PatchbayMcpServerId; draft: McpDraft; signIn: boolean }
+  /** Abandons an add under way — nothing is stored, and a browser tab
+   * still open dies unanswered — or dismisses its outcome: a failure's
+   * note, or the server it made. `key` is the store's own, read off the
+   * published connect, never built here. */
   | { kind: "cancelMcpServerConnect"; key: string }
   /** Disconnect and remove are the same act — the full clear (config +
    * credential + env): the server is gone, curated or custom; its catalog
@@ -308,7 +323,7 @@ export type Action =
    * handshake with the server) — a free read, no agent involved. */
   | { kind: "probeMcpServer"; patchbayMcpServerId: PatchbayMcpServerId }
   /** Copies the server as a `{"mcpServers": {name: entry}}` document — the
-   * shape `importMcpServersJson` reads back and other clients take. */
+   * shape other clients take, and the add card reads back. */
   | { kind: "copyMcpServerJson"; patchbayMcpServerId: PatchbayMcpServerId }
   /** Open an agent-reported tool-call diff in VS Code's native diff editor. */
   | { kind: "openToolCallDiff"; patchbaySessionId: PatchbaySessionId; toolCallId: string; path: string }
@@ -487,26 +502,6 @@ export interface AgentConfigView {
  * structurally excluded the whole SDK-CLI class from auto forever.)* */
 export type McpServerRoutingView = Reach<PatchbayAgentId>;
 
-/** Payload for `addCustomMcpServer` — the "any MCP server, command or URL,
- * with auth" escape hatch. Curated servers go through
- * `connectCatalogKey`/`connectCatalogOAuth`
- * instead, since those drive a connect flow rather than taking a source
- * directly. Auth shapes: "header" is a
- * static key in a configurable header (`{headerName}: {valuePrefix}{key}`);
- * "oauth" is the MCP-spec OAuth 2.1 flow, URL-only. */
-export type McpServerSourceView =
-  /** `env` values go straight into SecretStorage (stores/secret-env.ts)
-   * and come back to their owner in `editJson`. */
-  | { kind: "custom-stdio"; command: string; args: readonly string[]; env: Readonly<Record<string, string>> }
-  | {
-      kind: "custom-http";
-      url: string;
-      authType: "none" | "header" | "oauth";
-      headerName?: string;
-      valuePrefix?: string;
-      token?: string;
-    };
-
 /** Result of patchbay's own connect-time MCP handshake with a server
  * (initialize + tools/list, no agent, no LLM turn). A point-in-time read of
  * the server — always shown with its timestamp, never as a timeless fact. */
@@ -532,6 +527,9 @@ export interface McpServerView {
    * config (a shared config carries no
    * credential; connecting is always this user's own explicit act). */
   connected: boolean;
+  /** Signed in through the server's own sign-in — its token is this
+   * machine's, never copied or exported. */
+  signedIn: boolean;
   /** The workspaces it is on in. Off in a workspace keeps config +
    * credential; no session there gets the server. */
   workspaces: Reach<WorkspaceId>;
@@ -549,10 +547,10 @@ export interface McpServerView {
   /** What the server's line holds: a probe running or waiting, a remove
    * under way — its busy state. */
   busy: readonly McpServerWork[];
-  /** Present for custom servers only: the editable mcpServers entry JSON,
-   * env values and a header key included — the owner typed them and reads
-   * them back. OAuth tokens (flow-minted) never appear. */
-  editJson?: string;
+  /** Present for custom servers only: what the edit form opens with, env
+   * and header values included — the owner typed them and reads them back.
+   * OAuth tokens (flow-minted) never appear. */
+  draft?: McpDraft;
 }
 
 export interface CatalogEntryView {
@@ -605,25 +603,21 @@ export interface BuiltinMcpServerView {
 /** What an MCP server's line can hold. */
 export type McpServerWork = "probe" | "remove";
 
-/** An import waiting on the user's names — what each entry is, never its
- * env or key. `id` tells this review from a newer one. */
-export interface McpImportReviewView {
-  id: number;
-  entries: readonly { name: string; summary: string }[];
-}
-
-/** A connect under way or failed — a curated entry's, a custom add's, an
- * import's — or a server's save that failed: the MCP-servers store's live
- * facts, published with the servers. A running one is what the store's
- * connect line holds; a failed one stays until dismissed or tried again.
- * `subject` is the catalog id, the custom name, the imported entry's name
- * ("" for the import as a whole) or the server's id. */
+/** An add under way, failed or done — a curated entry's, an add card's,
+ * a server's edit: the MCP-servers store's live facts, published with the
+ * servers. A running one is what the store's connect line holds; a failed
+ * or done one stays until dismissed or tried again. `subject` is the
+ * catalog id, the add card's key or the server's id. A failure with
+ * `signIn` was the server asking for a sign-in; a done one names the
+ * `server` it stored. */
 export interface McpServerConnectView {
   key: string;
-  kind: "catalog" | "custom" | "import" | "server";
+  kind: "catalog" | "custom" | "server";
   subject: string;
-  status: "running" | "failed";
+  status: "running" | "failed" | "added";
   reason?: string;
+  signIn?: true;
+  server?: PatchbayMcpServerId;
 }
 
 // ── revision application (view side; pure, unit-tested) ─────────────────────
@@ -2889,7 +2883,6 @@ export interface SettingsState {
   /** Patchbay's own servers — read-only, above the user's. */
   mcpBuiltinServers: readonly BuiltinMcpServerView[];
   mcpConnects: readonly McpServerConnectView[];
-  mcpImportReview: McpImportReviewView | null;
   /** Agents (global, developer-env — never repo-committed): addable,
    * editable, removable from Settings; connecting one goes through the same
    * `connectAgent` action as registry/custom (`{ patchbayAgentId }`). */
@@ -2958,7 +2951,6 @@ export const initialSettingsState: SettingsState = {
   mcpServers: [],
   mcpBuiltinServers: [],
   mcpConnects: [],
-  mcpImportReview: null,
   agentConfigs: [],
   sessionsActiveToday: 0,
   agentKnobs: {},
@@ -2988,7 +2980,6 @@ export type SettingsEvent =
       servers: readonly McpServerView[];
       builtin: readonly BuiltinMcpServerView[];
       connects: readonly McpServerConnectView[];
-      importReview: McpImportReviewView | null;
     }
   | { kind: "agentConfigsChanged"; configs: readonly AgentConfigView[] }
   | { kind: "sessionStatsChanged"; sessionsActiveToday: number }
@@ -3065,7 +3056,6 @@ export function reduceSettings(
         mcpServers: event.servers,
         mcpBuiltinServers: event.builtin,
         mcpConnects: event.connects,
-        mcpImportReview: event.importReview,
       };
     case "agentConfigsChanged":
       return { ...state, agentConfigs: event.configs };

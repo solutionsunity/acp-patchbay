@@ -3,44 +3,53 @@
 
 // The MCP-servers store: curated (catalog)
 // and custom are the same mechanism — MCP servers routed to agents. Owns
-// the connect lifecycle (static key in a configurable header, or MCP-spec
-// OAuth 2.1), routing decisions, and the
-// mcpServers entries a session actually gets. vscode-free (like
-// SessionsStore/CapabilityTracker): the OAuth browser/redirect step is an
-// injected OAuthUserAgent, so everything is unit-testable against a fake
-// OAuth provider and a fake remote MCP endpoint — the same fixture
-// philosophy as the fake ACP agent.
+// the add lifecycle — every add checked against the server before anything
+// is stored, a sign-in run when the server asks for one — routing and
+// workspace decisions, and the mcpServers entries a session actually gets.
+// A custom server is kept in the shape other clients write (shared/
+// mcp-config.ts): a command with args and env, or a URL with headers, the
+// values in SecretStorage. vscode-free (like SessionsStore/
+// CapabilityTracker): the OAuth browser/redirect step is an injected
+// OAuthUserAgent, so everything is unit-testable against a fake OAuth
+// provider and a fake remote MCP endpoint — the same fixture philosophy as
+// the fake ACP agent.
 import { IPC_ENV } from "../mcp/ipc-protocol";
 import { isDeepStrictEqual } from "node:util";
 import { randomUUID } from "node:crypto";
 import type { EnvVariable, McpServer, McpServerStdio } from "@agentclientprotocol/sdk";
-import { z } from "zod";
 import type {
-  McpImportReviewView,
   McpServerConnectView,
   McpServerProbeView,
   McpServerRoutingView,
-  McpServerSourceView,
   McpServerView,
   McpServerWork,
   CatalogEntryView,
   SettingsEvent,
 } from "../shared/protocol";
 import { unlessAborted } from "./abort";
-import { probeMcpServer, type ProbeFn, type ProbeTarget } from "./mcp-probe";
+import { asksForSignIn, probeMcpServer, type ProbeFn, type ProbeOutcome, type ProbeTarget } from "./mcp-probe";
 import { formatCommandLine, parseCommandLine } from "../shared/command-line";
+import { documentOf, draftProblem, expandDraft, unsetSaid, type McpDraft } from "../shared/mcp-config";
 import { EDITOR_SERVER_NAME } from "../shared/names";
 import { PRODUCT } from "../shared/product";
 import { loggableUrl, nullLogger, type Logger } from "./logger";
 import { connectMcpOAuth, refreshMcpOAuth, type OAuthUserAgent } from "./mcp-oauth";
 import { McpServerTokenStore, type StoredToken } from "./stores/mcp-server-tokens";
-import { authTypeOf, McpServerConfigStore, type McpServerConfig, type McpServerSource } from "./stores/mcp-server-configs";
+import {
+  authTypeOf,
+  headersBefore090,
+  McpServerConfigStore,
+  type McpServerConfig,
+  type McpServerSource,
+} from "./stores/mcp-server-configs";
 import { isConnectable, type CatalogEntry } from "./stores/mcp-catalog";
 import type { SecretEnvStore } from "./stores/secret-env";
 import type { PatchbayAgentId, PatchbayMcpServerId } from "../shared/ids";
 import { ownReach, reaches, type Reach } from "../shared/reach";
 import type { WorkspaceId } from "../shared/workspace";
 import { agentErrorText } from "./readers/agent-error";
+
+type Env = Record<string, string>;
 
 export interface McpServersStoreHooks {
   emit(...events: SettingsEvent[]): void;
@@ -62,6 +71,15 @@ export interface McpServerWire {
   bridgeScript: string;
   socketPath(): string;
   crossing(value: string): void;
+}
+
+/** Where the stores keep a server's secrets: a stdio server's env, a
+ * remote server's headers, and the credential patchbay itself holds — a
+ * curated entry's key, or a sign-in's token. */
+export interface McpServerSecrets {
+  env: SecretEnvStore;
+  headers: SecretEnvStore;
+  tokens: McpServerTokenStore;
 }
 
 /** Patchbay's own server — the editor's state and the session's roots —
@@ -96,55 +114,46 @@ function editorServer(wire: McpServerWire, contextToken: string): McpServerStdio
 }
 
 /** The bridge as one attach is handed it for a remote server — the launch
- * the agent spawns to reach it, with patchbay's credential asked per
+ * the agent spawns to reach it, with the server's headers asked per
  * request over IPC under the attach's token. */
 export function bridgeServer(
   wire: Pick<McpServerWire, "bridgeScript" | "socketPath">,
   contextToken: string,
-  server: { id: string; name: string; url: string; header: { headerName: string; valuePrefix: string } | null },
+  server: { id: string; name: string; url: string },
 ): McpServerStdio {
   return ownScript(server.name, wire.bridgeScript, [
     { name: IPC_ENV.socket, value: wire.socketPath() },
     { name: IPC_ENV.contextToken, value: contextToken },
     { name: IPC_ENV.serverId, value: server.id },
     { name: IPC_ENV.serverUrl, value: server.url },
-    ...(server.header !== null
-      ? [
-          { name: IPC_ENV.authHeader, value: server.header.headerName },
-          { name: IPC_ENV.authPrefix, value: server.header.valuePrefix },
-        ]
-      : []),
   ]);
 }
 
-/** The operations that take time — a connect, an add, a probe, a remove —
+/** The operations that take time — an add, an edit, a probe, a remove —
  * each reached only through the gates, which order them on their lines. */
 export type McpServerLineOperations = Pick<
   McpServersStore,
-  "connectCatalogWithKey" | "connectCatalogOAuth" | "addCustom" | "probe" | "remove"
+  "connectCatalogWithKey" | "connectCatalogOAuth" | "addCustom" | "updateCustom" | "probe" | "remove"
 >;
 
-/** The connect line's keys — one line per curated entry, one per custom
- * name — and the keys a failure is held under besides: an import (and each
- * of its entries) and a server's save. One vocabulary, so the published
- * connects are read straight off a key. */
+/** The connect line's keys — one line per curated entry, one per add card,
+ * one per server's edit. One vocabulary, so the published connects are
+ * read straight off a key. */
 export const connectKey = {
   catalog: (catalogId: string) => `catalog:${catalogId}`,
-  custom: (name: string) => `custom:${name}`,
-  import: (entryName?: string) => (entryName === undefined ? "import" : `import:${entryName}`),
+  custom: (card: string) => `custom:${card}`,
   server: (patchbayMcpServerId: PatchbayMcpServerId) => `server:${patchbayMcpServerId}`,
 };
 
 function connectOf(key: string): Pick<McpServerConnectView, "kind" | "subject"> {
   const at = key.indexOf(":");
-  const kind = (at === -1 ? key : key.slice(0, at)) as McpServerConnectView["kind"];
-  return { kind, subject: at === -1 ? "" : key.slice(at + 1) };
+  return { kind: key.slice(0, at) as McpServerConnectView["kind"], subject: key.slice(at + 1) };
 }
 
 /** A server given to a session at its attach: its id, and how it reached
  * the agent — handed through (stdio), passed through to the agent's own
  * client (http), or through patchbay's bridge, the one delivery that asks
- * patchbay for the server's credential. */
+ * patchbay for the server's headers. */
 export interface AttachedServer {
   id: PatchbayMcpServerId;
   delivery: "stdio" | "http" | "bridge";
@@ -155,25 +164,9 @@ const CLIENT_INFO = {
   clientUri: "https://github.com/solutionsunity/acp-patchbay",
 };
 
-/** One entry of the well-known `mcpServers` JSON (Claude Desktop / Cursor /
- * VS Code shape) — the interchange format users already have on disk.
- * Unknown fields are ignored rather than rejected (the format grows). */
-const mcpServersEntrySchema = z.union([
-  z.object({
-    command: z.string().min(1),
-    args: z.array(z.string()).default([]),
-    env: z.record(z.string(), z.string()).default({}),
-  }),
-  z.object({
-    url: z.string().min(1),
-    authType: z.enum(["none", "header", "oauth"]).default("none"),
-    headerName: z.string().optional(),
-    valuePrefix: z.string().optional(),
-    /** A header key — user-typed, so it rides editJson and Copy like env
-     * does. Never an OAuth token. */
-    token: z.string().optional(),
-  }),
-]);
+/** A remote server's check was turned away with a 401: the add card offers
+ * the sign-in the server asked for. */
+class SignInAsked extends Error {}
 
 /** True with a minute of margin — refresh slightly before expiry rather
  * than reacting to a 401 whenever avoidable. */
@@ -194,58 +187,55 @@ function expiresAtFrom(expiresIn: number | undefined): string | undefined {
   return expiresIn !== undefined ? new Date(Date.now() + expiresIn * 1000).toISOString() : undefined;
 }
 
+/** A sign-in's result as the token store keeps it. */
+function signedIn(result: Awaited<ReturnType<typeof connectMcpOAuth>>): StoredToken {
+  return {
+    accessToken: result.accessToken,
+    refreshToken: result.refreshToken,
+    expiresAt: expiresAtFrom(result.expiresIn),
+    tokenEndpoint: result.tokenEndpoint,
+    clientId: result.clientId,
+  };
+}
+
 /** Whether "connected" requires a stored credential: every server that
- * authenticates, header and oauth alike. */
+ * presents one of patchbay's, key and sign-in alike. */
 function needsToken(source: McpServerSource): boolean {
   return authTypeOf(source) !== "none";
 }
 
-/** The endpoint an http-backed server reaches: the user's own URL for
- * a per-account entry, else the catalog's fixed one; "" when neither
- * exists (not connectable). Never called for custom-stdio. */
-function endpointOf(
-  source: Exclude<McpServerSource, { kind: "custom-stdio" }>,
-  entry: CatalogEntry | undefined,
-): string {
-  return source.kind === "catalog" ? (source.url ?? entry?.url ?? "") : source.url;
+/** The endpoint a curated server reaches: the user's own URL for a
+ * per-account entry, else the catalog's fixed one; "" when neither exists
+ * (not connectable). */
+function catalogEndpoint(source: Extract<McpServerSource, { kind: "catalog" }>, entry: CatalogEntry | undefined): string {
+  return source.url ?? entry?.url ?? "";
 }
 
 /** A custom server in one line: its command line, or its URL. */
-function customLine(source: { kind: "custom-stdio"; command: string; args: readonly string[] } | { kind: "custom-http"; url: string }): string {
+function customLine(source: Exclude<McpServerSource, { kind: "catalog" }>): string {
   return source.kind === "custom-stdio" ? formatCommandLine(source.command, source.args) : source.url;
 }
 
-/** How the bridge should present the stored credential on the wire —
- * null when there's no credential to send. OAuth access tokens are always
- * `Authorization: Bearer`; header mode uses the entry's/user's own shape. */
-function headerShapeOf(
-  source: McpServerSource,
+/** The header a curated server's stored credential goes in: a sign-in's
+ * token as `Authorization: Bearer`, a key in the entry's own shape. */
+function catalogHeader(
+  source: Extract<McpServerSource, { kind: "catalog" }>,
   entry: CatalogEntry | undefined,
 ): { headerName: string; valuePrefix: string } | null {
-  if (source.kind === "custom-stdio") return null;
-  if (source.kind === "catalog") {
-    if (source.authMode === "oauth") return { headerName: "Authorization", valuePrefix: "Bearer " };
-    const header = entry?.auth.header;
-    return header ? { headerName: header.headerName, valuePrefix: header.valuePrefix } : null;
-  }
-  if (source.authType === "none") return null;
-  if (source.authType === "oauth") return { headerName: "Authorization", valuePrefix: "Bearer " };
-  return { headerName: source.headerName, valuePrefix: source.valuePrefix };
+  if (source.authMode === "oauth") return { headerName: "Authorization", valuePrefix: "Bearer " };
+  const header = entry?.auth.header;
+  return header ? { headerName: header.headerName, valuePrefix: header.valuePrefix } : null;
 }
 
-/** A custom HTTP server as stored, from what was typed or pasted — the one
- * place its header defaults: `Authorization` when none was named, and a
- * `Bearer ` prefix only on an `Authorization` header — any other header
- * carries the key as it is, unless a prefix was given. */
-function customHttpSource(entry: {
-  url: string;
-  authType: "none" | "header" | "oauth";
-  headerName?: string;
-  valuePrefix?: string;
-}): McpServerSource {
-  const headerName = entry.headerName?.trim() || "Authorization";
-  const valuePrefix = entry.valuePrefix ?? (headerName.toLowerCase() === "authorization" ? "Bearer " : "");
-  return { kind: "custom-http", url: entry.url, authType: entry.authType, headerName, valuePrefix };
+/** A draft as it is kept: a command line typed whole in the command field
+ * ("npx foo") split quote-aware — args arrive structured and are never
+ * re-parsed. */
+function normalized(draft: McpDraft): McpDraft {
+  if (draft.type === "http") return { ...draft, url: draft.url.trim() };
+  if (draft.command.trim() === "") return draft; // the check names what's missing
+  const parsed = parseCommandLine(draft.command);
+  if (parsed === null) throw new Error("the command has an unterminated quote");
+  return { ...draft, command: parsed.command, args: [...parsed.args, ...draft.args] };
 }
 
 /** A new server's id — patchbay's own, never the catalog's or one made
@@ -254,15 +244,32 @@ function mintPatchbayMcpServerId(): PatchbayMcpServerId {
   return randomUUID() as PatchbayMcpServerId;
 }
 
+function probeView(outcome: ProbeOutcome): McpServerProbeView {
+  return {
+    status: "ok",
+    at: new Date().toISOString(),
+    serverName: outcome.serverName,
+    serverVersion: outcome.serverVersion,
+    tools: outcome.tools,
+  };
+}
+
 export class McpServersStore {
+  private readonly env: SecretEnvStore;
+  private readonly headerStore: SecretEnvStore;
+  private readonly tokens: McpServerTokenStore;
+  /** Settles once the headers of an earlier version's custom remote
+   * servers are in SecretStorage — every read of a server's headers waits
+   * on it. */
+  private readonly ready: Promise<void>;
+
   constructor(
     private readonly catalog: readonly CatalogEntry[],
     private readonly configs: McpServerConfigStore,
-    private readonly tokens: McpServerTokenStore,
-    /** Env values for custom-stdio servers — SecretStorage-backed
-     * (stores/secret-env.ts), read at attach time in mcpServersFor; the
-     * config record carries no env at all. */
-    private readonly envStore: SecretEnvStore,
+    /** Env and header values — SecretStorage-backed (stores/secret-env.ts),
+     * read at attach time in mcpServersFor; the config record carries
+     * none. */
+    secrets: McpServerSecrets,
     private readonly hooks: McpServersStoreHooks,
     private readonly lines: McpServerLines,
     private readonly wire: McpServerWire,
@@ -273,6 +280,9 @@ export class McpServersStore {
     /** The workspace this window has open — null with none: a server is
      * given to a session only where it is on. */
     private readonly here: WorkspaceId | null,
+    /** An agent's own configured env — with this host's, what a server's
+     * `${VAR}` references are filled from when it is handed to the agent. */
+    private readonly agentEnv: (patchbayAgentId: PatchbayAgentId) => Promise<Env>,
     /** Browser/redirect step for OAuth connects — the orchestrator wires
      * registerUriHandler + asExternalUri; tests wire a fake. Absent →
      * OAuth connects fail labeled (header connects unaffected). */
@@ -283,7 +293,35 @@ export class McpServersStore {
     /** The connect-time tool probe (mcp-probe.ts) — injected so
      * tests fake the handshake instead of hitting network/spawning. */
     private readonly probeFn: ProbeFn = probeMcpServer,
-  ) {}
+  ) {
+    this.env = secrets.env;
+    this.headerStore = secrets.headers;
+    this.tokens = secrets.tokens;
+    const earlier = configs.copiedBefore090;
+    this.ready = earlier === null ? Promise.resolve() : this.moveHeadersBefore090(earlier);
+  }
+
+  /** Once, after the store copied an earlier version's records: each custom
+   * remote server that sent a key gets the header it sent it in, whole, as
+   * its own. The key stays where it was — a window still on that version
+   * reads it there. */
+  private async moveHeadersBefore090(records: readonly unknown[]): Promise<void> {
+    try {
+      const keys = new Map<string, string | undefined>();
+      for (const r of records) {
+        const id = (r as { id?: unknown } | null)?.id;
+        if (typeof id === "string") keys.set(id, (await this.tokens.get(id as PatchbayMcpServerId))?.accessToken);
+      }
+      for (const [id, headers] of headersBefore090(records, (id) => keys.get(id))) await this.headerStore.set(id, headers);
+    } catch (err) {
+      this.log.error(`moving the headers of earlier servers failed — ${agentErrorText(err)}`);
+    }
+  }
+
+  private async headersOf(patchbayMcpServerId: PatchbayMcpServerId): Promise<Env> {
+    await this.ready;
+    return this.headerStore.get(patchbayMcpServerId);
+  }
 
   /** Whether the server is on in this window's workspace. */
   private onHere(config: McpServerConfig): boolean {
@@ -302,40 +340,44 @@ export class McpServersStore {
    * re-reads reality instead of trusting last week's snapshot. */
   private readonly probes = new Map<string, McpServerProbeView>();
 
-  /** The last failure under each connect key — a connect's, an add's, an
-   * import's, a server's save — held until it is dismissed or the same
-   * thing is tried again. Live: a new window starts with none. */
-  private readonly failures = new Map<string, string>();
+  /** The last failure under each connect key — an add's or an edit's, a
+   * curated connect's — held until it is dismissed or the same thing is
+   * tried again; `signIn` when the server asked for one. Live: a new window
+   * starts with none. */
+  private readonly failures = new Map<string, { reason: string; signIn: boolean }>();
 
-  /** The import waiting on the user's names — live, like the failures: its
-   * values never leave this side, the view carries names and summaries. */
-  private review: { id: number; entries: { name: string; source: McpServerSourceView }[] } | null = null;
-  private reviews = 0;
+  /** The server each finished add or edit stored, under its key — held
+   * until its card is closed, so the card knows which server it became. */
+  private readonly added = new Map<string, PatchbayMcpServerId>();
 
   /** The refresh in flight per credential — see `refreshOnce`. */
   private readonly refreshing = new Map<string, Promise<void>>();
 
-  /** One attempt under a connect key: it clears the last one's failure,
+  /** One attempt under a connect key: it clears the last one's outcome,
    * and holds its own until dismissed. One the gates told to stop is no
    * failure — nothing was stored, and there is nothing to say. */
-  private async attempt<T>(key: string, signal: AbortSignal | undefined, run: () => Promise<T>): Promise<T> {
+  private async attempt(key: string, signal: AbortSignal | undefined, run: () => Promise<PatchbayMcpServerId>): Promise<PatchbayMcpServerId> {
     this.failures.delete(key);
+    this.added.delete(key);
     try {
-      return await run();
+      const patchbayMcpServerId = await run();
+      this.added.set(key, patchbayMcpServerId);
+      return patchbayMcpServerId;
     } catch (err) {
       if (signal?.aborted === true) {
         this.log.info(`${key}: stopped — nothing stored`);
       } else {
-        this.failures.set(key, agentErrorText(err));
+        this.failures.set(key, { reason: agentErrorText(err), signIn: err instanceof SignInAsked });
         this.log.error(`${key}: failed — ${agentErrorText(err)}`);
       }
       throw err;
     }
   }
 
-  /** Clears a failure's note. */
+  /** Clears an add's outcome — its failure's note, or the server it made. */
   async dismiss(key: string): Promise<void> {
     this.failures.delete(key);
+    this.added.delete(key);
     await this.refresh();
   }
 
@@ -355,6 +397,50 @@ export class McpServersStore {
     });
     running.catch(() => {}); // given up, it may still reject — never unhandled
     return unlessAborted(running, signal);
+  }
+
+  /** MCP's sign-in against a remote server: discovery, dynamic client
+   * registration, PKCE, the browser — the token it ends with. */
+  private async signIn(url: string, signal: AbortSignal | undefined): Promise<StoredToken> {
+    if (this.oauthUserAgent === null) throw new Error("OAuth is unavailable in this environment");
+    this.log.info(`browser OAuth starting (endpoint ${loggableUrl(url)})`);
+    return signedIn(await this.browserFlow(this.oauthUserAgent, (ua) => connectMcpOAuth(url, CLIENT_INFO, ua), signal));
+  }
+
+  /** Patchbay's own handshake with a server about to be stored — the check
+   * every add and edit passes before anything is kept. A remote server
+   * asking for a sign-in is said as that. */
+  private async check(target: ProbeTarget, signal: AbortSignal | undefined): Promise<ProbeOutcome> {
+    try {
+      return await unlessAborted(this.probeFn(target, signal, this.log), signal);
+    } catch (err) {
+      if (signal?.aborted !== true && asksForSignIn(err)) throw new SignInAsked("the server asks you to sign in");
+      if (signal?.aborted !== true && target.kind === "stdio") throw new Error(`${agentErrorText(err)} (ran in ${target.cwd})`);
+      throw err;
+    }
+  }
+
+  /** A custom draft's check: its variables filled from this host's
+   * environment, then the handshake — a stdio server's only where it would
+   * be on, never running its command in a workspace it is off in: there,
+   * unchecked (null). */
+  private async checkDraft(
+    draft: McpDraft,
+    workspaces: Reach<WorkspaceId>,
+    bearer: string | null,
+    signal: AbortSignal | undefined,
+  ): Promise<ProbeOutcome | null> {
+    const problem = draftProblem(draft);
+    if (problem !== null) throw new Error(problem);
+    const filled = expandDraft(draft, process.env);
+    if ("unset" in filled) throw new Error(unsetSaid(filled.unset));
+    const d = filled.draft;
+    if (d.type === "stdio") {
+      if (!reaches(workspaces, this.here)) return null;
+      return this.check({ kind: "stdio", command: d.command, args: d.args, env: d.env, cwd: this.workspaceCwd }, signal);
+    }
+    const headers = bearer === null ? d.headers : { ...d.headers, Authorization: `Bearer ${bearer}` };
+    return this.check({ kind: "http", url: d.url, headers }, signal);
   }
 
   catalogViews(): CatalogEntryView[] {
@@ -403,20 +489,29 @@ export class McpServersStore {
           },
         ],
         connects: this.connectViews(),
-        importReview: this.importReviewView(),
       },
     );
   }
 
-  /** The connects under way, read off the connect line, and the failures
+  /** The connects under way, read off the connect line, and the outcomes
    * held — one under a key that runs again shows running. */
   private connectViews(): McpServerConnectView[] {
     const running = this.lines.connecting();
+    const held = (key: string) => !running.includes(key);
     return [
       ...running.map((key) => ({ key, ...connectOf(key), status: "running" as const })),
       ...[...this.failures]
-        .filter(([key]) => !running.includes(key))
-        .map(([key, reason]) => ({ key, ...connectOf(key), status: "failed" as const, reason })),
+        .filter(([key]) => held(key))
+        .map(([key, { reason, signIn }]) => ({
+          key,
+          ...connectOf(key),
+          status: "failed" as const,
+          reason,
+          ...(signIn ? { signIn: true as const } : {}),
+        })),
+      ...[...this.added]
+        .filter(([key]) => held(key))
+        .map(([key, server]) => ({ key, ...connectOf(key), status: "added" as const, server })),
     ];
   }
 
@@ -434,24 +529,29 @@ export class McpServersStore {
         catalogId: source.kind === "catalog" ? source.catalogId : undefined,
         command: source.kind === "catalog" ? undefined : customLine(source),
         connected,
+        signedIn: authTypeOf(source) === "oauth",
         workspaces: config.workspaces,
         onHere: this.onHere(config),
         routing: config.routing,
         transport: config.transport,
         probe: this.probes.get(config.id),
         busy: this.lines.busy(config.id),
-        editJson: await this.editJsonFor(config.id, source),
+        draft: await this.draftOf(config),
       });
     }
     return views;
   }
 
-  /** The editable mcpServers entry for a custom server, values included.
-   * Undefined for curated entries — their shape is catalog data. */
-  private async editJsonFor(patchbayMcpServerId: PatchbayMcpServerId, source: McpServerSource): Promise<string | undefined> {
-    if (source.kind === "catalog") return undefined;
-    const entry = await this.entryJsonFor(patchbayMcpServerId, source);
-    return entry === undefined ? undefined : JSON.stringify(entry, null, 2);
+  /** A custom server as its edit form shows it, values included — what
+   * its owner typed. Undefined for curated entries: their shape is catalog
+   * data. */
+  private async draftOf(config: McpServerConfig): Promise<McpDraft | undefined> {
+    const source = config.source;
+    if (source.kind === "custom-stdio") {
+      return { type: "stdio", command: source.command, args: source.args, env: await this.env.get(config.id) };
+    }
+    if (source.kind === "custom-http") return { type: "http", url: source.url, headers: await this.headersOf(config.id) };
+    return undefined;
   }
 
   /** The server's name, read now — undefined once removed. */
@@ -459,46 +559,41 @@ export class McpServersStore {
     return this.configs.get(patchbayMcpServerId)?.name;
   }
 
-  /** Copy config: the server as a `{"mcpServers": {name: entry}}`
-   * document — the well-known shape an import reads and other clients
-   * take. Keyed by display name — the name a re-import gives the server.
-   * A curated entry copies as its resolved endpoint plus auth shape (what
-   * a re-import would create as a custom-http server). Undefined when there
-   * is no endpoint to name. */
+  /** Copy config: the server as a `{"mcpServers": {name: entry}}` document
+   * — the shape other clients take, and the add card reads back. Keyed by
+   * display name. A custom server copies as it is kept, `${VAR}` references
+   * as typed; a curated entry as its resolved endpoint with the header its
+   * key goes in — a sign-in is this machine's own, and the copy carries an
+   * empty header list. Undefined when there is no endpoint to name. */
   async exportJson(patchbayMcpServerId: PatchbayMcpServerId): Promise<string | undefined> {
     const config = this.configs.get(patchbayMcpServerId);
     if (config === undefined) return undefined;
-    const entry = await this.entryJsonFor(patchbayMcpServerId, config.source);
-    if (entry === undefined) return undefined;
-    return JSON.stringify({ mcpServers: { [config.name]: entry } }, null, 2);
-  }
-
-  /** One `mcpServers` entry, the shape mcpServersEntrySchema reads back,
-   * carrying what the owner typed: env values, and the key of a header-auth
-   * server. An OAuth token is flow-minted and never rides. */
-  private async entryJsonFor(
-    patchbayMcpServerId: PatchbayMcpServerId,
-    source: McpServerSource,
-  ): Promise<Record<string, unknown> | undefined> {
-    if (source.kind === "custom-stdio") {
-      return { command: source.command, args: source.args, env: await this.envStore.get(patchbayMcpServerId) };
+    const source = config.source;
+    let draft = await this.draftOf(config);
+    if (source.kind === "catalog") {
+      const entry = this.entryFor(source.catalogId);
+      const url = catalogEndpoint(source, entry);
+      if (url === "") return undefined;
+      const header = source.authMode === "header" ? catalogHeader(source, entry) : null;
+      const key = await this.headerKey(patchbayMcpServerId);
+      draft = { type: "http", url, headers: header !== null && key !== undefined ? { [header.headerName]: `${header.valuePrefix}${key}` } : {} };
     }
-    const entry = source.kind === "catalog" ? this.entryFor(source.catalogId) : undefined;
-    const url = endpointOf(source, entry);
-    if (url === "") return undefined;
-    const authType = authTypeOf(source);
-    if (authType !== "header") return { url, authType };
-    const token = await this.headerKey(patchbayMcpServerId);
-    return { url, authType, ...headerShapeOf(source, entry), ...(token !== undefined ? { token } : {}) };
+    return draft === undefined ? undefined : documentOf([{ name: config.name, draft }]);
   }
 
-  /** The key a header-auth server sends — what its owner typed, so it
-   * leaves with the server's copy or export. Undefined for any other
-   * server: an OAuth token is flow-minted and never leaves. */
+  /** The key a curated header-auth server sends — what its owner typed, so
+   * it leaves with the server's export. Undefined for any other server: an
+   * OAuth token is flow-minted and never leaves, and a custom server's
+   * headers are its own (`headers`). */
   async headerKey(patchbayMcpServerId: PatchbayMcpServerId): Promise<string | undefined> {
     const source = this.configs.get(patchbayMcpServerId)?.source;
-    if (source === undefined || authTypeOf(source) !== "header") return undefined;
+    if (source?.kind !== "catalog" || source.authMode !== "header") return undefined;
     return (await this.tokens.get(patchbayMcpServerId))?.accessToken;
+  }
+
+  /** A custom remote server's headers, as its owner typed them. */
+  async headers(patchbayMcpServerId: PatchbayMcpServerId): Promise<Env> {
+    return this.configs.get(patchbayMcpServerId)?.source.kind === "custom-http" ? this.headersOf(patchbayMcpServerId) : {};
   }
 
   private entryFor(catalogId: string): CatalogEntry | undefined {
@@ -520,55 +615,71 @@ export class McpServersStore {
     return { error: "no endpoint available" };
   }
 
-  /** Static-key connect (the v1 floor): store the pasted key, record
-   * which mechanism/endpoint this connection uses. No network round-trip;
-   * the first real request proves the key. Stored under the name the user
+  /** Stores a curated server that passed its check — its credential, its
+   * record, its first reading. */
+  private async storeCatalog(
+    entry: CatalogEntry,
+    name: string,
+    authMode: "header" | "oauth",
+    url: string,
+    token: StoredToken,
+    reach: { routing: McpServerRoutingView; workspaces: Reach<WorkspaceId> },
+    outcome: ProbeOutcome,
+  ): Promise<PatchbayMcpServerId> {
+    const patchbayMcpServerId = mintPatchbayMcpServerId();
+    await this.tokens.set(patchbayMcpServerId, token);
+    const given = await this.configs.add({
+      id: patchbayMcpServerId,
+      name,
+      source: { kind: "catalog", catalogId: entry.id, authMode, ...(entry.userUrl ? { url } : {}) },
+      routing: ownReach(reach.routing),
+      workspaces: ownReach(reach.workspaces),
+      transport: "auto",
+    });
+    this.probes.set(patchbayMcpServerId, probeView(outcome));
+    this.log.info(`${patchbayMcpServerId}: ${given} connected with ${authMode} (endpoint ${loggableUrl(url)})`);
+    return patchbayMcpServerId;
+  }
+
+  /** A curated entry's key connect: the key checked against the server
+   * first, stored only once it answers. Stored under the name the user
    * gave it. Returns the server's id. */
   connectCatalogWithKey(
     catalogId: string,
     name: string,
     token: string,
     url: string | undefined,
-    workspaces: Reach<WorkspaceId>,
+    reach: { routing: McpServerRoutingView; workspaces: Reach<WorkspaceId> },
     signal?: AbortSignal,
   ): Promise<PatchbayMcpServerId> {
     return this.attempt(connectKey.catalog(catalogId), signal, async () => {
       McpServerConfigStore.admitName(name);
       const entry = this.entryFor(catalogId);
-      if (entry === undefined || entry.auth.header === null) throw new Error("no API-key mode for this server");
+      const header = entry?.auth.header;
+      if (entry === undefined || header == null) throw new Error("no API-key mode for this server");
       const endpoint = this.resolveEndpoint(entry, url);
       if ("error" in endpoint) throw new Error(endpoint.error);
-      if (token.trim() === "") throw new Error("key is empty");
-      const patchbayMcpServerId = mintPatchbayMcpServerId();
-      await this.tokens.set(patchbayMcpServerId, { accessToken: token.trim() });
-      const given = await this.configs.add({
-        id: patchbayMcpServerId,
-        name,
-        source: {
-          kind: "catalog",
-          catalogId,
-          authMode: "header",
-          ...(entry.userUrl ? { url: endpoint.url } : {}),
-        },
-        routing: "auto",
-        workspaces: ownReach(workspaces),
-        transport: "auto",
-      });
-      this.log.info(`${patchbayMcpServerId}: ${given} connected with key (endpoint ${loggableUrl(endpoint.url)})`);
-      return patchbayMcpServerId;
+      const key = token.trim();
+      if (key === "") throw new Error("key is empty");
+      const outcome = await this.check(
+        { kind: "http", url: endpoint.url, headers: { [header.headerName]: `${header.valuePrefix}${key}` } },
+        signal,
+      );
+      return this.storeCatalog(entry, name, "header", endpoint.url, { accessToken: key }, reach, outcome);
     });
   }
 
   /** MCP-spec OAuth connect: URL-only — discovery, dynamic client
-   * registration, PKCE, browser redirect via the injected user agent.
-   * Failure (gated DCR, non-compliant server, denied consent) is immediate
-   * and labeled; an abandoned tab waits until the connect is cancelled.
-   * Stored under the name the user gave it. Returns the server's id. */
+   * registration, PKCE, browser redirect via the injected user agent —
+   * then the check, with the token it ended with. Failure (gated DCR,
+   * non-compliant server, denied consent) is immediate and labeled; an
+   * abandoned tab waits until the connect is cancelled. Stored under the
+   * name the user gave it. Returns the server's id. */
   connectCatalogOAuth(
     catalogId: string,
     name: string,
     url: string | undefined,
-    workspaces: Reach<WorkspaceId>,
+    reach: { routing: McpServerRoutingView; workspaces: Reach<WorkspaceId> },
     signal?: AbortSignal,
   ): Promise<PatchbayMcpServerId> {
     return this.attempt(connectKey.catalog(catalogId), signal, async () => {
@@ -577,239 +688,122 @@ export class McpServersStore {
       if (entry === undefined || !entry.auth.oauth) throw new Error("no OAuth mode for this server");
       const endpoint = this.resolveEndpoint(entry, url);
       if ("error" in endpoint) throw new Error(endpoint.error);
-      if (this.oauthUserAgent === null) throw new Error("OAuth is unavailable in this environment");
-      this.log.info(`${catalogId}: browser OAuth starting (endpoint ${loggableUrl(endpoint.url)})`);
-      const result = await this.browserFlow(this.oauthUserAgent, (ua) => connectMcpOAuth(endpoint.url, CLIENT_INFO, ua), signal);
-      const patchbayMcpServerId = mintPatchbayMcpServerId();
-      await this.tokens.set(patchbayMcpServerId, {
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
-        expiresAt: expiresAtFrom(result.expiresIn),
-        tokenEndpoint: result.tokenEndpoint,
-        clientId: result.clientId,
-      });
-      const given = await this.configs.add({
-        id: patchbayMcpServerId,
-        name,
-        source: {
-          kind: "catalog",
-          catalogId,
-          authMode: "oauth",
-          ...(entry.userUrl ? { url: endpoint.url } : {}),
-        },
-        routing: "auto",
-        workspaces: ownReach(workspaces),
-        transport: "auto",
-      });
-      this.log.info(`${patchbayMcpServerId}: ${given} connected via OAuth`);
-      return patchbayMcpServerId;
+      const token = await this.signIn(endpoint.url, signal);
+      const outcome = await this.check(
+        { kind: "http", url: endpoint.url, headers: { Authorization: `Bearer ${token.accessToken}` } },
+        signal,
+      );
+      return this.storeCatalog(entry, name, "oauth", endpoint.url, token, reach, outcome);
     });
   }
 
-  /** The escape hatch: any MCP server, command or URL, with auth. Nothing
-   * is stored until it can actually work: a custom OAuth connect runs the
-   * browser flow *first* and stores only on success — cancelling consent
-   * means nothing was added, never a stranded credential-less record. The
-   * id is minted; the name is cut to what agents keep, and a taken one
-   * gets a number. Returns the id. */
+  /** Any MCP server, as the add card's draft — checked against the server
+   * before anything is stored, and stored only once it answers: a bad key,
+   * a failing command or an unset variable leaves nothing behind. A remote
+   * server that asks for a sign-in fails saying so; added again with
+   * `signIn`, the browser flow runs first and the check goes with its
+   * token. `card` keys the attempt — the add card it came from. The id is
+   * minted; the name is cut to what agents keep, and a taken one gets a
+   * number. Returns the id. */
   addCustom(
+    card: string,
     name: string,
-    source: McpServerSourceView,
-    routing: McpServerRoutingView,
-    workspaces: Reach<WorkspaceId>,
+    draft: McpDraft,
+    reach: { routing: McpServerRoutingView; workspaces: Reach<WorkspaceId> },
+    signIn: boolean,
     signal?: AbortSignal,
   ): Promise<PatchbayMcpServerId> {
-    return this.attempt(connectKey.custom(name), signal, async () => {
+    return this.attempt(connectKey.custom(card), signal, async () => {
       McpServerConfigStore.admitName(name);
+      const d = normalized(draft);
+      const token = signIn && d.type === "http" ? await this.signIn(d.url, signal) : null;
+      const outcome = await this.checkDraft(d, reach.workspaces, token?.accessToken ?? null, signal);
       const patchbayMcpServerId = mintPatchbayMcpServerId();
-      let configSource: McpServerSource;
-      if (source.kind === "custom-stdio") {
-        // `args` arrive structured (form lines / imported JSON) and are never
-        // re-parsed; the `command` field alone may still be a typed line
-        // ("npx foo"), so it gets the quote-aware house parser (parsing is
-        // logic, and it lives here).
-        const parsed = parseCommandLine(source.command);
-        if (parsed === null) throw new Error("command line has an unterminated quote");
-        configSource = {
-          kind: "custom-stdio",
-          command: parsed.command,
-          args: [...parsed.args, ...source.args],
-        };
-        // Values ride the action once and land in SecretStorage — the config
-        // record above deliberately carries no env.
-        await this.envStore.set(patchbayMcpServerId, { ...source.env });
-      } else {
-        configSource = customHttpSource(source);
-        if (source.authType === "header") {
-          if (!source.token) throw new Error("key is empty");
-          await this.tokens.set(patchbayMcpServerId, { accessToken: source.token });
-        }
-        if (source.authType === "oauth") {
-          if (this.oauthUserAgent === null) throw new Error("OAuth is unavailable in this environment");
-          const result = await this.browserFlow(this.oauthUserAgent, (ua) => connectMcpOAuth(source.url, CLIENT_INFO, ua), signal);
-          await this.tokens.set(patchbayMcpServerId, {
-            accessToken: result.accessToken,
-            refreshToken: result.refreshToken,
-            expiresAt: expiresAtFrom(result.expiresIn),
-            tokenEndpoint: result.tokenEndpoint,
-            clientId: result.clientId,
-          });
-        }
-      }
+      await this.keepSecrets(patchbayMcpServerId, d, token);
       const given = await this.configs.add({
         id: patchbayMcpServerId,
         name,
-        source: configSource,
-        routing: ownReach(routing),
-        workspaces: ownReach(workspaces),
+        source: this.sourceOf(d, token !== null),
+        routing: ownReach(reach.routing),
+        workspaces: ownReach(reach.workspaces),
         transport: "auto",
       });
-      this.log.info(`${patchbayMcpServerId}: custom ${configSource.kind} ${given} added`);
+      if (outcome !== null) this.probes.set(patchbayMcpServerId, probeView(outcome));
+      this.log.info(`${patchbayMcpServerId}: custom ${d.type} ${given} added${outcome === null ? " — off here, so not checked" : ""}`);
       return patchbayMcpServerId;
     });
   }
 
-  /** Reads the well-known `{"mcpServers": {...}}` JSON (a bare name→spec
-   * map is accepted too) into the review an import waits in — each entry a
-   * custom server named by its key until the user names it. Nothing is
-   * added here: a name is final once added, so the user sees and may change
-   * every one first. Only what validates is reviewed — a trust boundary,
-   * same as every store read; the rest is held as the import's failures,
-   * per entry, without stopping the others. A newer import replaces the
-   * review. */
-  async readImport(json: string): Promise<void> {
-    for (const key of [...this.failures.keys()]) {
-      if (connectOf(key).kind === "import") this.failures.delete(key);
-    }
-    const entries: { name: string; source: McpServerSourceView }[] = [];
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(json);
-    } catch {
-      this.failures.set(connectKey.import(), "not valid JSON");
-    }
-    const root = (parsed as { mcpServers?: unknown } | undefined)?.mcpServers ?? parsed;
-    if (parsed !== undefined && (typeof root !== "object" || root === null || Array.isArray(root))) {
-      this.failures.set(connectKey.import(), 'expected {"mcpServers": {name: {...}}} or a name→server map');
-    } else if (parsed !== undefined) {
-      for (const [name, raw] of Object.entries(root as Record<string, unknown>)) {
-        const spec = mcpServersEntrySchema.safeParse(raw);
-        if (!spec.success) {
-          this.failures.set(connectKey.import(name), `"${name}": neither a command entry nor a url entry`);
-          continue;
-        }
-        entries.push({
-          name,
-          source:
-            "command" in spec.data
-              ? { kind: "custom-stdio", command: spec.data.command, args: spec.data.args, env: spec.data.env }
-              : {
-                  kind: "custom-http",
-                  url: spec.data.url,
-                  authType: spec.data.authType,
-                  headerName: spec.data.headerName,
-                  valuePrefix: spec.data.valuePrefix,
-                  token: spec.data.token,
-                },
-        });
-      }
-    }
-    this.review = entries.length === 0 ? null : { id: ++this.reviews, entries };
-    await this.refresh();
-  }
-
-  /** The entries of the review the user answered, and the review is over —
-   * none when a newer import replaced it or it was cancelled. */
-  async takeImport(importId: number): Promise<{ name: string; source: McpServerSourceView }[]> {
-    if (this.review?.id !== importId) return [];
-    const { entries } = this.review;
-    this.review = null;
-    await this.refresh();
-    return entries;
-  }
-
-  /** The import under review is dropped — nothing of it is added. */
-  async cancelImport(importId: number): Promise<void> {
-    if (this.review?.id !== importId) return;
-    this.review = null;
-    await this.refresh();
-  }
-
-  /** The stores are about to move under it (an erase, an import): the
-   * review goes — its values were typed for servers that would be added. */
-  dropImport(): void {
-    this.review = null;
-  }
-
-  private importReviewView(): McpImportReviewView | null {
-    if (this.review === null) return null;
-    return {
-      id: this.review.id,
-      entries: this.review.entries.map(({ name, source }) => ({
-        name,
-        summary: customLine(source),
-      })),
-    };
-  }
-
-  /** Applies an edited mcpServers entry to one custom server — the box is
-   * the truth: env is stored as written, and for header auth so is
-   * `token` (removing it removes the key, which reads as disconnected
-   * until one is entered again). */
-  async updateFromJson(patchbayMcpServerId: PatchbayMcpServerId, json: string): Promise<void> {
-    const existing = this.configs.get(patchbayMcpServerId);
-    if (existing === undefined || existing.source.kind === "catalog") return;
-    const key = connectKey.server(patchbayMcpServerId);
-    this.failures.delete(key);
-    let raw: unknown;
-    try {
-      raw = JSON.parse(json);
-    } catch {
-      this.failures.set(key, "not valid JSON");
-      await this.refresh();
-      return;
-    }
-    const spec = mcpServersEntrySchema.safeParse(raw);
-    if (!spec.success) {
-      this.failures.set(key, "neither a command entry nor a url entry");
-      await this.refresh();
-      return;
-    }
-    if ("command" in spec.data) {
-      await this.envStore.set(patchbayMcpServerId, spec.data.env);
-    } else if (spec.data.authType === "header") {
-      if (spec.data.token) await this.tokens.set(patchbayMcpServerId, { accessToken: spec.data.token });
-      else await this.tokens.remove(patchbayMcpServerId);
-    }
-    // A save doesn't wait for the server's line: one removed while its
-    // secrets were written stays removed, and takes them with it.
-    const now = this.configs.get(patchbayMcpServerId);
-    if (now === undefined) {
-      await this.tokens.remove(patchbayMcpServerId);
-      await this.envStore.remove(patchbayMcpServerId);
-      return;
-    }
-    await this.configs.upsert({
-      ...now,
-      source:
-        "command" in spec.data
-          ? { kind: "custom-stdio", command: spec.data.command, args: spec.data.args }
-          : customHttpSource(spec.data),
+  /** A custom server edited in the add card's form: checked as an add is,
+   * then stored over the server — its name, who gets it and its order
+   * kept. A sign-in stays with a server whose URL is unchanged; `signIn`
+   * runs a fresh one. */
+  updateCustom(
+    patchbayMcpServerId: PatchbayMcpServerId,
+    draft: McpDraft,
+    signIn: boolean,
+    signal?: AbortSignal,
+  ): Promise<PatchbayMcpServerId> {
+    return this.attempt(connectKey.server(patchbayMcpServerId), signal, async () => {
+      const existing = this.configs.get(patchbayMcpServerId);
+      if (existing === undefined || existing.source.kind === "catalog") throw new Error("no such custom server");
+      const was = existing.source;
+      const d = normalized(draft);
+      const kept =
+        !signIn && d.type === "http" && was.kind === "custom-http" && was.oauth && was.url === d.url
+          ? await this.freshToken(patchbayMcpServerId)
+          : null;
+      const token = signIn && d.type === "http" ? await this.signIn(d.url, signal) : null;
+      const bearer = token?.accessToken ?? kept?.accessToken ?? null;
+      const outcome = await this.checkDraft(d, existing.workspaces, bearer, signal);
+      // Removed while it was checked: it stays removed.
+      const now = this.configs.get(patchbayMcpServerId);
+      if (now === undefined) throw new Error("the server was removed");
+      await this.keepSecrets(patchbayMcpServerId, d, token, kept !== null);
+      await this.configs.upsert({ ...now, source: this.sourceOf(d, bearer !== null) });
+      if (outcome !== null) this.probes.set(patchbayMcpServerId, probeView(outcome));
+      else this.probes.delete(patchbayMcpServerId);
+      this.log.info(`${patchbayMcpServerId}: custom ${d.type} ${now.name} saved`);
+      return patchbayMcpServerId;
     });
-    await this.refresh();
+  }
+
+  private sourceOf(draft: McpDraft, oauth: boolean): McpServerSource {
+    return draft.type === "stdio"
+      ? { kind: "custom-stdio", command: draft.command, args: [...draft.args] }
+      : { kind: "custom-http", url: draft.url, oauth };
+  }
+
+  /** A custom server's secrets as its draft has them: env for a command,
+   * headers for a URL, and a sign-in's token — a fresh one, or the one it
+   * keeps. Nothing of the other kind stays. */
+  private async keepSecrets(
+    patchbayMcpServerId: PatchbayMcpServerId,
+    draft: McpDraft,
+    token: StoredToken | null,
+    keepsSignIn = false,
+  ): Promise<void> {
+    await this.env.set(patchbayMcpServerId, draft.type === "stdio" ? { ...draft.env } : {});
+    await this.headerStore.set(patchbayMcpServerId, draft.type === "http" ? { ...draft.headers } : {});
+    if (token !== null) await this.tokens.set(patchbayMcpServerId, token);
+    else if (!keepsSignIn) await this.tokens.remove(patchbayMcpServerId);
   }
 
   /** An imported server landed on this machine, whole, on `record.id` — its
-   * env and header key as the file carries them. A sign-in is this
+   * env, headers and key as the file carries them. A sign-in is this
    * machine's own: it stays with a server whose connection is unchanged,
    * and goes with one that moved. Returns the name it holds here: a taken
    * one gets a number. */
-  async landImported(record: McpServerConfig, secret: { env?: Readonly<Record<string, string>>; key?: string } | undefined): Promise<string> {
+  async landImported(
+    record: McpServerConfig,
+    secret: { env?: Readonly<Env>; headers?: Readonly<Env>; key?: string } | undefined,
+  ): Promise<string> {
     const mine = this.configs.get(record.id);
     let name = record.name;
     if (mine === undefined) name = await this.configs.add(record);
     else await this.configs.upsert(record);
-    await this.envStore.set(record.id, { ...secret?.env });
+    await this.env.set(record.id, { ...secret?.env });
+    await this.headerStore.set(record.id, { ...secret?.headers });
     const auth = authTypeOf(record.source);
     const keepsSignIn = auth === "oauth" && mine !== undefined && isDeepStrictEqual(mine.source, record.source);
     if (auth === "header" && secret?.key !== undefined) await this.tokens.set(record.id, { accessToken: secret.key });
@@ -821,24 +815,27 @@ export class McpServersStore {
    * records still key them; then the records whole. */
   async eraseAll(): Promise<void> {
     for (const { id } of this.configs.list()) {
-      await this.envStore.remove(id);
+      await this.env.remove(id);
+      await this.headerStore.remove(id);
       await this.tokens.remove(id);
     }
     await this.configs.wipe();
   }
 
-  /** Disconnect *is* remove — the full clear (credential + env + config):
-   * the server is gone, curated or custom; its catalog entry stays there to
-   * connect again. The non-destructive option is switching it off where it
-   * is on (`setWorkspaces`), which keeps everything. */
+  /** Disconnect *is* remove — the full clear (credential + env + headers +
+   * config): the server is gone, curated or custom; its catalog entry stays
+   * there to connect again. The non-destructive option is switching it off
+   * where it is on (`setWorkspaces`), which keeps everything. */
   async remove(patchbayMcpServerId: PatchbayMcpServerId): Promise<void> {
     if (patchbayMcpServerId === EDITOR_SERVER.id) return; // built in: never removed
     this.probes.delete(patchbayMcpServerId);
     this.failures.delete(connectKey.server(patchbayMcpServerId));
+    this.added.delete(connectKey.server(patchbayMcpServerId));
     await this.tokens.remove(patchbayMcpServerId);
-    await this.envStore.remove(patchbayMcpServerId);
+    await this.env.remove(patchbayMcpServerId);
+    await this.headerStore.remove(patchbayMcpServerId);
     await this.configs.remove(patchbayMcpServerId);
-    this.log.info(`${patchbayMcpServerId}: removed — credential, env, and config cleared`);
+    this.log.info(`${patchbayMcpServerId}: removed — credential, env, headers and config cleared`);
   }
 
   /** An agent removed: no server's reach names it any more. */
@@ -878,13 +875,13 @@ export class McpServersStore {
     return this.probes.has(EDITOR_SERVER.id) ? [] : [EDITOR_SERVER.id];
   }
 
-  /** Runs the connect-time tool probe and caches the outcome on the card
+  /** Runs the tool probe and caches the outcome on the card
    * (protocol.ts McpServerProbeView — provider-side truth, timestamped).
-   * Explicit-trigger only (connect, switched on here, refresh button, the
-   * page of the built-in servers opened): probing a custom-stdio server
-   * executes its command — and only where the server is on — and even http
-   * shouldn't fire on background sweeps —
-   * reality is read when the user acts on it. The
+   * Explicit-trigger only (switched on here, refresh button, the page of
+   * the built-in servers opened): probing a custom-stdio server executes
+   * its command — and only where the server is on — and even http
+   * shouldn't fire on background sweeps — reality is read when the user
+   * acts on it. The
    * built-in editor server is probed the same way, through the launch every
    * agent is handed — under a token no attach minted, which the handshake
    * never presents: initialize and tools/list are the server's own. */
@@ -897,42 +894,30 @@ export class McpServersStore {
       this.probes.delete(patchbayMcpServerId);
       return;
     }
-    let target: ProbeTarget | null = null;
     try {
-      target = config !== undefined ? await this.probeTargetFor(config) : this.editorProbeTarget();
+      const target = config !== undefined ? await this.probeTargetFor(config) : this.editorProbeTarget();
       if (target === null) {
         // Nothing reachable to probe (no endpoint / missing credential) —
         // the card's connected flag already tells that story.
         this.probes.delete(patchbayMcpServerId);
       } else {
-        const outcome = await unlessAborted(this.probeFn(target, signal, this.log), signal);
-        this.probes.set(patchbayMcpServerId, {
-          status: "ok",
-          at: new Date().toISOString(),
-          serverName: outcome.serverName,
-          serverVersion: outcome.serverVersion,
-          tools: outcome.tools,
-        });
+        const outcome = await this.check(target, signal);
+        this.probes.set(patchbayMcpServerId, probeView(outcome));
         this.log.info(`${patchbayMcpServerId}: probe ok — ${outcome.tools.length} tool(s)`);
       }
     } catch (err) {
       // Told to stop, the probe has no outcome to keep.
       if (signal?.aborted === true) throw err;
-      // A stdio failure names where the command ran: a server that reads
-      // project-local config fails differently per directory, and the
-      // reason should let the user see which one was tried.
-      const reason =
-        target?.kind === "stdio"
-          ? `${agentErrorText(err)} (ran in ${target.cwd})`
-          : agentErrorText(err);
+      const reason = agentErrorText(err);
       this.probes.set(patchbayMcpServerId, { status: "failed", at: new Date().toISOString(), reason });
       this.log.info(`${patchbayMcpServerId}: probe failed — ${reason}`);
     }
   }
 
   /** The probe's connection recipe for one server — same resolution as
-   * mcpServersFor (catalog entry URL, header shape, fresh token), pointed
-   * at patchbay's own MCP client instead of an agent's. */
+   * mcpServersFor (the server's draft filled from this host's environment,
+   * a curated entry's URL and header, a fresh token), pointed at
+   * patchbay's own MCP client instead of an agent's. */
   private editorProbeTarget(): ProbeTarget {
     const launch = editorServer(this.wire, randomUUID());
     return {
@@ -945,24 +930,41 @@ export class McpServersStore {
   }
 
   private async probeTargetFor(config: McpServerConfig): Promise<ProbeTarget | null> {
+    const live = await this.liveDraft(config, process.env);
+    if (live === null) return null;
+    if ("unset" in live) throw new Error(unsetSaid(live.unset));
+    const d = live.draft;
+    return d.type === "stdio"
+      ? { kind: "stdio", command: d.command, args: d.args, env: d.env, cwd: this.workspaceCwd }
+      : { kind: "http", url: d.url, headers: d.headers };
+  }
+
+  /** A server as it is handed over now: its draft — a curated one's, its
+   * endpoint with the header its credential goes in — filled from `env`,
+   * a sign-in's fresh token beside its headers. Null when there is nothing
+   * to reach (no endpoint, a credential it needs not stored); the unset
+   * variables when it can't be filled. */
+  private async liveDraft(
+    config: McpServerConfig,
+    env: Readonly<Record<string, string | undefined>>,
+  ): Promise<{ draft: McpDraft } | { unset: string[] } | null> {
     const source = config.source;
-    if (source.kind === "custom-stdio") {
-      return {
-        kind: "stdio",
-        command: source.command,
-        args: source.args,
-        env: await this.envStore.get(config.id),
-        cwd: this.workspaceCwd,
-      };
+    if (source.kind === "catalog") {
+      const entry = this.entryFor(source.catalogId);
+      const url = catalogEndpoint(source, entry);
+      const header = catalogHeader(source, entry);
+      if (url === "" || header === null) return null;
+      const token = (await this.freshToken(config.id))?.accessToken;
+      if (token === undefined) return null; // needs a credential, none stored
+      return { draft: { type: "http", url, headers: { [header.headerName]: `${header.valuePrefix}${token}` } } };
     }
-    const entry = source.kind === "catalog" ? this.entryFor(source.catalogId) : undefined;
-    const url = endpointOf(source, entry);
-    if (url === "") return null;
-    const shape = headerShapeOf(source, entry);
-    if (shape === null) return { kind: "http", url, header: null };
-    const token = (await this.freshToken(config.id))?.accessToken ?? null;
-    if (token === null) return null; // needs a credential, none stored
-    return { kind: "http", url, header: { name: shape.headerName, value: `${shape.valuePrefix}${token}` } };
+    const draft = await this.draftOf(config);
+    if (draft === undefined) return null;
+    const filled = expandDraft(draft, env);
+    if ("unset" in filled || filled.draft.type === "stdio" || source.kind !== "custom-http" || !source.oauth) return filled;
+    const token = (await this.freshToken(config.id))?.accessToken;
+    if (token === undefined) return null;
+    return { draft: { ...filled.draft, headers: { ...filled.draft.headers, Authorization: `Bearer ${token}` } } };
   }
 
   async setRouting(patchbayMcpServerId: PatchbayMcpServerId, routing: McpServerRoutingView): Promise<void> {
@@ -975,14 +977,16 @@ export class McpServersStore {
     await this.refresh();
   }
 
-  /** A server's credential for the bridge serving it to `patchbayAgentId` — only
-   * while the server is still connected, on in this workspace and routed to
-   * that agent: switching it off, re-routing or removing it reaches a
-   * running bridge at its next request. */
-  async credentialFor(patchbayMcpServerId: PatchbayMcpServerId, patchbayAgentId: PatchbayAgentId): Promise<{ accessToken: string } | null> {
+  /** The headers the bridge serving a remote server to `patchbayAgentId`
+   * sends — only while the server is still connected, on in this workspace
+   * and routed to that agent: switching it off, re-routing or removing it
+   * reaches a running bridge at its next request. Filled from the
+   * environment the agent runs with. */
+  async headersFor(patchbayMcpServerId: PatchbayMcpServerId, patchbayAgentId: PatchbayAgentId): Promise<Env | null> {
     const config = this.configs.get(patchbayMcpServerId);
     if (config === undefined || !this.givenTo(config, patchbayAgentId)) return null;
-    return this.freshToken(patchbayMcpServerId);
+    const live = await this.liveDraft(config, { ...process.env, ...(await this.agentEnv(patchbayAgentId)) });
+    return live !== null && "draft" in live && live.draft.type === "http" ? { ...live.draft.headers } : null;
   }
 
   /** The stored token, refreshed first when near expiry and refreshable —
@@ -1037,74 +1041,71 @@ export class McpServersStore {
    * (protocol.ts records the fidelity-gate supersession) and is actually
    * usable (connected where a credential is needed, a real endpoint where
    * one is required) — and, beside them, which servers were given and how:
-   * the session's attach records it. Every value that crosses to the agent
-   * is registered with the wire log's redaction, here, where it crosses.
+   * the session's attach records it. Each server's `${VAR}` references are
+   * filled here, from the environment the agent runs with — this host's
+   * and the agent's own env; one with a variable unset and no default is
+   * not given, and `withheld` says which and why. Every value that crosses
+   * to the agent is registered with the wire log's redaction, here, where
+   * it crosses.
    * custom-stdio needs no bridge — handed straight through.
    * catalog/custom-http go one of two ways (prompt.image mechanics —
    * capability-conditional delivery): `declaresHttp` and transport "auto" ⇒
-   * a real `type: "http"` entry, the agent's own MCP client connects (token
-   * read here, at attach — it rides agent-visible config, ephemeral per
-   * session, exactly like a CLI-added server; the recorded trade superseding
-   * the earlier bridge-only rule). Otherwise the stdio-to-HTTP
-   * bridge, the guaranteed floor. */
+   * a real `type: "http"` entry, the agent's own MCP client connects
+   * (headers read here, at attach — they ride agent-visible config,
+   * ephemeral per session, exactly like a CLI-added server; the recorded
+   * trade superseding the earlier bridge-only rule). Otherwise the
+   * stdio-to-HTTP bridge, the guaranteed floor, which asks for the headers
+   * per request. */
   async mcpServersFor(
     patchbayAgentId: PatchbayAgentId,
     contextToken: string,
     declaresHttp: boolean,
-  ): Promise<{ servers: McpServer[]; given: AttachedServer[] }> {
+  ): Promise<{ servers: McpServer[]; given: AttachedServer[]; withheld: string[] }> {
     // McpServerStdio is the untagged union member — no discriminant needed
     // since it's the only variant every agent is guaranteed to accept.
     const servers: McpServer[] = [editorServer(this.wire, contextToken)];
     const given: AttachedServer[] = [{ id: EDITOR_SERVER.id, delivery: "stdio" }];
+    const withheld: string[] = [];
+    const env = { ...process.env, ...(await this.agentEnv(patchbayAgentId)) };
     for (const config of this.configs.list()) {
       if (!this.givenTo(config, patchbayAgentId)) continue;
-
-      const source = config.source;
-      if (source.kind === "custom-stdio") {
-        // Env values read from SecretStorage at the moment of attach — this
-        // is also where they necessarily cross to the agent: the agent
-        // spawns stdio servers itself (ACP model), so the spawn env must
-        // ride the session's mcpServers config. SecretStorage governs
-        // where patchbay keeps them at rest, not that inherent handoff.
-        // No cwd travels: the entry has no such field, so the server runs
-        // wherever the agent does — the same workspaceCwd the probe uses.
-        const env = await this.envStore.get(config.id);
-        servers.push({
-          name: config.name,
-          command: source.command,
-          args: source.args,
-          env: Object.entries(env).map(([name, value]) => ({ name, value })),
-        });
-        given.push({ id: config.id, delivery: "stdio" });
+      // Env and header values read from SecretStorage at the moment of
+      // attach — this is also where they necessarily cross to the agent:
+      // the agent spawns stdio servers itself (ACP model), so the spawn env
+      // must ride the session's mcpServers config. SecretStorage governs
+      // where patchbay keeps them at rest, not that inherent handoff.
+      const live = await this.liveDraft(config, env);
+      if (live === null) continue; // not connectable — nothing to route to
+      if ("unset" in live) {
+        withheld.push(`MCP server "${config.name}" wasn't given to the agent: ${unsetSaid(live.unset)}.`);
         continue;
       }
-
-      const entry = source.kind === "catalog" ? this.entryFor(source.catalogId) : undefined;
-      const url = endpointOf(source, entry);
-      if (url === "") continue; // not connectable — nothing to route to
-      if (needsToken(source) && (await this.tokens.get(config.id)) === null) continue;
-
-      const header = headerShapeOf(source, entry);
-      if (declaresHttp && config.transport === "auto") {
-        // freshToken refreshes first, so the agent starts the session
-        // with the freshest credential we can mint — but passthrough is a
-        // snapshot: a token expiring mid-session is the agent's 401 to
-        // surface, not ours to fix (the bridge path re-reads per request).
-        const token = header !== null ? (await this.freshToken(config.id))?.accessToken : null;
+      const d = live.draft;
+      if (d.type === "stdio") {
+        // No cwd travels: the entry has no such field, so the server runs
+        // wherever the agent does — the same workspaceCwd the probe uses.
+        servers.push({
+          name: config.name,
+          command: d.command,
+          args: [...d.args],
+          env: Object.entries(d.env).map(([name, value]) => ({ name, value })),
+        });
+        given.push({ id: config.id, delivery: "stdio" });
+      } else if (declaresHttp && config.transport === "auto") {
+        // Passthrough is a snapshot: a token expiring mid-session is the
+        // agent's 401 to surface, not ours to fix (the bridge path re-reads
+        // per request).
         servers.push({
           type: "http",
           name: config.name,
-          url,
-          headers:
-            header !== null && token != null
-              ? [{ name: header.headerName, value: `${header.valuePrefix}${token}` }]
-              : [],
+          url: d.url,
+          headers: Object.entries(d.headers).map(([name, value]) => ({ name, value })),
         });
         given.push({ id: config.id, delivery: "http" });
-        continue;
+      } else {
+        servers.push(bridgeServer(this.wire, contextToken, { id: config.id, name: config.name, url: d.url }));
+        given.push({ id: config.id, delivery: "bridge" });
       }
-      servers.push(bridgeServer(this.wire, contextToken, { id: config.id, name: config.name, url, header }));
-      given.push({ id: config.id, delivery: "bridge" });
     }
     // Env and header values are secrets by classification. Over-redaction
     // (plumbing values like socket paths get masked too) is the safe
@@ -1117,6 +1118,6 @@ export class McpServersStore {
       `mcpServersFor ${patchbayAgentId}: serving ${servers.length} server(s)` +
         (servers.length > 0 ? ` — ${servers.map((sv) => sv.name).join(", ")}` : ""),
     );
-    return { servers, given };
+    return { servers, given, withheld };
   }
 }

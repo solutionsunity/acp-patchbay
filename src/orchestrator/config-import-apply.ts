@@ -30,7 +30,7 @@ export interface ImportTargets {
      * the registry serves nothing it runs. */
     resolveHere(id: PatchbayAgentId): Promise<boolean>;
   };
-  mcpServers: { landImported(record: McpServerConfig, secret: { env?: Env; key?: string } | undefined): Promise<string> };
+  mcpServers: { landImported(record: McpServerConfig, secret: { env?: Env; headers?: Env; key?: string } | undefined): Promise<string> };
   preferences: { set(patch: Partial<PreferencesView>): Promise<unknown> };
   machineRules: { get(): { commandRules: CommandRule[] }; set(rules: CommandRule[]): Promise<void> };
   machineWriteScope: { get(): WriteEntry[]; set(entries: readonly WriteEntry[]): Promise<void> };

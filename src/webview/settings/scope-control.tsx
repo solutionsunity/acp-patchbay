@@ -42,12 +42,13 @@ interface Wording {
 function ScopeControl<Id extends string>(props: {
   wording: Wording;
   candidates: readonly Candidate<Id>[];
-  reach: Reach<Id>;
+  /** Null: not chosen yet — no mode is preselected, and the user picks. */
+  reach: Reach<Id> | null;
   onChange(reach: Reach<Id>): void;
 }) {
   const { reach, wording } = props;
-  const mode: Mode = reach === "auto" ? "every" : Array.isArray(reach) ? "only" : "except";
-  const list = namedIn(reach);
+  const mode: Mode | null = reach === null ? null : reach === "auto" ? "every" : Array.isArray(reach) ? "only" : "except";
+  const list = reach === null ? [] : namedIn(reach);
   const setMode = (m: Mode) => {
     if (m === mode) return;
     // A list never carries across modes — the same ids mean the opposite
@@ -74,7 +75,7 @@ function ScopeControl<Id extends string>(props: {
       <span className="lbl text-[10.5px] tracking-[0.04em] uppercase text-muted-foreground" title={wording.headingTitle}>
         {wording.heading}
       </span>
-      <RadioGroup className="flex flex-col gap-1" value={mode} onValueChange={(v) => setMode(v as Mode)}>
+      <RadioGroup className="flex flex-col gap-1" value={mode ?? ""} onValueChange={(v) => setMode(v as Mode)}>
         <label className="flex items-center gap-1.5" title={wording.everyTitle}>
           <RadioGroupItem value="every" /> {wording.every}
         </label>
@@ -133,10 +134,11 @@ export function WorkspaceScope(props: {
   /** What the scope is of, for its heading's title. */
   of: string;
   here: WorkspaceId | null;
-  workspaces: Reach<WorkspaceId>;
+  /** Null: not chosen yet. */
+  workspaces: Reach<WorkspaceId> | null;
   onChange(workspaces: Reach<WorkspaceId>): void;
 }) {
-  const named = namedIn(props.workspaces);
+  const named = props.workspaces === null ? [] : namedIn(props.workspaces);
   const ids = props.here === null || named.includes(props.here) ? named : [props.here, ...named];
   const wording: Wording = {
     heading: "workspaces",

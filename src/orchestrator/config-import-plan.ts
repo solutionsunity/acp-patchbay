@@ -47,7 +47,7 @@ export interface LocalConfiguration {
   agentEnv: Readonly<Record<string, Env>>;
   knobs: Readonly<Record<string, KnobSeed>>;
   mcpServers: readonly McpServerConfig[];
-  serverSecrets: Readonly<Record<string, { env: Env; key?: string }>>;
+  serverSecrets: Readonly<Record<string, { env: Env; headers: Env; key?: string }>>;
   preferences: PreferencesView;
   machineCommandRules: readonly CommandRule[];
   machineWriteScope: readonly WriteEntry[];
@@ -63,6 +63,8 @@ export interface LocalSources {
   mcpServerEnv: { get(id: string): Promise<Env> };
   /** A header server's key; an OAuth sign-in is never compared. */
   headerKey(id: string): Promise<string | undefined>;
+  /** A custom remote server's headers. */
+  headers(id: string): Promise<Env>;
   preferences: { get(): PreferencesView };
   machineRules: { get(): { commandRules: CommandRule[] } };
   machineWriteScope: { get(): WriteEntry[] };
@@ -75,10 +77,14 @@ export async function localConfiguration(sources: LocalSources): Promise<LocalCo
   const servers = sources.mcpServerConfigs.list();
   const agentEnv: Record<string, Env> = {};
   for (const agent of agents) agentEnv[agent.id] = await sources.agentEnv.get(agent.id);
-  const serverSecrets: Record<string, { env: Env; key?: string }> = {};
+  const serverSecrets: Record<string, { env: Env; headers: Env; key?: string }> = {};
   for (const server of servers) {
     const key = await sources.headerKey(server.id);
-    serverSecrets[server.id] = { env: await sources.mcpServerEnv.get(server.id), ...(key !== undefined ? { key } : {}) };
+    serverSecrets[server.id] = {
+      env: await sources.mcpServerEnv.get(server.id),
+      headers: await sources.headers(server.id),
+      ...(key !== undefined ? { key } : {}),
+    };
   }
   return {
     agents,
@@ -169,6 +175,7 @@ const SERVER_LABELS = {
   workspaces: "where it is on",
   transport: "transport",
   env: "env values",
+  headers: "headers",
   key: "API key",
 } as const;
 
@@ -210,13 +217,14 @@ export function planImport(read: ConfigurationRead, local: LocalConfiguration, c
   for (const server of read.mcpServers) {
     const mine = serverMatch.get(server.id);
     const secret = read.secrets.mcpServers[server.id];
-    const portable = (s: McpServerConfig, routing: McpServerConfig["routing"], held: { env: Env; key?: string } | undefined) => ({
+    const portable = (s: McpServerConfig, routing: McpServerConfig["routing"], held: { env: Env; headers: Env; key?: string } | undefined) => ({
       name: s.name,
       source: s.source,
       routing,
       workspaces: s.workspaces,
       transport: s.transport,
       env: held?.env ?? {},
+      headers: held?.headers ?? {},
       key: held?.key ?? null,
     });
     const theirs = portable(server, routingOn(server.routing, agentIds), secret);

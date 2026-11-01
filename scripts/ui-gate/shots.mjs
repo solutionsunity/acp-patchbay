@@ -1031,9 +1031,11 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] matrix tooltip explains used`, (await p.waitForSelector("text=fired successfully", { timeout: 3000 })) !== null);
   await p.screenshot({ path: `${OUT}/settings-matrix-${theme}.png` });
 
-  // ── settings: curated catalog filter (text × mechanism toggles) ──
+  // ── settings: MCP Servers — one add card at the top, as on the Agents page (#130) ──
   await p.click("text=MCP Servers");
-  await p.waitForSelector(".cat-filter");
+  // no servers yet: the add card is open
+  const firstCard = p.locator("[data-add-card]");
+  await firstCard.waitFor();
 
   // ── settings: patchbay's own server shows above the user's, read-only (#43) ──
   const builtin = p.locator(".card", { has: p.locator('.nm:text-is("patchbay")') });
@@ -1045,56 +1047,89 @@ for (const theme of Object.keys(THEMES)) {
   await builtin.locator('button[aria-expanded="false"]:has-text("2 tools")').click();
   check(`[${theme}] the built-in card lists what the server serves`, (await builtin.locator(".font-mono", { hasText: "get_roots" }).count()) === 1);
   await builtin.screenshot({ path: `${OUT}/settings-mcp-builtin-${theme}.png` });
-  const rowsShown = () => p.$$eval(".cat-row", (rows) => rows.length);
-  check(`[${theme}] catalog shows every entry unfiltered`, (await rowsShown()) === 4);
-  await p.click('.cat-filter button[aria-pressed="false"]:has-text("local")');
-  check(`[${theme}] local toggle keeps the three local-bearing rows`, (await rowsShown()) === 3);
-  await p.fill('input[aria-label="Search the catalog"]', "design");
-  check(`[${theme}] text matches description, never the caveat note`, (await rowsShown()) === 1);
+
+  // the catalog is a search, not a list: every entry, its tags, matched by
+  // name or what it is for — never the caveat note
+  await firstCard.locator('[role="combobox"]').click();
+  const items = () => p.locator('[data-slot="popover-content"] [cmdk-item]');
+  check(`[${theme}] the catalog search offers every entry, tagged with its mechanisms`, (await items().count()) === 4 && (await items().first().locator("text=key").count()) === 1);
+  await p.locator('[data-slot="popover-content"] input').fill("design");
+  check(`[${theme}] the catalog search matches what an entry is for, never its note`, (await items().count()) === 1);
   await p.screenshot({ path: `${OUT}/settings-catalog-${theme}.png` });
-  await p.fill('input[aria-label="Search the catalog"]', "nothing");
-  check(`[${theme}] empty filter offers a clear`, (await p.waitForSelector("text=Clear filter", { timeout: 3000 })) !== null);
-  await p.click("text=Clear filter");
-  check(`[${theme}] clear restores every entry`, (await rowsShown()) === 4);
+  await p.locator('[data-slot="popover-content"] input').fill("GitHub");
+  await items().first().click();
 
-  // ── settings: an MCP server is named once, at its add (#88) ──
-  const github = p.locator(".cat-row", { hasText: "GitHub" });
-  await github.locator('button:has-text("Connect…")').click();
-  await github.locator('input[placeholder="my-server"]').fill("GitHub work");
-  check(`[${theme}] a curated connect shows the name agents will get`, (await github.locator(".font-mono").textContent()) === "GitHub_work");
-  await github.locator('input[type="password"]').fill("k");
-  await github.locator('button:has-text("Connect with key")').click();
-  const connect = await p.evaluate(() => window.__actions.at(-1));
-  check(`[${theme}] the connect carries the name the user gave`, connect?.kind === "connectCatalogKey" && connect.name === "GitHub work");
-  await p.evaluate(() =>
-    window.__patch([{
-      kind: "mcpServersChanged", servers: [], builtin: [], connects: [],
-      importReview: { id: 1, entries: [{ name: "My Files", summary: "npx -y files-server" }, { name: "My_Files", summary: "https://example.test/mcp" }] },
-    }]),
+  // ── an MCP server is named once, at its add (#88); who gets it ends every add ──
+  await firstCard.locator('input[placeholder="my-server"]').fill("GitHub work");
+  check(`[${theme}] a curated connect shows the name agents will get`, (await firstCard.locator(".note .font-mono").textContent()) === "GitHub_work");
+  check(
+    `[${theme}] who gets it: this workspace and every agent, preselected`,
+    (await firstCard.locator('[role="radio"][value="only"][data-state="checked"]').count()) === 1 &&
+      (await firstCard.locator('[role="radio"][value="every"][data-state="checked"]').count()) === 1,
   );
-  await p.waitForSelector('button:has-text("Add all")');
-  const reviewed = await p.locator('.card:has(button:has-text("Add all")) .note .font-mono').allTextContents();
-  check(`[${theme}] an import is reviewed first, each name as agents will get it beside the ones above`, JSON.stringify(reviewed) === JSON.stringify(["My_Files", "My_Files-2"]));
-  await p.screenshot({ path: `${OUT}/settings-import-review-${theme}.png` });
-  await p.click('button:has-text("Add all")');
-  const added = await p.evaluate(() => window.__actions.at(-1));
-  check(`[${theme}] Add all sends the reviewed names`, added?.kind === "addImportedMcpServers" && added.importId === 1 && JSON.stringify(added.names) === JSON.stringify(["My Files", "My_Files"]));
+  await firstCard.locator('input[type="password"]').fill("k");
+  await firstCard.locator('button:has-text("Connect with key")').click();
+  const connect = await p.evaluate(() => window.__actions.at(-1));
+  check(
+    `[${theme}] the connect carries the name and who gets it`,
+    connect?.kind === "connectCatalogKey" && connect.name === "GitHub work" && JSON.stringify(connect.workspaces) === '["file:///ws"]' && connect.routing === "auto",
+  );
+  await p.screenshot({ path: `${OUT}/settings-mcp-add-curated-${theme}.png`, fullPage: true });
 
-  // A server with no remote (#63) is still offered: Connect… opens straight
-  // to its local server, and that prefills the custom form with the values
+  // your own server: JSON is another view of it, and pasting several opens a card for each
+  await firstCard.locator('button:has-text("Your own server")').click();
+  await firstCard.locator('[role="radio"]:has-text("JSON")').click();
+  await firstCard.locator('textarea[aria-label="server JSON"]').fill(
+    JSON.stringify({ mcpServers: { files: { command: "npx", args: ["-y", "files-server"] }, remote: { url: "https://example.test/mcp", headers: { "X-Key": "${MY_KEY}" } } } }),
+  );
+  const cards = p.locator("[data-add-card]");
+  check(`[${theme}] pasting two servers opens a card for each`, (await cards.count()) === 2);
+  check(
+    `[${theme}] each pasted server shows as its type, fields filled`,
+    (await cards.nth(0).locator('input[placeholder="npx"]').inputValue()) === "npx" &&
+      (await cards.nth(1).locator('input[placeholder="https://…"]').inputValue()) === "https://example.test/mcp",
+  );
+  await p.screenshot({ path: `${OUT}/settings-mcp-add-pasted-${theme}.png`, fullPage: true });
+  await cards.nth(1).locator('button:has-text("Add")').click();
+  const added = await p.evaluate(() => window.__actions.at(-1));
+  check(
+    `[${theme}] an add carries its card, the server as typed, and who gets it`,
+    added?.kind === "addCustomMcpServer" && added.name === "remote" && added.signIn === false &&
+      JSON.stringify(added.draft) === JSON.stringify({ type: "http", url: "https://example.test/mcp", headers: { "X-Key": "${MY_KEY}" } }),
+  );
+  // the server asked for a sign-in: the card says so and offers it
+  const remoteCard = await cards.nth(1).getAttribute("data-add-card");
+  const outcome = (connects) => window.__patch([{ kind: "mcpServersChanged", servers: [], builtin: [], connects }]);
+  await p.evaluate(outcome, [{ key: `custom:${remoteCard}`, kind: "custom", subject: remoteCard, status: "failed", reason: "the server asks you to sign in", signIn: true }]);
+  await cards.nth(1).locator('button:has-text("Sign in")').click();
+  const signIn = await p.evaluate(() => window.__actions.at(-1));
+  check(`[${theme}] Sign in adds again, signing in first`, signIn?.kind === "addCustomMcpServer" && signIn.card === remoteCard && signIn.signIn === true);
+  // added: the card closes, the outcome is cleared, the rest stay
+  await p.evaluate(outcome, [{ key: `custom:${remoteCard}`, kind: "custom", subject: remoteCard, status: "added", server: "srv-new" }]);
+  await p.waitForFunction(() => document.querySelectorAll("[data-add-card]").length === 1);
+  const dismissed = await p.evaluate(() => window.__actions.at(-1));
+  check(`[${theme}] an added server's card closes, its outcome cleared`, (await cards.count()) === 1 && dismissed?.kind === "cancelMcpServerConnect" && dismissed.key === `custom:${remoteCard}`);
+  await p.evaluate(outcome, []);
+  await cards.first().locator('button[aria-label="Close this card"]').click();
+
+  // A server with no remote (#63) is still offered: picked, it opens to its
+  // local server alone, and that prefills your own server with the values
   // the user fills in — nothing runs until they add it.
-  const odoo = p.locator(".cat-row", { hasText: "OdooSurface" });
-  await odoo.locator('button:has-text("Connect…")').click();
+  await p.locator('button[aria-expanded="false"]:has-text("add server")').click();
+  const localCard = p.locator("[data-add-card]");
+  await localCard.locator('[role="combobox"]').click();
+  await p.locator('[data-slot="popover-content"] input').fill("Odoo");
+  await items().first().click();
   check(
     `[${theme}] a local-only entry opens to its local server alone — no name, key or OAuth form`,
-    (await odoo.locator("text=run it locally:").count()) === 1 && (await odoo.locator('input[placeholder="my-server"], input[type="password"]').count()) === 0,
+    (await localCard.locator("text=run it locally:").count()) === 1 && (await localCard.locator('input[placeholder="my-server"], input[type="password"]').count()) === 0,
   );
-  await odoo.locator('button:has-text("Use local server…")').click();
-  const envBox = p.locator('textarea[placeholder="MY_API_KEY=…"]');
+  await localCard.locator('button:has-text("Use local server")').click();
+  const envBox = localCard.locator('textarea[placeholder="MY_API_KEY=…"]');
   await envBox.waitFor({ timeout: 3000 });
   check(
-    `[${theme}] its local server prefills the custom form, command and the four values to fill`,
-    (await p.locator('input[placeholder="npx"]').inputValue()) === "npx" && (await envBox.inputValue()) === "ODOO_URL=\nODOO_DB=\nODOO_USER=\nODOO_PASSWORD=",
+    `[${theme}] its local server prefills your own server, command and the four values to fill`,
+    (await localCard.locator('input[placeholder="npx"]').inputValue()) === "npx" && (await envBox.inputValue()) === "ODOO_URL=\nODOO_DB=\nODOO_USER=\nODOO_PASSWORD=",
   );
   await p.screenshot({ path: `${OUT}/settings-catalog-local-only-${theme}.png` });
 
@@ -1741,7 +1776,8 @@ for (const theme of Object.keys(THEMES)) {
     {
       id: "srv1", name: "Files", sourceKind: "custom-stdio", command: "npx -y files-server", connected: true,
       workspaces: ["file:///ws", `vscode-remote://ssh-remote%2Bbox/srv/${LONG}`], onHere: true,
-      routing: [st.agents[0].id], transport: "auto", busy: [],
+      routing: [st.agents[0].id], transport: "auto", busy: [], signedIn: false,
+      draft: { type: "stdio", command: "npx", args: ["-y", "files-server"], env: { FILES_KEY: "sk-1" } },
     },
   ];
   p = await page(browser, theme0, { width: 520, height: 800 });
@@ -1797,6 +1833,43 @@ for (const theme of Object.keys(THEMES)) {
   );
   await sweep(p, "settings › a server's who gets it");
   await p.screenshot({ path: `${OUT}/narrow-settings-who-gets-it.png`, fullPage: true });
+  // a custom server's edit is the add card's form, on the server as kept — its name final
+  await files.locator('button:has-text("Edit…")').click();
+  check(
+    "[narrow] a server's edit opens the add card's form, its name final",
+    (await files.locator('[role="radio"]:has-text("JSON")').count()) === 1 &&
+      (await files.locator('input[placeholder="npx"]').inputValue()) === "npx" &&
+      (await files.locator('input[placeholder="my-server"]').count()) === 0,
+  );
+  await files.locator('input[placeholder="npx"]').fill("pnpm");
+  await files.locator('button:has-text("Save")').click();
+  const saved = await p.evaluate(() => window.__actions.at(-1));
+  check(
+    "[narrow] Save sends the edit, checked before it is kept",
+    saved?.kind === "updateMcpServer" && saved.patchbayMcpServerId === "srv1" && saved.draft.command === "pnpm" && saved.signIn === false,
+  );
+  await sweep(p, "settings › a server's edit");
+  await files.screenshot({ path: `${OUT}/narrow-settings-mcp-edit.png` });
+
+  // a window with no workspace open: the add preselects no workspace, and
+  // waits for the user to pick
+  const empty = await page(browser, theme0, { width: 520, height: 800 });
+  await renderView(empty, "settings", { ...st, workspace: null, section: "mcpServers" });
+  await empty.locator('button[aria-expanded="false"]:has-text("add server")').click();
+  const emptyCard = empty.locator("[data-add-card]");
+  await emptyCard.locator('button:has-text("Your own server")').click();
+  await emptyCard.locator('input[placeholder="my-server"]').fill("tool");
+  await emptyCard.locator('input[placeholder="npx"]').fill("srv");
+  const workspacesGroup = emptyCard.locator('[role="radiogroup"]').nth(1);
+  check(
+    "[narrow] with no workspace open, no workspace is preselected and Add waits for the pick",
+    (await workspacesGroup.locator('[data-state="checked"]').count()) === 0 &&
+      (await emptyCard.locator("text=No workspace is open").count()) === 1 &&
+      (await emptyCard.locator('button:text-is("Add")').isDisabled()),
+  );
+  await workspacesGroup.locator('label:has-text("every workspace") [role="radio"]').first().click();
+  check("[narrow] picked, Add goes", !(await emptyCard.locator('button:text-is("Add")').isDisabled()));
+  await empty.close();
 
   // ── Import/Export: export sends the parts still ticked; none ticked, nothing to send ──
   await p.click('.nav .it:has-text("Import/Export")');

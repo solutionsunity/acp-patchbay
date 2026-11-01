@@ -50,6 +50,11 @@ class FakeRemoteMcpServer {
   constructor(rejectTokens: string[] = []) {
     this.rejectTokens = new Set(rejectTokens);
     this.server = createServer((req, res) => {
+      if (req.method !== "POST") {
+        res.statusCode = 405; // no standalone stream — the SDK treats this as "not offered"
+        res.end();
+        return;
+      }
       const chunks: Buffer[] = [];
       req.on("data", (c: Buffer) => chunks.push(c));
       req.on("end", () => {
@@ -64,7 +69,27 @@ class FakeRemoteMcpServer {
           });
           return;
         }
+        if (message.id === undefined) {
+          res.statusCode = 202; // a notification: accepted, nothing to answer
+          res.end();
+          return;
+        }
         res.setHeader("content-type", "application/json");
+        if (message.method === "initialize") {
+          // what patchbay's own check of the server reads before it adds it
+          res.end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "fake-remote", version: "1" } },
+            }),
+          );
+          return;
+        }
+        if (message.method === "tools/list") {
+          res.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: [] } }));
+          return;
+        }
         if (message.method === "tools/call") {
           res.end(
             JSON.stringify({
@@ -160,7 +185,9 @@ class FakeRootsUsingRemote {
             result:
               message.method === "initialize"
                 ? { protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "fake", version: "0" } }
-                : {},
+                : message.method === "tools/list"
+                  ? { tools: [] }
+                  : {},
           }),
         );
       });
@@ -192,16 +219,17 @@ const spec = (script: FakeAgentScript, patchbayAgentId: string): LaunchSpec => f
  * way in, as every add is. */
 async function withRemote(
   remote: { url: string },
-  server: { name: string; header?: { headerName: string; valuePrefix: string; token: string } },
+  server: { name: string; headers?: Record<string, string> },
   place: { workspace?: string; roots?: string[] } = {},
 ) {
   const h = orchestratorHarness(dir, { workspace: place.workspace, workspaceRoots: place.roots });
   const o = h.orchestrator;
-  const { header } = server;
   const id = await o.mcpServerGates.addCustom(
     server.name,
-    header === undefined ? { kind: "custom-http", url: remote.url, authType: "none" } : { kind: "custom-http", url: remote.url, authType: "header", ...header },
-    "auto", "auto",
+    server.name,
+    { type: "http", url: remote.url, headers: server.headers ?? {} },
+    { routing: "auto", workspaces: "auto" },
+    false,
   );
   return { orchestrator: o, id, pool: o.pool, sessions: o.sessions, gates: o.sessionGates, state: h.agentView.state, stores: h.stores };
 }
@@ -247,7 +275,7 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
     const remote = new FakeRemoteMcpServer();
     await remote.listen();
     atTestEnd(() => remote.close());
-    const h = await withRemote(remote, { name: "github", header: { headerName: "Authorization", valuePrefix: "Bearer ", token: "gh-token-1" } });
+    const h = await withRemote(remote, { name: "github", headers: { Authorization: "Bearer gh-token-1" } });
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_issues", server: "github" }] }, "e1" as PatchbayAgentId));
     const patchbaySessionId = await h.gates.create("e1" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(patchbaySessionId, { text: "any open issues?" });
@@ -260,15 +288,15 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
   });
 
   // The bridge's own retry: a 401 asks the orchestrator once more for the
-  // credential. What it exists for: the stored key replaced while a request
-  // was out — the user reconnecting the server in another window, which
-  // writes the same secret storage.
-  it("retries once with a fresh token when the remote endpoint returns 401", async () => {
+  // headers. What it exists for: the stored key replaced while a request
+  // was out — the user editing the server in another window, which writes
+  // the same secret storage.
+  it("retries once with fresh headers when the remote endpoint returns 401", async () => {
     const remote = new FakeRemoteMcpServer(["stale-token"]);
     await remote.listen();
     atTestEnd(() => remote.close());
-    const h = await withRemote(remote, { name: "github", header: { headerName: "Authorization", valuePrefix: "Bearer ", token: "stale-token" } });
-    remote.onReject = () => h.stores.mcpServerTokens.set(h.id, { accessToken: "fresh-token" });
+    const h = await withRemote(remote, { name: "github", headers: { Authorization: "Bearer stale-token" } });
+    remote.onReject = () => h.stores.mcpServerHeaders.set(h.id, { Authorization: "Bearer fresh-token" });
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_issues", server: "github" }] }, "e2" as PatchbayAgentId));
     const patchbaySessionId = await h.gates.create("e2" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(patchbaySessionId, { text: "any open issues?" });
@@ -344,7 +372,6 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
         id: "github",
         name: "github",
         url: "http://127.0.0.1:9/never",
-        header: null,
       }),
     );
     const exited = new Promise<number | null>((resolve) => bridge.once("exit", (code) => resolve(code)));
@@ -365,7 +392,7 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
     await new Promise<void>((resolve) => server.listen(socketPath, resolve));
 
     const client = new IpcClient(socketPath, "github");
-    const inFlight = client.request("getMcpServerToken");
+    const inFlight = client.request("getMcpServerHeaders");
     // Wait until the server has the connection, then drop it mid-request.
     await vi.waitFor(() => expect(sockets).toHaveLength(1), SETTLE);
     for (const socket of sockets) socket.destroy();

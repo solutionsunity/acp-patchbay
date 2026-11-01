@@ -17,7 +17,7 @@ import { STORAGE_KEYS, type StorageKey } from "./stores/storage-keys";
 import { AgentConfigStore, type AgentConfig } from "./stores/agent-configs";
 import { ComposerKnobsStore } from "./stores/composer-knobs";
 import { MemoryKV } from "./stores/kv";
-import { McpServerConfigStore, type McpServerConfig } from "./stores/mcp-server-configs";
+import { headersBefore090, McpServerConfigStore, type McpServerConfig } from "./stores/mcp-server-configs";
 import { MachineRulesStore, type CommandRule } from "./stores/permission-rules";
 import { PreferencesStore } from "./stores/preferences";
 import { SavedRootsStore, type SavedRoot } from "./stores/saved-roots";
@@ -44,7 +44,7 @@ export interface ConfigurationRead {
   /** By the id of the record they belong to, as the file has it. */
   secrets: {
     agents: Readonly<Record<string, Env>>;
-    mcpServers: Readonly<Record<string, { env: Env; key?: string }>>;
+    mcpServers: Readonly<Record<string, { env: Env; headers: Env; key?: string }>>;
   };
   /** What the file holds that didn't read, each said once. */
   unread: readonly string[];
@@ -54,7 +54,11 @@ export type ReadOutcome = { ok: true; read: ConfigurationRead } | { ok: false; r
 
 const envSchema = z.record(z.string(), z.string());
 const agentSecretSchema = z.object({ env: envSchema });
-const serverSecretSchema = z.object({ env: envSchema.optional(), key: z.string().min(1).optional() });
+const serverSecretSchema = z.object({
+  env: envSchema.optional(),
+  headers: envSchema.optional(),
+  key: z.string().min(1).optional(),
+});
 
 const record = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -95,7 +99,8 @@ export function readConfiguration(text: string): ReadOutcome {
   // they do over this machine's own file.
   const agents = new AgentConfigStore(kv).list();
   const knobs = new ComposerKnobsStore(kv).all();
-  const mcpServers = new McpServerConfigStore(kv).list();
+  const serverStore = new McpServerConfigStore(kv);
+  const mcpServers = serverStore.list();
   const preferences = new PreferencesStore(kv).chosen();
   const machineCommandRules = new MachineRulesStore(kv).get().commandRules;
   const machineWriteScope = new MachineWriteScopeStore(kv).get();
@@ -122,12 +127,22 @@ export function readConfiguration(text: string): ReadOutcome {
     if (read.success && agents.some((a) => a.id === id)) agentSecrets[id] = read.data.env;
     else unread.push(`the env values of an agent the file doesn't carry as one (${id})`);
   }
-  const serverSecrets: Record<string, { env: Env; key?: string }> = {};
+  const serverSecrets: Record<string, { env: Env; headers: Env; key?: string }> = {};
+  const serverRows = new Map<string, z.infer<typeof serverSecretSchema>>();
   for (const [id, row] of Object.entries(record(secrets.mcpServers) ?? {})) {
     const read = serverSecretSchema.safeParse(row);
-    if (read.success && mcpServers.some((s) => s.id === id)) {
-      serverSecrets[id] = { env: read.data.env ?? {}, ...(read.data.key !== undefined ? { key: read.data.key } : {}) };
-    } else unread.push(`the secrets of an MCP server the file doesn't carry as one (${id})`);
+    if (read.success && mcpServers.some((s) => s.id === id)) serverRows.set(id, read.data);
+    else unread.push(`the secrets of an MCP server the file doesn't carry as one (${id})`);
+  }
+  // Written when a custom remote server's key rode beside the header its
+  // record named: the two are the header now, as this machine's own move
+  // makes it.
+  const keyed = headersBefore090(serverStore.copiedBefore090 ?? [], (id) => serverRows.get(id)?.key);
+  for (const [id, row] of serverRows) {
+    const server = mcpServers.find((s) => s.id === id);
+    const headers = keyed.get(id) ?? row.headers ?? {};
+    const key = server?.source.kind === "catalog" ? row.key : undefined;
+    serverSecrets[id] = { env: row.env ?? {}, headers, ...(key !== undefined ? { key } : {}) };
   }
 
   const patchbayVersion = typeof file.patchbayVersion === "string" ? file.patchbayVersion : null;

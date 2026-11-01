@@ -66,7 +66,7 @@ describe("probeMcpServer — a remote server is reached through the network door
     await new Promise<void>((r) => closed.close(() => r()));
     const warnings: string[] = [];
     const log: Logger = { trace: () => {}, debug: () => {}, info: () => {}, warn: (m) => warnings.push(m), error: () => {} };
-    await expect(probeMcpServer({ kind: "http", url: `http://127.0.0.1:${port}/mcp`, header: null }, undefined, log)).rejects.toThrow();
+    await expect(probeMcpServer({ kind: "http", url: `http://127.0.0.1:${port}/mcp`, headers: {} }, undefined, log)).rejects.toThrow();
     expect(warnings).toEqual([expect.stringMatching(new RegExp(`^MCP probe: 127\\.0\\.0\\.1:${port} — network error`))]);
   });
 });
