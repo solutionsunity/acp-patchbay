@@ -235,6 +235,16 @@ interface KnownSession {
    * rather than loaded. Lives on the row, not the attachment: an
    * involuntary drop keeps the row, and the row must still know it is new. */
   everPrompted: boolean;
+  /** The MCP servers its last open in this window gave the agent — absent
+   * until it has opened here. */
+  mcpGiven?: readonly PatchbayMcpServerId[];
+}
+
+/** What a lifecycle request gave and left out. */
+interface Attached {
+  missing: readonly string[];
+  withheld: readonly string[];
+  given: readonly PatchbayMcpServerId[];
 }
 
 interface LiveSession extends StreamState {
@@ -350,6 +360,8 @@ export class SessionsStore {
     private readonly mcpServersFor: (
       contextToken: string,
       patchbayAgentId: PatchbayAgentId,
+      /** Servers given to this session alone, wherever they are on. */
+      own: readonly PatchbayMcpServerId[],
     ) => Promise<{ servers: McpServer[]; given: readonly AttachedServer[]; withheld: readonly string[] }> = async () => ({
       servers: [],
       given: [],
@@ -580,7 +592,7 @@ export class SessionsStore {
       | { via: "fork"; from: PatchbaySessionId }
       | { via: "load" | "resume"; patchbaySessionId: PatchbaySessionId },
     patchbayAgentId: PatchbayAgentId,
-    opts: { cwd?: string; roots?: readonly string[] } = {},
+    opts: { cwd?: string; roots?: readonly string[]; mcpServers?: readonly PatchbayMcpServerId[] } = {},
     signal?: AbortSignal,
   ): Promise<{
     sessionId: string;
@@ -589,12 +601,18 @@ export class SessionsStore {
      * session then has none, a reattached one keeps what it holds. */
     knobs: NormalizedKnobs | undefined;
     missing: string[];
-    /** Why each server that couldn't be given wasn't. */
-    withheld: readonly string[];
+    /** What the attach gave and left out — said and published by its
+     * caller (`landed`) once the session it serves exists. */
+    left: Attached;
   }> {
     // Unguessable: the token is what the IPC socket admits a request by.
     const contextToken = randomUUID();
-    const { servers: mcpServers, given, withheld } = await unlessAborted(this.mcpServersFor(contextToken, patchbayAgentId), signal);
+    // The session's own servers: an explicit list wins (a recreate carrying
+    // its own), else the session's — a fork's parent's.
+    const own =
+      opts.mcpServers ??
+      (target.via === "new" ? [] : this.saved(target.via === "fork" ? target.from : target.patchbaySessionId).mcpServers ?? []);
+    const { servers: mcpServers, given, withheld } = await unlessAborted(this.mcpServersFor(contextToken, patchbayAgentId, own), signal);
     this.tokens.set(contextToken, {
       patchbayAgentId,
       given,
@@ -628,7 +646,7 @@ export class SessionsStore {
         contextToken,
         knobs: r.knobs,
         missing,
-        withheld,
+        left: { missing, withheld, given: given.map((g) => g.id) },
       };
     }
     const sessionId = this.known.get(target.patchbaySessionId)?.sessionId;
@@ -642,13 +660,13 @@ export class SessionsStore {
       signal,
     );
     this.hooks.onRealSessionAttached?.(patchbayAgentId, sessionId);
-    this.sayLeftOut(target.patchbaySessionId, missing, withheld);
+    this.landed(target.patchbaySessionId, { missing, withheld, given: given.map((g) => g.id) });
     return {
       sessionId,
       contextToken,
       knobs: r.knobs,
       missing,
-      withheld,
+      left: { missing, withheld, given: given.map((g) => g.id) },
     };
   }
 
@@ -678,6 +696,13 @@ export class SessionsStore {
     return grant?.given.some((s) => s.id === patchbayMcpServerId && s.delivery === "bridge") === true ? grant.patchbayAgentId : undefined;
   }
 
+  /** The servers given to the token's session alone — none for a token
+   * whose session is gone. */
+  ownMcpServers(token: string): readonly PatchbayMcpServerId[] {
+    const patchbaySessionId = this.sessionOfToken(token);
+    return patchbaySessionId === undefined ? [] : (this.saved(patchbaySessionId).mcpServers ?? []);
+  }
+
   /** Every token a session's attaches were given — what its subprocesses
    * were spawned with. */
   tokensOf(patchbaySessionId: PatchbaySessionId): string[] {
@@ -688,10 +713,14 @@ export class SessionsStore {
     return this.hooks.rootExists?.(path) ?? true;
   }
 
-  /** Says, in the session, what its last lifecycle request left out —
-   * the roots gone from disk, the MCP servers that couldn't be given —
-   * never a silent narrowing of what the user set up. */
-  private sayLeftOut(patchbaySessionId: PatchbaySessionId, missing: readonly string[], withheld: readonly string[]): void {
+  /** A lifecycle request landed: the session's MCP chip hears which
+   * servers it gave, and the session says what it left out — the roots
+   * gone from disk, the MCP servers that couldn't be given — never a
+   * silent narrowing of what the user set up. */
+  private landed(patchbaySessionId: PatchbaySessionId, { missing, withheld, given }: Attached): void {
+    const row = this.known.get(patchbaySessionId);
+    if (row !== undefined) row.mcpGiven = given;
+    this.publishMcp(patchbaySessionId);
     const texts = [
       ...(missing.length === 0
         ? []
@@ -759,7 +788,7 @@ export class SessionsStore {
 
   private async mintSession(patchbayAgentId: PatchbayAgentId, agentName: string, cwd: string): Promise<PatchbaySessionId> {
     const saved = this.savedRootsFor(cwd);
-    const { sessionId, contextToken, knobs, missing, withheld } = await this.attachSession({ via: "new" }, patchbayAgentId, {
+    const { sessionId, contextToken, knobs, missing, left } = await this.attachSession({ via: "new" }, patchbayAgentId, {
       cwd,
       roots: [...this.rootsFor(null, cwd), ...saved],
     });
@@ -785,7 +814,7 @@ export class SessionsStore {
       this.save(patchbaySessionId, { roots: seeded });
       this.hooks.emit({ kind: "contextRootsChanged", patchbaySessionId, roots: seeded });
     }
-    this.sayLeftOut(patchbaySessionId, missing, withheld);
+    this.landed(patchbaySessionId, left);
     this.hooks.rootsChanged?.(patchbaySessionId);
     this.log.info(`session ${patchbaySessionId} created with ${patchbayAgentId}`);
     this.publishKnobs(patchbaySessionId, knobs ?? NO_KNOBS);
@@ -807,7 +836,7 @@ export class SessionsStore {
     if (parent === undefined) throw new Error(`unknown session ${patchbaySessionId}`);
     const { patchbayAgentId } = parent;
     const added = this.addedRootsOf(patchbaySessionId);
-    const { sessionId, contextToken, knobs, missing, withheld } = await this.attachSession(
+    const { sessionId, contextToken, knobs, left } = await this.attachSession(
       { via: "fork", from: patchbaySessionId },
       patchbayAgentId,
       {},
@@ -830,9 +859,14 @@ export class SessionsStore {
         forkedFrom: patchbaySessionId,
       },
     });
-    this.save(forkId, { forkedFrom: parent.sessionId, ...(added.length > 0 ? { roots: added } : {}) });
+    const own = this.saved(patchbaySessionId).mcpServers ?? [];
+    this.save(forkId, {
+      forkedFrom: parent.sessionId,
+      ...(added.length > 0 ? { roots: added } : {}),
+      ...(own.length > 0 ? { mcpServers: own } : {}),
+    });
     if (added.length > 0) this.hooks.emit({ kind: "contextRootsChanged", patchbaySessionId: forkId, roots: added });
-    this.sayLeftOut(forkId, missing, withheld);
+    this.landed(forkId, left);
     this.hooks.rootsChanged?.(forkId);
     this.log.info(`session ${forkId} forked from ${patchbaySessionId} with ${patchbayAgentId}`);
     this.publishKnobs(forkId, knobs ?? NO_KNOBS);
@@ -1700,6 +1734,42 @@ export class SessionsStore {
     return true;
   }
 
+  /** The MCP chip: a configured server given to this session alone, or
+   * taken back — kept on the session's continuity row, and sent at its
+   * every open from now on. A session's servers ride its open (ACP hands
+   * `mcpServers` only on session/new, load and resume), so the agent has
+   * the change at the next one, which the chip offers. True when the list
+   * moved. */
+  addMcpServer(patchbaySessionId: PatchbaySessionId, patchbayMcpServerId: PatchbayMcpServerId): boolean {
+    if (!this.known.has(patchbaySessionId)) return false;
+    const current = this.saved(patchbaySessionId).mcpServers ?? [];
+    if (current.includes(patchbayMcpServerId)) return false;
+    this.save(patchbaySessionId, { mcpServers: [...current, patchbayMcpServerId] });
+    this.publishMcp(patchbaySessionId);
+    return true;
+  }
+
+  removeMcpServer(patchbaySessionId: PatchbaySessionId, patchbayMcpServerId: PatchbayMcpServerId): boolean {
+    if (!this.known.has(patchbaySessionId)) return false;
+    const current = this.saved(patchbaySessionId).mcpServers ?? [];
+    if (!current.includes(patchbayMcpServerId)) return false;
+    this.save(patchbaySessionId, { mcpServers: current.filter((id) => id !== patchbayMcpServerId) });
+    this.publishMcp(patchbaySessionId);
+    return true;
+  }
+
+  /** The session's MCP servers as its chip shows them: what its last open
+   * gave, and its own. */
+  private publishMcp(patchbaySessionId: PatchbaySessionId): void {
+    const row = this.known.get(patchbaySessionId);
+    if (row === undefined) return;
+    this.hooks.emit({
+      kind: "sessionMcpChanged",
+      patchbaySessionId,
+      mcp: { given: row.mcpGiven ?? null, added: this.saved(patchbaySessionId).mcpServers ?? [] },
+    });
+  }
+
   /** The session's root list moved (a root added or removed, a workspace
    * folder came or went): its MCP servers hear it now, whatever the
    * agent's rung — telling them is patchbay's own act, no lifecycle request
@@ -1832,10 +1902,10 @@ export class SessionsStore {
     const row = this.known.get(patchbaySessionId);
     if (row === undefined) throw new Error(`unknown session ${patchbaySessionId}`);
     const { patchbayAgentId, sessionId: was } = row;
-    const { sessionId, contextToken, knobs, missing, withheld } = await this.attachSession(
+    const { sessionId, contextToken, knobs, left } = await this.attachSession(
       { via: "new" },
       patchbayAgentId,
-      { roots: this.rootsFor(patchbaySessionId, this.cwd()) },
+      { roots: this.rootsFor(patchbaySessionId, this.cwd()), mcpServers: this.saved(patchbaySessionId).mcpServers ?? [] },
       signal,
     );
     // Closed while the agent minted it: the fresh session serves no one,
@@ -1867,7 +1937,7 @@ export class SessionsStore {
     this.hooks.sessionIdChanged?.(patchbaySessionId);
     // A birth like any other: the session says what was skipped, and its
     // servers hear its list once it exists.
-    this.sayLeftOut(patchbaySessionId, missing, withheld);
+    this.landed(patchbaySessionId, left);
     this.hooks.rootsChanged?.(patchbaySessionId);
     // The empty shell, only while its process still exists — a dead
     // connection took it along.

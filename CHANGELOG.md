@@ -32,7 +32,10 @@
   one that was off is off everywhere, and a root saved for every workspace
   stays so. A workspace's own saved roots move into the one list the first
   time it opens, still saved for that workspace, so any window's Settings
-  can show them, and an export now carries them. (#70)
+  can show them, and an export now carries them. An MCP chip beside the
+  roots chip shows the session's servers and gives one to this session
+  alone; its Save makes it stick for this workspace or every one. A
+  session's servers ride its open, so the chip offers to reopen it. (#70)
 - **The turn-end chime plays where you are.** It now plays from the Agent
   View, so in a WSL, SSH or container window it reaches the machine you sit
   at; before, it played on the remote machine, or through Windows from WSL

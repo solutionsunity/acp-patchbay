@@ -106,7 +106,7 @@ function harness(
     catalog,
     configs,
     { env: envStore, headers: headerStore, tokens },
-    { emit: (...evs) => events.push(...evs) },
+    { emit: (...evs) => events.push(...evs), listed: () => {} },
     { busy: (patchbayMcpServerId) => serverLine.held(patchbayMcpServerId), connecting: () => connectLine.holding() },
     {
       editorServerScript: "/mcp-server.js",
@@ -602,6 +602,16 @@ describe("McpServersStore — routing, workspaces and mcpServers", () => {
       ["Not_here", false],
       ["Here__other_agent", true],
     ]);
+  });
+
+  it("a server given to a session alone reaches it wherever it is on and whoever it is routed to — the bridge answers for it", async () => {
+    const h = harness([entry()]);
+    const id = await h.gates.connectWithKey("svc", "Service", "k", undefined, { routing: ["agent-b" as PatchbayAgentId], workspaces: [] });
+    expect((await configuredFor(h, "agent-a" as PatchbayAgentId)).servers).toEqual([]);
+    const { given } = await h.manager.mcpServersFor("agent-a" as PatchbayAgentId, "ctx", false, [id]);
+    expect(given.slice(1)).toEqual([{ id, delivery: "bridge" }]);
+    expect(await h.manager.headersFor(id, "agent-a" as PatchbayAgentId)).toBeNull();
+    expect(await h.manager.headersFor(id, "agent-a" as PatchbayAgentId, true)).toEqual({ Authorization: "Bearer k" });
   });
 
   it("off in this workspace keeps config and credential but reaches no agent here until switched back", async () => {

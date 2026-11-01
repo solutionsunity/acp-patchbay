@@ -228,7 +228,7 @@ export function agentViewState({ live }) {
     sessionUsage: {},
     contextChips: { s1: [longSelectionChip] }, sessionKnobs: { s1: [] }, promptQueue: { s1: [longQueuedPrompt] }, drafts: {},
     contextRoots: { s1: [] }, workspaceRoots: ["/ws"], liveSelection: null,
-    workspace: "file:///ws", savedRoots: { entries: [], missing: [] },
+    workspace: "file:///ws", savedRoots: { entries: [], missing: [] }, sessionMcp: {}, mcpServers: [],
     openEditors: [{ file: "/ws/src/app.ts", dirty: false }, { file: "/ws/src/api.ts", dirty: true }],
     workspaceFiles: { query: "", files: [], dirs: [] },
     preferences,

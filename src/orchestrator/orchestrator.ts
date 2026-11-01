@@ -328,7 +328,10 @@ export class Orchestrator {
       loadCatalog(),
       this.mcpServerConfigs,
       { env: this.mcpServerEnv, headers: this.mcpServerHeaders, tokens: this.mcpServerTokens },
-      { emit: (...events) => this.settings.emit(...events) },
+      {
+        emit: (...events) => this.settings.emit(...events),
+        listed: (servers) => this.agentView.emit({ kind: "mcpServersListed", servers }),
+      },
       { busy: (patchbayMcpServerId) => serverLine.held(patchbayMcpServerId), connecting: () => connectLine.holding() },
       {
         editorServerScript: place.scripts.editorServer,
@@ -619,11 +622,12 @@ export class Orchestrator {
       // used, and that's correct (prompt.image mechanics): passthrough is
       // how the claim gets exercised at all — a used-gate would deadlock the
       // row forever.
-      (contextToken, patchbayAgentId) =>
+      (contextToken, patchbayAgentId, own) =>
         this.mcpServers.mcpServersFor(
           patchbayAgentId,
           contextToken,
           this.agents.matrix(patchbayAgentId)?.["mcp.http"]?.declared === true,
+          own,
         ),
       log,
     );
@@ -643,7 +647,8 @@ export class Orchestrator {
         getMcpServerHeaders: async (contextToken, patchbayMcpServerId) => {
           const patchbayAgentId = this.sessions.bridgedTo(contextToken, patchbayMcpServerId);
           if (patchbayAgentId === undefined) return null;
-          const headers = await this.mcpServers.headersFor(patchbayMcpServerId, patchbayAgentId);
+          const own = this.sessions.ownMcpServers(contextToken).includes(patchbayMcpServerId);
+          const headers = await this.mcpServers.headersFor(patchbayMcpServerId, patchbayAgentId, own);
           return headers === null ? null : { headers };
         },
       },

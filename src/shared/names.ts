@@ -5,6 +5,8 @@
 // webview boundary: a store's add picks a name here, and a form previews the
 // name that add will pick.
 
+import type { PatchbayMcpServerId } from "./ids";
+
 /** `name` itself when free, else the first `${name}${separator}${n}` from 2
  * up that is. */
 export function freeName(name: string, taken: ReadonlySet<string>, separator: string): string {
@@ -16,6 +18,9 @@ export function freeName(name: string, taken: ReadonlySet<string>, separator: st
 /** The name patchbay's own editor server goes to agents under — no stored
  * server takes it. */
 export const EDITOR_SERVER_NAME = "patchbay";
+
+/** Its id: never a stored one's — no minted or slugged id holds a colon. */
+export const EDITOR_SERVER_ID = "patchbay:editor" as PatchbayMcpServerId;
 
 /** An MCP server's name is the key it goes to an agent under: agents build
  * its tool ids from it and keep "always allow" rules under it, so it never

@@ -29,9 +29,11 @@ import { ComposerStats } from "./stats";
 import { basename } from "../../shared/path";
 import { PromptEditor } from "./prompt-editor";
 import { RootsChip } from "./roots-chip";
+import { McpChip } from "./mcp-chip";
+import type { McpChipControls } from "./mcp-chip-controls";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import type { AvailableCommand, SavedRootsView } from "../../../shared/protocol";
+import type { AvailableCommand, McpServerListedView, SavedRootsView } from "../../../shared/protocol";
 import type { PatchbaySessionId } from "../../../shared/ids";
 import type { WorkspaceId } from "../../../shared/workspace";
 
@@ -51,6 +53,9 @@ export function Composer(props: {
   /** The roots chip's gate (roots-controls.ts): whether shown roots reach
    * the agent, whether adding is live, and the one-line reason when not. */
   rootsControls: RootsControls;
+  /** The session's MCP servers, as its chip shows them. */
+  mcpControls: McpChipControls;
+  mcpServers: readonly McpServerListedView[];
   liveSelection: LiveSelectionView | null;
   openEditors: readonly OpenEditorView[];
   workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
@@ -198,6 +203,14 @@ export function Composer(props: {
               savedRoots={props.savedRoots}
               here={props.workspace}
               controls={props.rootsControls}
+            />
+          )}
+          {enabled && (
+            <McpChip
+              patchbaySessionId={patchbaySessionId}
+              controls={props.mcpControls}
+              servers={props.mcpServers}
+              here={props.workspace}
             />
           )}
           {enabled && props.liveSelection !== null && (

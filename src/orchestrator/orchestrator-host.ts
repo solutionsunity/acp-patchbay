@@ -989,6 +989,12 @@ export class OrchestratorHost {
       case "reorderMcpServers":
         void this.orchestrator.mcpServers.reorder(action.patchbayMcpServerIds);
         break;
+      case "addSessionMcpServer":
+        this.orchestrator.sessions.addMcpServer(action.patchbaySessionId, action.patchbayMcpServerId);
+        break;
+      case "removeSessionMcpServer":
+        this.orchestrator.sessions.removeMcpServer(action.patchbaySessionId, action.patchbayMcpServerId);
+        break;
       case "addContextRoot":
         void this.addContextRoot(action.patchbaySessionId);
         break;

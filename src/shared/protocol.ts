@@ -354,6 +354,11 @@ export type Action =
   | { kind: "reorderAgentConfigs"; patchbayAgentIds: readonly PatchbayAgentId[] }
   | { kind: "reorderMcpServers"; patchbayMcpServerIds: readonly PatchbayMcpServerId[] }
   | { kind: "addContextRoot"; patchbaySessionId: PatchbaySessionId }
+  /** The MCP chip: a configured server given to this session only — or
+   * taken back. A session's servers ride its open, so either reaches the
+   * agent at the session's next open. */
+  | { kind: "addSessionMcpServer"; patchbaySessionId: PatchbaySessionId; patchbayMcpServerId: PatchbayMcpServerId }
+  | { kind: "removeSessionMcpServer"; patchbaySessionId: PatchbaySessionId; patchbayMcpServerId: PatchbayMcpServerId }
   | { kind: "removeContextRoot"; patchbaySessionId: PatchbaySessionId; path: string }
   /** Saved roots — the folders new sessions start with. `saveRoot` is the
    * roots chip's shortcut for a root already on the session; `pickSavedRoot`
@@ -431,6 +436,9 @@ export type PersistedChip =
 export interface SessionContinuity {
   knobs?: KnobSeed;
   roots?: readonly string[];
+  /** MCP servers given to this session only, besides the ones on in its
+   * workspace — the MCP chip's, sent at every open of the session. */
+  mcpServers?: readonly PatchbayMcpServerId[];
   queue?: readonly QueuedPrompt[];
   chips?: readonly PersistedChip[];
   draft?: string;
@@ -598,6 +606,21 @@ export interface BuiltinMcpServerView {
   /** Absent = not checked yet this session. */
   probe?: McpServerProbeView;
   busy: readonly McpServerWork[];
+}
+
+/** One configured MCP server as the MCP chip names it. */
+export interface McpServerListedView {
+  id: PatchbayMcpServerId;
+  name: string;
+  workspaces: Reach<WorkspaceId>;
+}
+
+/** A session's MCP servers (AgentViewState.sessionMcp). `given`: what its
+ * last open handed the agent, the built-in server first — null before it
+ * has opened in this window. `added`: given to this session alone. */
+export interface SessionMcpView {
+  given: readonly PatchbayMcpServerId[] | null;
+  added: readonly PatchbayMcpServerId[];
 }
 
 /** What an MCP server's line can hold. */
@@ -1695,6 +1718,13 @@ export interface AgentViewState {
    * through `session/resume` ("sets the complete list"); the session's MCP
    * servers read it at once, and the roots chip says per row who holds it. */
   contextRoots: Readonly<Record<string, readonly string[]>>;
+  /** Each session's MCP servers: the ones its last open gave the agent,
+   * and the ones the MCP chip added for it alone — given from its next
+   * open on. */
+  sessionMcp: Readonly<Record<string, SessionMcpView>>;
+  /** Every configured MCP server, by name and where it is on — what the
+   * MCP chip offers and names. */
+  mcpServers: readonly McpServerListedView[];
   /** Workspace folders — the always-active roots every session gets as its
    * cwd baseline. Fixed and non-removable in the UI; shown so the roots chip
    * reflects reality instead of counting only the user-added extras. */
@@ -1844,6 +1874,8 @@ export const initialAgentViewState: AgentViewState = {
   promptQueue: {},
   sessionKnobs: {},
   contextRoots: {},
+  sessionMcp: {},
+  mcpServers: [],
   drafts: {},
   workspaceRoots: [],
   savedRoots: NO_SAVED_ROOTS,
@@ -2028,6 +2060,8 @@ export type AgentViewEvent =
   | { kind: "transcriptSeeded"; patchbaySessionId: PatchbaySessionId; blocks: readonly ChatBlock[] }
   /** Full replace — the current external-root list for a session. */
   | { kind: "contextRootsChanged"; patchbaySessionId: PatchbaySessionId; roots: readonly string[] }
+  | { kind: "sessionMcpChanged"; patchbaySessionId: PatchbaySessionId; mcp: SessionMcpView }
+  | { kind: "mcpServersListed"; servers: readonly McpServerListedView[] }
   | { kind: "workspaceRootsChanged"; roots: readonly string[] }
   /** Full replace — live selection + open editors, coalesced to the latest. */
   | {
@@ -2337,6 +2371,7 @@ export function reduceAgentView(
       const { [event.patchbaySessionId]: _x, ...contextChips } = state.contextChips;
       const { [event.patchbaySessionId]: _k, ...sessionKnobs } = state.sessionKnobs;
       const { [event.patchbaySessionId]: _r, ...contextRoots } = state.contextRoots;
+      const { [event.patchbaySessionId]: _m, ...sessionMcp } = state.sessionMcp;
       const { [event.patchbaySessionId]: _u, ...sessionUsage } = state.sessionUsage;
       const { [event.patchbaySessionId]: _q, ...promptQueue } = state.promptQueue;
       const { [event.patchbaySessionId]: _d, ...drafts } = state.drafts;
@@ -2356,6 +2391,7 @@ export function reduceAgentView(
         contextChips,
         sessionKnobs,
         contextRoots,
+        sessionMcp,
         sessionUsage,
         promptQueue,
         drafts,
@@ -2636,6 +2672,10 @@ export function reduceAgentView(
       );
     case "contextRootsChanged":
       return { ...state, contextRoots: { ...state.contextRoots, [event.patchbaySessionId]: event.roots } };
+    case "sessionMcpChanged":
+      return { ...state, sessionMcp: { ...state.sessionMcp, [event.patchbaySessionId]: event.mcp } };
+    case "mcpServersListed":
+      return { ...state, mcpServers: event.servers };
     case "workspaceRootsChanged":
       return { ...state, workspaceRoots: event.roots };
     case "editorContextChanged":

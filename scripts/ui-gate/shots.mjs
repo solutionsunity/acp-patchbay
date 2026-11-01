@@ -1712,6 +1712,14 @@ for (const theme of Object.keys(THEMES)) {
   av.workspaceRoots = [`/ws/${LONG}`];
   av.contextRoots = { s1: [longPath] };
   av.savedRoots = { entries: [], missing: [] };
+  // the session's MCP servers: the built-in and one on here given, one of
+  // its own waiting for the next open
+  av.mcpServers = [
+    { id: "files", name: "files", workspaces: ["file:///ws"] },
+    { id: "deploy", name: `deploy-${LONG}`, workspaces: [] },
+    { id: "spare", name: "spare", workspaces: [] },
+  ];
+  av.sessionMcp = { s1: { given: ["patchbay:editor", "files"], added: ["deploy"] } };
   av.sessionKnobs = {
     s1: [
       {
@@ -1733,6 +1741,27 @@ for (const theme of Object.keys(THEMES)) {
   await sweep(p, "agent view");
   await opened(p, '.ctx-chip:has-text("root")', "popover-content", "roots popover");
   await opened(p, '[data-slot="popover-content"] button:has-text("Save")', "dropdown-menu-content", "a root's Save menu");
+  await p.keyboard.press("Escape");
+  await p.keyboard.press("Escape");
+  await opened(p, '.ctx-chip:has-text("MCP server")', "popover-content", "MCP chip");
+  check(
+    "[narrow] the MCP chip names what the session was given, and its own server waiting for the next open",
+    (await p.locator('[data-slot="popover-content"]', { hasText: "built-in" }).count()) === 1 &&
+      (await p.locator('[data-slot="popover-content"]', { hasText: "this session · at next open" }).count()) === 1,
+  );
+  await opened(p, '[data-slot="popover-content"] button:has-text("Save")', "dropdown-menu-content", "an MCP server's Save menu");
+  await p.click('[data-slot="dropdown-menu-content"] [role="menuitem"]:has-text("Save for this workspace")');
+  const savedMcp = await p.evaluate(() => window.__actions.at(-1));
+  check(
+    "[narrow] the chip's Save adds this workspace to where the server is on",
+    savedMcp?.kind === "setMcpServerWorkspaces" && savedMcp.patchbayMcpServerId === "deploy" && JSON.stringify(savedMcp.workspaces) === '["file:///ws"]',
+  );
+  await p.keyboard.press("Escape");
+  await opened(p, '.ctx-chip:has-text("MCP server")', "popover-content", "MCP chip again");
+  await opened(p, '[data-slot="popover-content"] button:has-text("Add for this session")', "dropdown-menu-content", "the MCP chip's Add menu");
+  await p.click('[data-slot="dropdown-menu-content"] [role="menuitem"]:has-text("spare")');
+  const addedMcp = await p.evaluate(() => window.__actions.at(-1));
+  check("[narrow] the chip's Add gives a server to this session", addedMcp?.kind === "addSessionMcpServer" && addedMcp.patchbayMcpServerId === "spare");
   await p.keyboard.press("Escape");
   await p.keyboard.press("Escape");
   await opened(p, ".ctx-add", "popover-content", "context adder");

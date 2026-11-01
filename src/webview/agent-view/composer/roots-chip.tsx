@@ -12,18 +12,13 @@
 // added row also says whether it is saved for new sessions; the chip only
 // saves (the shortcut), Settings manages the saved lists.
 import { count } from "../../../shared/count";
-import { NO_WORKSPACE_TO_SAVE, type SavedRootsView } from "../../../shared/protocol";
+import type { SavedRootsView } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { rootHolders, rootSaving, type RootsControls } from "./roots-controls";
+import { SaveMenu } from "./save-menu";
 import type { PatchbaySessionId } from "../../../shared/ids";
 import type { WorkspaceId } from "../../../shared/workspace";
 
@@ -115,30 +110,16 @@ export function RootsChip({
 }
 
 /** Saved for this workspace: where it is saved, read-only here. Unsaved:
- * one Save menu, this workspace first (the default scope). */
+ * the Save menu. */
 function SaveControl({ path, saved, here }: { path: string; saved: SavedRootsView; here: WorkspaceId | null }) {
   const send = useActions();
   const state = rootSaving(path, saved, here);
   if (state.kind === "saved") return <span className="text-muted-foreground">{state.label}</span>;
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-5 shrink-0 px-1" title="Save for new sessions">
-          Save
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem
-          disabled={!state.workspaceOpen}
-          title={state.workspaceOpen ? undefined : NO_WORKSPACE_TO_SAVE}
-          onSelect={() => send({ kind: "saveRoot", path, scope: "workspace" })}
-        >
-          Save for this workspace
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => send({ kind: "saveRoot", path, scope: "everywhere" })}>
-          Save for every workspace
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <SaveMenu
+      workspaceOpen={state.workspaceOpen}
+      onThisWorkspace={() => send({ kind: "saveRoot", path, scope: "workspace" })}
+      onEveryWorkspace={() => send({ kind: "saveRoot", path, scope: "everywhere" })}
+    />
   );
 }

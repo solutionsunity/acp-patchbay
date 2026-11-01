@@ -3,7 +3,7 @@
 
 // Per-session continuity — what the user staged and steered on a session,
 // in one row: the last agent-confirmed knob combination, user-added context
-// roots, the held prompt queue, prepared-but-unsent context chips (an
+// roots and MCP servers given to the session alone, the held prompt queue, prepared-but-unsent context chips (an
 // image's or a dropped file's bytes live in the session's own folder,
 // stores/session-files.ts; the row carries the path), and the composer
 // draft. None of it is a cache of readable reality: agents
@@ -27,7 +27,7 @@ import type { SessionContinuity } from "../../shared/protocol";
 import { ATTACHMENTS_DIR, fileChipLabel } from "../attachments";
 import { RecordStore } from "./global-record-store";
 import type { KV } from "./kv";
-import type { PatchbayAgentId } from "../../shared/ids";
+import type { PatchbayAgentId, PatchbayMcpServerId } from "../../shared/ids";
 import { savedId } from "./saved-id";
 import { STORAGE_KEYS } from "./storage-keys";
 
@@ -91,6 +91,7 @@ const sessionContinuityEntrySchema = z.object({
   cwd: z.string().min(1).optional(),
   knobs: knobSeedSchema.optional(),
   roots: z.array(z.string()).optional(),
+  mcpServers: z.array(savedId<PatchbayMcpServerId>()).optional(),
   queue: z.array(queuedPromptSchema).optional(),
   chips: z.array(persistedChipSchema).optional(),
   draft: z.string().optional(),
@@ -106,6 +107,7 @@ const KEY = STORAGE_KEYS.sessionContinuity;
 const SAVED: Record<keyof SessionContinuity, true> = {
   knobs: true,
   roots: true,
+  mcpServers: true,
   queue: true,
   chips: true,
   draft: true,

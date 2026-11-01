@@ -4164,3 +4164,45 @@ describe("a session's files live with the session", () => {
     await h.pool.stop("f78f" as PatchbayAgentId);
   });
 });
+
+// #70: a server given to one session only — the MCP chip's. A session's
+// servers ride its open, so the chip's add reaches the agent at the
+// session's next open, and the bridge answers for it while the session
+// keeps it.
+describe("a session's own MCP servers", () => {
+  it("one added for this session alone rides its every open from the next — the chip hears what each open gave", async () => {
+    const h = harness();
+    const configs = h.stores.mcpServerConfigs;
+    // off in this workspace: no session here gets it by itself
+    await configs.upsert({
+      id: "elsewhere" as PatchbayMcpServerId,
+      name: "Elsewhere",
+      source: { kind: "custom-http", url: "http://127.0.0.1:9/mcp", oauth: false },
+      routing: "auto",
+      workspaces: [],
+      transport: "bridge",
+    });
+    const composing = vi.spyOn(h.orchestrator.mcpServers, "mcpServersFor");
+    await h.connect(spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "own1"));
+    const patchbaySessionId = await h.gates.create("own1" as PatchbayAgentId, "Fake Agent", cwd);
+    expect(h.state().sessionMcp[patchbaySessionId]).toEqual({ given: ["patchbay:editor"], added: [] });
+
+    h.sessions.addMcpServer(patchbaySessionId, "elsewhere" as PatchbayMcpServerId);
+    // given at the next open, not before
+    expect(h.state().sessionMcp[patchbaySessionId]).toEqual({ given: ["patchbay:editor"], added: ["elsewhere"] });
+    await h.gates.prompt(patchbaySessionId, { text: "first" });
+    await h.gates.reload(patchbaySessionId);
+    expect(composing.mock.calls.at(-1)?.[3]).toEqual(["elsewhere"]);
+    expect(h.state().sessionMcp[patchbaySessionId]).toEqual({ given: ["patchbay:editor", "elsewhere"], added: ["elsewhere"] });
+    // the bridge it was given through answers for it while the session keeps it
+    const token = composing.mock.calls.at(-1)![1];
+    expect(h.sessions.ownMcpServers(token)).toEqual(["elsewhere"]);
+
+    // taken back: gone from its next open
+    h.sessions.removeMcpServer(patchbaySessionId, "elsewhere" as PatchbayMcpServerId);
+    await h.gates.reload(patchbaySessionId);
+    expect(composing.mock.calls.at(-1)?.[3]).toEqual([]);
+    expect(h.state().sessionMcp[patchbaySessionId]).toEqual({ given: ["patchbay:editor"], added: [] });
+    await h.pool.stop("own1" as PatchbayAgentId);
+  });
+});

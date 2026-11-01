@@ -18,6 +18,7 @@ import { Composer } from "./composer/composer";
 import { newChatInFlight } from "./composer/composer-controls";
 import { AttentionIndicators } from "./attention";
 import { rootsControls } from "./composer/roots-controls";
+import { mcpChipControls } from "./composer/mcp-chip-controls";
 import { AgentsDrawer, SessionsDrawer } from "./drawers";
 import { Header } from "./header";
 import { QueueBand } from "./queue-band";
@@ -199,6 +200,13 @@ export function App({
           loadDeclared: activeMatrix?.["session.load"]?.declared === true,
           hasTurns: active?.hasTurns === true,
         })}
+        mcpControls={mcpChipControls({
+          mcp: active !== null ? state.sessionMcp[active.id] : undefined,
+          servers: state.mcpServers,
+          here: state.workspace,
+          canReopen: activeMatrix?.["session.load"]?.declared === true || activeMatrix?.["session.resume"]?.declared === true,
+        })}
+        mcpServers={state.mcpServers}
         liveSelection={state.liveSelection}
         openEditors={state.openEditors}
         workspaceFiles={state.workspaceFiles}

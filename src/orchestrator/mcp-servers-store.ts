@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import type { EnvVariable, McpServer, McpServerStdio } from "@agentclientprotocol/sdk";
 import type {
   McpServerConnectView,
+  McpServerListedView,
   McpServerProbeView,
   McpServerRoutingView,
   McpServerView,
@@ -30,7 +31,7 @@ import { unlessAborted } from "./abort";
 import { asksForSignIn, probeMcpServer, type ProbeFn, type ProbeOutcome, type ProbeTarget } from "./mcp-probe";
 import { formatCommandLine, parseCommandLine } from "../shared/command-line";
 import { documentOf, draftProblem, expandDraft, unsetSaid, type McpDraft } from "../shared/mcp-config";
-import { EDITOR_SERVER_NAME } from "../shared/names";
+import { EDITOR_SERVER_ID, EDITOR_SERVER_NAME } from "../shared/names";
 import { PRODUCT } from "../shared/product";
 import { loggableUrl, nullLogger, type Logger } from "./logger";
 import { connectMcpOAuth, refreshMcpOAuth, type OAuthUserAgent } from "./mcp-oauth";
@@ -53,6 +54,9 @@ type Env = Record<string, string>;
 
 export interface McpServersStoreHooks {
   emit(...events: SettingsEvent[]): void;
+  /** The servers by name and where they are on — what an agent view's MCP
+   * chip offers. */
+  listed(servers: readonly McpServerListedView[]): void;
 }
 
 /** What the gates' lines hold — read when the store publishes, never kept:
@@ -85,9 +89,8 @@ export interface McpServerSecrets {
 /** Patchbay's own server — the editor's state and the session's roots —
  * given to every session over stdio, the one delivery every agent takes.
  * Built in: never stored, never removed, and its name is never another
- * server's. The id can't be a stored one's: no minted or slugged id holds
- * a colon. */
-const EDITOR_SERVER = { id: "patchbay:editor" as PatchbayMcpServerId, name: EDITOR_SERVER_NAME } as const;
+ * server's. */
+const EDITOR_SERVER = { id: EDITOR_SERVER_ID, name: EDITOR_SERVER_NAME } as const;
 
 /** One of patchbay's own scripts as a server the agent spawns. On a desktop
  * editor `process.execPath` is its Electron binary, which runs a script as
@@ -475,6 +478,7 @@ export class McpServersStore {
   /** Re-reads config + token presence and republishes the lists wholesale
    * — same "replace, don't patch" shape as the capability matrix. */
   async refresh(): Promise<void> {
+    this.hooks.listed(this.configs.list().map((c) => ({ id: c.id, name: c.name, workspaces: c.workspaces })));
     this.hooks.emit(
       { kind: "mcpCatalogLoaded", entries: this.catalogViews() },
       {
@@ -978,13 +982,14 @@ export class McpServersStore {
   }
 
   /** The headers the bridge serving a remote server to `patchbayAgentId`
-   * sends — only while the server is still connected, on in this workspace
-   * and routed to that agent: switching it off, re-routing or removing it
-   * reaches a running bridge at its next request. Filled from the
-   * environment the agent runs with. */
-  async headersFor(patchbayMcpServerId: PatchbayMcpServerId, patchbayAgentId: PatchbayAgentId): Promise<Env | null> {
+   * sends — only while the server is still connected, and on in this
+   * workspace and routed to that agent, or `own` — given to the bridge's
+   * session alone: switching it off, re-routing or removing it reaches a
+   * running bridge at its next request. Filled from the environment the
+   * agent runs with. */
+  async headersFor(patchbayMcpServerId: PatchbayMcpServerId, patchbayAgentId: PatchbayAgentId, own = false): Promise<Env | null> {
     const config = this.configs.get(patchbayMcpServerId);
-    if (config === undefined || !this.givenTo(config, patchbayAgentId)) return null;
+    if (config === undefined || !(own || this.givenTo(config, patchbayAgentId))) return null;
     const live = await this.liveDraft(config, { ...process.env, ...(await this.agentEnv(patchbayAgentId)) });
     return live !== null && "draft" in live && live.draft.type === "http" ? { ...live.draft.headers } : null;
   }
@@ -1060,6 +1065,9 @@ export class McpServersStore {
     patchbayAgentId: PatchbayAgentId,
     contextToken: string,
     declaresHttp: boolean,
+    /** Servers given to this session alone — the MCP chip's, given wherever
+     * they are on and whoever they are routed to. */
+    own: readonly PatchbayMcpServerId[] = [],
   ): Promise<{ servers: McpServer[]; given: AttachedServer[]; withheld: string[] }> {
     // McpServerStdio is the untagged union member — no discriminant needed
     // since it's the only variant every agent is guaranteed to accept.
@@ -1068,7 +1076,7 @@ export class McpServersStore {
     const withheld: string[] = [];
     const env = { ...process.env, ...(await this.agentEnv(patchbayAgentId)) };
     for (const config of this.configs.list()) {
-      if (!this.givenTo(config, patchbayAgentId)) continue;
+      if (!this.givenTo(config, patchbayAgentId) && !own.includes(config.id)) continue;
       // Env and header values read from SecretStorage at the moment of
       // attach — this is also where they necessarily cross to the agent:
       // the agent spawns stdio servers itself (ACP model), so the spawn env
