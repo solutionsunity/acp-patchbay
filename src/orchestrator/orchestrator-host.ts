@@ -25,6 +25,7 @@ import { applyFileWrite } from "./client-host";
 import { configurationText, writeConfigurationFile } from "./config-export";
 import { EditorStateHost } from "./editor-state-host";
 import { runLoginTask } from "./login-task";
+import { SelfVersionHost } from "./self-version-host";
 import { agentErrorText } from "./readers/agent-error";
 import { Cancelled } from "./queue";
 import type { ExportPart } from "../shared/protocol";
@@ -59,6 +60,7 @@ export class OrchestratorHost {
   readonly orchestrator: Orchestrator;
   readonly editorStateHost: EditorStateHost;
   private readonly editorSubscriptions: vscode.Disposable[] = [];
+  private readonly selfVersion: SelfVersionHost;
   /** Sessions shown in their own detached panels (AgentPanelHost, assigned
    * in extension.ts) — reaper-exempt like the active-in-view session: a
    * session in its own window is being looked at. */
@@ -91,7 +93,7 @@ export class OrchestratorHost {
     // are issued (microtask-paced at worst), and this constructor only
     // wires stores — their first real read comes later on the event loop,
     // after the fill has fully landed.
-    void recoverLegacyGlobalState({
+    const recovered = recoverLegacyGlobalState({
       kv: machineKV,
       vscdbPath: join(dirname(context.globalStorageUri.fsPath), "state.vscdb"),
       log: (message) => log.info(`legacy recovery: ${message}`),
@@ -159,6 +161,15 @@ export class OrchestratorHost {
       log,
     );
 
+    // Its own version is weighed once the machine store holds all it will:
+    // whether any agent exists may come from the recovery's fill.
+    this.selfVersion = new SelfVersionHost(context.extension, context.extensionMode === vscode.ExtensionMode.Production, {
+      seenVersion: this.orchestrator.seenVersion,
+      hasAgents: () => this.orchestrator.agents.rows().length > 0,
+      openAgentsSettings: () => this.handleAction({ kind: "openSettings", section: "agents" }),
+      log,
+    });
+    void recovered.then(() => this.selfVersion.start());
 
     // Live editor context for the composer (the selection
     // ghost chip appears only while the IDE has a selection; the @ mention
@@ -1226,6 +1237,7 @@ export class OrchestratorHost {
   dispose(): void {
     for (const d of this.editorSubscriptions) d.dispose();
     this.editorStateHost.stop();
+    this.selfVersion.dispose();
     this.orchestrator.dispose();
     this.statusBarItem.dispose();
     this.wireChannel?.dispose();

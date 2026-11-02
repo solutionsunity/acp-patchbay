@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Patchbay says what its own version just did.** A fresh install points
+  to adding the first agent; after an update, a notice offers what's new,
+  from this changelog. And when a newer Patchbay is installed while a
+  window still runs the old one — which it does until it reloads, for days
+  if left open — that window says so, with Reload Window, and that the
+  reload stops its agents. Each is said once per window, and nothing is
+  asked of the network: the newer copy is read off the editor's own
+  extensions folder. (#65)
 - **Claude's plan usage shows its percentage.** Claude Code sends a
   window's percentage at the top of its reading only once a warning
   threshold is crossed, so under it the plan gauge had a label and no

@@ -10,7 +10,7 @@
 // named, never dropped in silence.
 import { z } from "zod";
 import { count } from "../shared/count";
-import { PRODUCT } from "../shared/product";
+import { isNewer, PRODUCT } from "../shared/product";
 import type { ExportPart, KnobSeed, PreferencesView, WriteEntry } from "../shared/protocol";
 import { STORED_KEYS } from "./config-export";
 import { STORAGE_KEYS, type StorageKey } from "./stores/storage-keys";
@@ -166,15 +166,3 @@ export function readConfiguration(text: string): ReadOutcome {
   };
 }
 
-/** Whether version `a` is later than `b`, by their numbered parts; one
- * that doesn't read as a version is never later. */
-export function isNewer(a: string, b: string): boolean {
-  const parse = (v: string) => /^(\d+)\.(\d+)\.(\d+)/.exec(v)?.slice(1).map(Number);
-  const pa = parse(a);
-  const pb = parse(b);
-  if (pa === undefined || pb === undefined) return false;
-  for (let i = 0; i < 3; i++) {
-    if (pa[i]! !== pb[i]!) return pa[i]! > pb[i]!;
-  }
-  return false;
-}

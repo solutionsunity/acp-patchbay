@@ -43,6 +43,7 @@ export const STORED_KEYS: Readonly<Record<StorageKey, ExportPart | { never: stri
   [STORAGE_KEYS.workspaceSavedRootsBefore090]: { never: "an earlier version's copy of this workspace's own, moved into the saved list" },
   [STORAGE_KEYS.lastConnected]: { never: "this workspace's agents at its last close" },
   [STORAGE_KEYS.lastActiveSession]: { never: "this workspace's last open session" },
+  [STORAGE_KEYS.seenVersion]: { never: "the Patchbay version this machine last ran" },
 };
 
 /** Where an export reads from: the stores that hold a carried key, and

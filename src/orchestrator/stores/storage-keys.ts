@@ -42,6 +42,7 @@ export const STORAGE_KEYS = {
   workspaceSavedRootsBefore090: "acpPatchbay.savedRoots",
   lastConnected: "acpPatchbay.lastConnected",
   lastActiveSession: "acpPatchbay.lastActiveSession",
+  seenVersion: "acpPatchbay.seenVersion",
 } as const;
 
 export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS];

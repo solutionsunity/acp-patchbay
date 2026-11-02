@@ -1,0 +1,7 @@
+{
+  "name": "self-update-runner",
+  "description": "Hosts the self-update suite: patchbay runs installed beside it, never in development.",
+  "publisher": "test",
+  "version": "0.0.0",
+  "engines": { "vscode": "^1.90.0" }
+}

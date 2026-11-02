@@ -30,6 +30,7 @@ describe("storage keys", () => {
       workspaceSavedRootsBefore090: "acpPatchbay.savedRoots",
       lastConnected: "acpPatchbay.lastConnected",
       lastActiveSession: "acpPatchbay.lastActiveSession",
+      seenVersion: "acpPatchbay.seenVersion",
     });
   });
 

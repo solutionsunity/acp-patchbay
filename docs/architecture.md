@@ -272,8 +272,44 @@ SecretStorage, a sign-in.
   host. None is read today, by decision: nothing consumes one. The remote
   cases patchbay meets are read off reality itself — a dialog's URI
   scheme, `asExternalUri`, `openExternal` — and VS Code routes them. A
-  fact lands with its first consumer (the extension's own update check
-  needs which gallery the editor installs from).
+  fact lands with its first consumer.
+- **Patchbay's own version** — three moments, each a notice with one
+  action, and no network: decided in one pure module (self-version.ts),
+  said by the VS Code side (self-version-host.ts). A **fresh install**
+  offers to add the first agent (Settings › Agents); an **update** offers
+  what's new — the changelog shipped inside the extension, as a Markdown
+  preview, else the file (the packager lowercases its name, so it is
+  found in any case); a **newer copy installed beside the running one**
+  offers Reload Window, and says the reload stops the window's agents.
+  Install against update is the version this copy runs (its manifest, as
+  the editor loaded it) against the newest one any window on the machine
+  has run (the machine store): newer is an update, and none stored is an
+  install — or, with agents already configured, an update from a version
+  that kept none. The version a start announces is recorded, so other
+  windows starting on it say nothing; a downgrade says nothing and records
+  nothing. The editor tells a running extension nothing when a newer copy
+  is installed — no extension event, and the API keeps answering with the
+  running copy — so the third moment reads the editor's extensions folder,
+  its internal layout rather than an API: each copy in `<id>-<version>`
+  (a platform build adds `-<target>`), the copies to delete at the next
+  start listed `true` in `.obsolete`. An update from the window — the
+  editor's auto-update, an Update or a VSIX install — marks the running
+  copy there: this copy marked and a newer, unmarked copy beside it is the
+  moment. `.obsolete` keeps names long after their folders are gone, and
+  another extension's id can begin with this one's (`-nightly`), so a
+  folder counts only by its exact shape; a layout read any other way is no
+  moment. An install by another process (the `code` CLI) marks nothing,
+  so it is not seen. It looks at activation — once the machine store's
+  one-time recovery has landed — and on every change to the extensions
+  folder (a file watch, never a poll); an installed copy only, since a
+  development copy runs from a folder of its own. Each moment is said once
+  per window. Reload Window, not `workbench.action.restartExtensionHost`:
+  that bare restart starts the copy already loaded again. Finding a newer
+  version stays the editor's: no API exposes the gallery's latest, so
+  patchbay checks no gallery for itself — with auto-update off, updating
+  is the Extensions view's, a deliberate scope decision. The electron
+  gate runs patchbay as a user has it, installed from its package into a
+  fresh extensions folder, and installs the next version beside it.
 - **The turn-end chime plays in the view.** Deciding is work: the
   orchestrator decides a chime is due (a turn ended, not cancelled; the
   preference on) and picks the one surface that plays it — the Agent View's

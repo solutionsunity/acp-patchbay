@@ -57,6 +57,7 @@ const ROWS: Record<StorageKey, { label: string; scope: "machine" | "workspace"; 
   },
   [STORAGE_KEYS.lastConnected]: { label: "Agents running at the last close", scope: "workspace", detail: counted("agent") },
   [STORAGE_KEYS.lastActiveSession]: { label: "Last open session", scope: "workspace", detail: marked("one", "none") },
+  [STORAGE_KEYS.seenVersion]: { label: "Patchbay version last run", scope: "machine", detail: marked("recorded", "none") },
 };
 
 /** The rows for every key, read from where each lives. */

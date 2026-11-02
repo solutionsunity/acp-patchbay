@@ -19,6 +19,7 @@ import { MachineWriteScopeStore } from "../src/orchestrator/stores/write-scope";
 import { commandOf } from "../src/orchestrator/process-tree";
 import { SpawnRegistryStore } from "../src/orchestrator/stores/spawn-registry";
 import { SavedRootsStore } from "../src/orchestrator/stores/saved-roots";
+import { SeenVersionStore } from "../src/orchestrator/stores/seen-version";
 import type { PatchbayAgentId } from "../src/shared/ids";
 import type { WorkspaceId } from "../src/shared/workspace";
 import { STORAGE_KEYS } from "../src/orchestrator/stores/storage-keys";
@@ -42,6 +43,7 @@ describe("eraseAllData", () => {
     const defaultAgentFold = new DefaultAgentFoldStore(globalKv);
     const lastActiveSession = new LastActiveSessionStore(workspaceKv);
     const preferences = new PreferencesStore(globalKv);
+    const seenVersion = new SeenVersionStore(globalKv);
     const savedRoots = new SavedRootsStore(globalKv, { id: "file:///ws" as WorkspaceId, kv: workspaceKv });
 
     // A lived-in install.
@@ -57,6 +59,7 @@ describe("eraseAllData", () => {
     await lastConnected.write(["claude" as PatchbayAgentId]);
     await lastActiveSession.set({ patchbayAgentId: "a" as PatchbayAgentId, sessionId: "s1" });
     await preferences.set({ soundOnDone: true, idleCloseMinutes: 15 });
+    await seenVersion.record("0.90.0");
     await savedRoots.save("/src/lib", "file:///ws" as WorkspaceId);
     await savedRoots.save("/src/odoo", "auto");
     // the one key the erase keeps: the recovery would run again without it
@@ -70,7 +73,7 @@ describe("eraseAllData", () => {
       agents: owner("agents"), mcpServers: owner("mcpServers"), sessions: owner("sessions"),
       spawnRegistry, permissionRules, machineRules, machineWriteScope,
       decisionAudit, lastConnected, defaultAgentFold, lastActiveSession,
-      preferences, savedRoots,
+      seenVersion, preferences, savedRoots,
       tempStashes: { wipe: async () => { stashWiped = true; } },
     });
 
@@ -85,6 +88,8 @@ describe("eraseAllData", () => {
     expect(await decisionAudit.tail(5)).toEqual([]);
     expect(await lastConnected.consume()).toEqual([]);
     expect(lastActiveSession.get()).toBeUndefined();
+    // erased, the next start reads as a fresh install
+    expect(seenVersion.get()).toBeUndefined();
     expect(preferences.get()).toEqual(DEFAULT_PREFERENCES);
     expect(savedRoots.list()).toEqual([]);
     await expect(stat(join(dir, "decision-audit.jsonl"))).rejects.toThrow();

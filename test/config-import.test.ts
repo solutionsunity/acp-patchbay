@@ -4,7 +4,8 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { isNewer, readConfiguration, type ConfigurationRead } from "../src/orchestrator/config-import";
+import { readConfiguration, type ConfigurationRead } from "../src/orchestrator/config-import";
+import { isNewer } from "../src/shared/product";
 import { MODE_KNOB_ID } from "../src/orchestrator/knobs";
 import { PRODUCT } from "../src/shared/product";
 import { STORAGE_KEYS } from "../src/orchestrator/stores/storage-keys";

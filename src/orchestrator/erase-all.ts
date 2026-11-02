@@ -34,6 +34,7 @@ export interface EraseTargets {
   lastConnected: Wipeable;
   defaultAgentFold: Wipeable;
   lastActiveSession: Wipeable;
+  seenVersion: Wipeable;
   preferences: Wipeable;
   savedRoots: Wipeable;
   /** The preview and diff temp stashes: image previews and diff
@@ -68,6 +69,7 @@ const ERASED_BY: Readonly<
   [STORAGE_KEYS.workspaceSavedRootsBefore090]: "savedRoots",
   [STORAGE_KEYS.lastConnected]: "lastConnected",
   [STORAGE_KEYS.lastActiveSession]: "lastActiveSession",
+  [STORAGE_KEYS.seenVersion]: "seenVersion",
   [STORAGE_KEYS.legacyStateRecovery]: {
     kept: "it marks the one-time recovery done — erased, the recovery would run again and could bring back what was just erased",
   },

@@ -90,6 +90,7 @@ import { type CommandRule, MachineRulesStore, PermissionRulesStore } from "./sto
 import { ShellReader } from "./shell-reading";
 import { MachineWriteScopeStore, withWriteEntry, writeScopeRows } from "./stores/write-scope";
 import { SavedRootsStore } from "./stores/saved-roots";
+import { SeenVersionStore } from "./stores/seen-version";
 import { SECRET_FAMILIES } from "./stores/storage-keys";
 import { loadCatalog } from "./stores/mcp-catalog";
 import { SpawnRegistryStore } from "./stores/spawn-registry";
@@ -204,6 +205,9 @@ export class Orchestrator {
   readonly machineWriteScope: MachineWriteScopeStore;
   readonly savedRoots: SavedRootsStore;
   readonly preferences: PreferencesStore;
+  /** The newest Patchbay version this machine has run — the host weighs
+   * it at each start. */
+  readonly seenVersion: SeenVersionStore;
   private readonly composerKnobs: ComposerKnobsStore;
   private readonly sessionContinuity: SessionContinuityStore;
   private readonly sessionFiles: SessionFilesStore;
@@ -292,6 +296,7 @@ export class Orchestrator {
     this.decisionAudit = new DecisionAuditStore(place.storagePath);
     this.lastConnected = new LastConnectedStore(place.workspaceKV);
     this.defaultAgentFold = new DefaultAgentFoldStore(machineKV);
+    this.seenVersion = new SeenVersionStore(machineKV);
     this.lastActiveSession = new LastActiveSessionStore(place.workspaceKV);
     // Agents and MCP servers are developer-env, not code-env: global to
     // this machine, never a repo-committed file. An MCP server is on only in
@@ -881,6 +886,7 @@ export class Orchestrator {
       lastActiveSession: this.lastActiveSession,
       lastConnected: this.lastConnected,
       defaultAgentFold: this.defaultAgentFold,
+      seenVersion: this.seenVersion,
       preferences: this.preferences,
       savedRoots: this.savedRoots,
       tempStashes: {

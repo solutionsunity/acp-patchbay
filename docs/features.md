@@ -327,6 +327,13 @@ deliverable.
   clicking it jumps to the session.
 - Command palette covers every core action: new session, switch session, connect
   agent, open settings.
+- Patchbay speaks for its own version, without asking the network: a notice
+  with one action, once per window. A fresh install points to adding the
+  first agent; an update offers what's new, from the changelog it ships
+  with; and when a newer Patchbay is installed while a window runs the old
+  one, that window says so and offers to reload — the reload stops the
+  window's agents, and it says that too. Finding a newer Patchbay stays the
+  editor's, in its Extensions view.
 - A session waiting on the user — a permission, a file write, a command, a
   question — says so wherever the user happens to be looking: a native
   notification when the session is not on screen, a count on the Agent View's
