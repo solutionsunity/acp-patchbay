@@ -292,7 +292,10 @@ for (const theme of Object.keys(THEMES)) {
   // and gone from the stream as a card of its own
   const termCard = p.locator(".card", { hasText: "Run tests" });
   check(`[${theme}] embedded terminal renders inside its tool card`, (await termCard.locator(".term", { hasText: "12 passed" }).count()) === 1);
-  check(`[${theme}] embedded terminal is not also a card of its own`, (await p.locator(".chat > .card", { hasText: "npm test" }).filter({ hasNotText: "Run tests" }).count()) === 0);
+  // read by transcript item, not by where cards sit: the one item showing
+  // the terminal's output is its tool call
+  const termItems = await p.locator(".chat-body > [data-item]", { hasText: "12 passed" }).allTextContents();
+  check(`[${theme}] embedded terminal is not also a card of its own`, termItems.length === 1 && termItems[0].includes("Run tests"));
   await p.mouse.move(0, 0);
   await termCard.screenshot({ path: `${OUT}/tool-card-terminal-${theme}.png` });
 
