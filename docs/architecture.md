@@ -712,18 +712,18 @@ after a restart.
 Marking a row used is centralized in one **proof table**
 (`CAPABILITY_PROOFS`, capabilities.ts) — the single place that knows which wire
 fact proves which row. `pool.ts` — the sole channel that talks to an agent on
-the wire — consults it at three chokepoints: an outgoing agent RPC resolving
-(`authenticate` → `auth` when the agent declares methods; `session/new` →
-`concurrentSessions` when the connection already served a session; `logout` → `auth.logout` — declared from
-`agentCapabilities.auth.logout`; the agents store refuses a logout the agent
-doesn't declare, and the card offers Log out on the same reading
-(`src/shared/agent-offers.ts`), so the spec's "Clients MUST NOT call it"
-holds at the writer;
-`session/fork` → `session.fork` + `concurrentSessions`;
-`session/load` → `session.load`; `session/prompt` → `prompt.image` / `audio` /
-`embeddedContext` when the prompt actually carried that block type), an
-incoming client request handled (`fs/read_text_file`, `fs/write_text_file`,
-`terminal/create`, `elicitation/create`), and a `session/update` kind tag arriving (`usage_update` → `usage`).
+the wire — consults it at three chokepoints: an outgoing agent RPC resolving,
+an incoming client request handled, and a `session/update` kind tag
+arriving. Which row each fact proves, and on what condition, is the table's
+to say. For example, `session/fork` proves `session.fork` and
+`concurrentSessions`; `session/new` proves `concurrentSessions` only when
+the connection already served a session; `session/prompt` proves
+`prompt.image` only when the prompt actually carried an image;
+`fs/write_text_file` proves its row; `usage_update` proves `usage`. A
+`logout` round trip proves `auth.logout`, which only a declaring agent can
+earn: the agents store refuses a logout the agent doesn't declare, and the
+card offers Log out on the same reading (`src/shared/agent-offers.ts`), so
+the spec's "Clients MUST NOT call it" holds at the writer.
 One source sits off the wire: the auth authority reports a lock it cleared,
 with the evidence it cleared it on, to the same table (`lockCleared` → `auth`
 on the affirmative actions below).
