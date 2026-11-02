@@ -19,8 +19,9 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const ROOT = join(__dirname, "..");
-/** Where the protocol's message types are declared. */
-const SCHEMA = "/@agentclientprotocol/sdk/dist/schema/";
+/** Where the protocol's message types are declared: a `schema` folder
+ * anywhere under the SDK's dist, whatever version tree holds it. */
+const SCHEMA = /\/@agentclientprotocol\/sdk\/dist\/(.+\/)?schema\//;
 
 /** The reader layer: the pool, which runs the readers at its chokepoints;
  * the readers; the wire-extension modules, which read vendor shapes; and
@@ -33,17 +34,20 @@ const OUTGOING: Readonly<Record<string, string>> = {
   "src/orchestrator/mcp-servers-store.ts": "it reads the server list it built, to register each value it hands out for redaction",
 };
 
-function schemaReads(): string[] {
+/** Every read of a field the protocol's schema declares, in src/ outside
+ * OUTGOING, split by whether the reader layer holds it. */
+function schemaReads(): { readers: string[]; outside: string[] } {
   const config = ts.readConfigFile(join(ROOT, "tsconfig.json"), (path) => ts.sys.readFile(path));
   const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, ROOT);
   const program = ts.createProgram(parsed.fileNames, parsed.options);
   const checker = program.getTypeChecker();
   const declaredBySchema = (symbol: ts.Symbol | undefined) =>
-    (symbol?.declarations ?? []).some((d) => d.getSourceFile().fileName.includes(SCHEMA));
-  const hits: string[] = [];
+    (symbol?.declarations ?? []).some((d) => SCHEMA.test(d.getSourceFile().fileName));
+  const reads = { readers: [] as string[], outside: [] as string[] };
   for (const source of program.getSourceFiles()) {
     const file = relative(ROOT, source.fileName);
-    if (!file.startsWith("src/") || READERS.some((r) => file.startsWith(r)) || file in OUTGOING) continue;
+    if (!file.startsWith("src/") || file in OUTGOING) continue;
+    const hits = READERS.some((r) => file.startsWith(r)) ? reads.readers : reads.outside;
     const visit = (node: ts.Node): void => {
       let symbol: ts.Symbol | undefined;
       if (ts.isPropertyAccessExpression(node)) symbol = checker.getSymbolAtLocation(node.name);
@@ -61,7 +65,7 @@ function schemaReads(): string[] {
     };
     visit(source);
   }
-  return hits;
+  return reads;
 }
 
 describe("the wire boundary", () => {
@@ -69,6 +73,10 @@ describe("the wire boundary", () => {
   // cut short anyway — a budget would only judge how busy the machine was
   // (seconds alone, a minute among the other suites' processes on Windows).
   it("nothing outside the reader layer reads a field of a protocol message", () => {
-    expect(schemaReads(), "read the message in its reader (src/orchestrator/readers/) and hand on the fact").toEqual([]);
+    const { readers, outside } = schemaReads();
+    // The readers read the wire by definition: none seen means SCHEMA no
+    // longer finds the SDK's types, and the check below is blind.
+    expect(readers, "SCHEMA matches no file the SDK declares its types in").not.toEqual([]);
+    expect(outside, "read the message in its reader (src/orchestrator/readers/) and hand on the fact").toEqual([]);
   }, 0);
 });
