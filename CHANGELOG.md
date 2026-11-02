@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.90.0 — 2026-11-03
+
+Sub-agents show up, MCP servers get one reworked add card and can be on per
+workspace, and every agent gets one version chip with an upgrade you can undo.
+Sessions reopen where you left them, and Patchbay is on ACP SDK 2.4.0.
 
 - **Sub-agents show up.** When an agent hands work to sub-agents (Claude
   does, from claude-agent-acp 0.100.0), a chip above the composer lists
