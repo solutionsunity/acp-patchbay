@@ -472,9 +472,16 @@ sees the window's top edge.** With `H` = viewport height:
   required `M ≈ 0.4·H`; the 25 % rule passes with ~2× headroom.
 - **Batch size**: one viewport-page per trigger, keeping each prepend under the
   ~100 ms perceptually-instant threshold.
-- **Scroll anchoring on prepend**: manual — record `scrollHeight` before the batch,
-  `scrollTop += Δ` in a layout effect after. (Chromium's native `overflow-anchor`
-  does not survive React list prepends reliably.)
+- **Scroll anchoring on prepend**: the browser's — Chromium's native
+  `overflow-anchor` keeps the row being read in place as a batch mounts above
+  it, and as rows above it later render out of their `contain-intrinsic-size`
+  placeholders. At offset 0 nothing anchors, which is what lets the teleport
+  fill below keep filling. *(Refined 2026-11-02, superseding "manual — record
+  `scrollHeight` before the batch, `scrollTop += Δ` after; native anchoring
+  doesn't survive React list prepends": measured, both ran, and the manual
+  delta landed on top of the native adjustment — every load of earlier
+  messages threw the reader forward by a whole batch. A manual delta alone
+  can't cover rows that render after the batch.)*
 - **Teleport contract**: scrollbar-drag-to-top / `Ctrl+Home` cannot be beaten by
   prefetch. Split the promise: *smooth for scrolling, chunked fill for jumps* —
   rAF-batched mounts behind a slim "loading earlier…" shim, each chunk under 100 ms.

@@ -132,6 +132,13 @@ export const chatTranscript = [
   },
 ];
 
+/** A transcript far longer than the chat's mounted window, each row taller
+ * than a line — reading back grows the window, and coming back to a row far
+ * back must grow it again. */
+export const longTranscript = Array.from({ length: 150 }, (_, i) => ({
+  kind: "text", id: `r${i}`, text: `Reading line ${i}.\n\nA second paragraph, so the row is taller than a line.`,
+}));
+
 /** A queued prompt that is one unbreakable token — the narrow shot gates
  * that the row truncates and its × stays reachable. */
 export const longQueuedPrompt = {

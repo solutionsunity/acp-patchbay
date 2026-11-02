@@ -11,7 +11,7 @@ import { execSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { chromium } from "playwright-core";
 import { codiconCss } from "./codicons.mjs";
-import { agentViewState, preferences, settingsState } from "./fixtures.mjs";
+import { agentViewState, longTranscript, preferences, settingsState } from "./fixtures.mjs";
 import { bodyClass, THEMES } from "./themes.mjs";
 
 const OUT = "out/ui-gate";
@@ -1297,6 +1297,42 @@ for (const theme of Object.keys(THEMES)) {
   await blur(p);
   await p.evaluate(() => window.dispatchEvent(new Event("focus")));
   check("a request is taken once — a later focus leaves the cursor alone", !(await inComposer(p)));
+  await p.close();
+}
+
+// ── reading back keeps its place as earlier messages load: each time the
+// chat mounts more of a long transcript above the user, the view goes on
+// moving up with the wheel — never thrown forward by the rows added.
+// Theme-independent: run once. ──
+{
+  const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
+  const state = agentViewState({ live: false });
+  await renderView(p, "agent-view", { ...state, activePatchbaySessionId: "s2", transcripts: { ...state.transcripts, s2: longTranscript } });
+  await p.waitForSelector(".chat .msg-agent");
+  await settled(p);
+  const box = await p.locator(".chat").boundingBox();
+  await p.mouse.move(box.x + 40, box.y + 100);
+  // the number of the row at the chat's top edge, and how many rows are mounted
+  const reading = () =>
+    p.evaluate(() => {
+      const top = document.querySelector(".chat").getBoundingClientRect().top;
+      const rows = [...document.querySelectorAll(".chat-body > *")].filter((r) => r.textContent.trim().startsWith("Reading line"));
+      const el = rows.find((r) => r.getBoundingClientRect().bottom > top);
+      return { row: Number(/Reading line (\d+)/.exec(el?.textContent ?? "")?.[1]), mounted: rows.length };
+    });
+  const loads = [];
+  let before = await reading();
+  for (let i = 0; i < 80 && before.mounted < longTranscript.length; i++) {
+    await p.mouse.wheel(0, -100);
+    await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const after = await reading();
+    if (after.mounted !== before.mounted) loads.push([before.row, after.row]);
+    before = after;
+  }
+  check(
+    `reading back, every load of earlier messages keeps the view moving up (${JSON.stringify(loads)})`,
+    loads.length >= 2 && loads.every(([was, now]) => now <= was),
+  );
   await p.close();
 }
 

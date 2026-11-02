@@ -260,11 +260,6 @@ export function Chat(props: {
   const hidden = Math.max(0, derived.items.length - mounted);
   const hiddenRef = useRef(hidden);
   hiddenRef.current = hidden;
-  /** scrollHeight recorded just before a prepend — restored as a scrollTop
-   * delta so extending the window never shifts what the user is reading.
-   * Null when parked at the very top (a jump-to-start teleport): staying
-   * at 0 lets the fill continue chunk by chunk instead of bouncing. */
-  const pendingAnchor = useRef<number | null>(null);
   /** Scroll-follow contract:
    * auto-follow only while pinned to the bottom — scrollback is never
    * yanked. Unpin is intent-based (upward wheel, touch drag): a position
@@ -292,7 +287,6 @@ export function Chat(props: {
   const grow = useCallback(() => {
     const el = chatRef.current;
     if (el !== null && hiddenRef.current > 0) {
-      pendingAnchor.current = el.scrollTop === 0 ? null : el.scrollHeight;
       setMounted((c) => c + WINDOW_BATCH);
     }
   }, []);
@@ -342,14 +336,14 @@ export function Chat(props: {
     stick();
   }, [activePatchbaySessionId, setPin, stick]);
 
-  // Prepend anchoring + teleport chunk-fill.
+  // Growing the window prepends rows above what the user is reading, and
+  // the browser's scroll anchoring keeps that in place — a second
+  // compensation here would throw the view forward by the batch. Parked at
+  // the very top (a jump to the start) nothing anchors, so the window keeps
+  // filling chunk by chunk.
   useLayoutEffect(() => {
     const el = chatRef.current;
-    if (el === null) return;
-    if (pendingAnchor.current !== null) {
-      el.scrollTop += el.scrollHeight - pendingAnchor.current;
-      pendingAnchor.current = null;
-    } else if (el.scrollTop === 0 && hiddenRef.current > 0) {
+    if (el !== null && el.scrollTop === 0 && hiddenRef.current > 0) {
       requestAnimationFrame(grow); // parked at the top — keep filling
     }
   }, [mounted, grow]);

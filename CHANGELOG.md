@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Reading back no longer jumps forward.** In a long session, each time
+  earlier messages loaded above you, the view was thrown forward by
+  dozens of messages. It now keeps your place and goes on moving up.
 - **An MCP sign-in that comes back to the wrong window is no longer
   lost.** VS Code can open a sign-in's return in a window other than the
   one waiting on it, which then dropped it without a word. That window now
