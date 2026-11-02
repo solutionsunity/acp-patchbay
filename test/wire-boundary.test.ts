@@ -14,7 +14,7 @@
 // Building a message to send is not reading one: object literals pass. A
 // file that reads back only what patchbay itself built is named below with
 // why — a closed list, each entry a decision.
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
@@ -45,7 +45,8 @@ function schemaReads(): { readers: string[]; outside: string[] } {
     (symbol?.declarations ?? []).some((d) => SCHEMA.test(d.getSourceFile().fileName));
   const reads = { readers: [] as string[], outside: [] as string[] };
   for (const source of program.getSourceFiles()) {
-    const file = relative(ROOT, source.fileName);
+    // posix separators, so the prefixes below match on Windows too
+    const file = relative(ROOT, source.fileName).split(sep).join("/");
     if (!file.startsWith("src/") || file in OUTGOING) continue;
     const hits = READERS.some((r) => file.startsWith(r)) ? reads.readers : reads.outside;
     const visit = (node: ts.Node): void => {
