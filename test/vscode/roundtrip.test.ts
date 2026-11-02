@@ -4,6 +4,8 @@
 import { WINDOW_SETTLE, waitFor } from "../support/wait-for";
 import * as assert from "node:assert";
 import * as vscode from "vscode";
+import type { PatchbayAgentId } from "../../src/shared/ids";
+import type { AgentSummary, SettingsEvent } from "../../src/shared/protocol";
 import { internals } from "./patchbay";
 
 /** The channels' sync with their webviews is this suite's subject: it is
@@ -33,9 +35,11 @@ type Internal = {
   };
 };
 
-const upsert = (id: string, over: Record<string, unknown> = {}) => ({
+/** A whole agent row, as the store sends one — typed by the protocol, so a
+ * field the views come to rely on can't be missing here. */
+const upsert = (id: string, over: Partial<AgentSummary> = {}): Extract<SettingsEvent, { kind: "agentUpserted" }> => ({
   kind: "agentUpserted",
-  agent: { id, name: id, status: "running", needsAuth: false, authMethods: [], busy: [], ...over },
+  agent: { id: id as PatchbayAgentId, name: id, status: "running", needsAuth: false, authMethods: [], version: {}, busy: [], ...over },
 });
 
 suite("snapshot/patch round-trip through real webviews", () => {

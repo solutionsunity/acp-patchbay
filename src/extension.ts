@@ -21,6 +21,9 @@ export interface ExtensionInternal {
   /** The login executor, reachable for the electron suite to drive against
    * the real task engine — it needs no agent, only a recipe. */
   runLoginTask: typeof runLoginTask;
+  /** Where this extension's log is written — what the electron suite reads
+   * the views' reported errors back from. */
+  logUri: vscode.Uri;
 }
 
 /** For deactivate — the only hook VS Code gives us at shutdown, and it must
@@ -97,7 +100,7 @@ export function activate(context: vscode.ExtensionContext): {
     }),
   );
 
-  return { internal: { orchestrator, host, settingsPanelHost, runLoginTask } };
+  return { internal: { orchestrator, host, settingsPanelHost, runLoginTask, logUri: context.logUri } };
 }
 
 // Fires on window close, reload, disable, and uninstall alike — best-effort
