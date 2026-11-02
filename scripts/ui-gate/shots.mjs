@@ -8,16 +8,21 @@
 // Chromium: set CHROMIUM=/path/to/chrome, or a playwright browser cache is
 // auto-detected. No browser is downloaded by this script.
 import { execSync } from "node:child_process";
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { chromium } from "playwright-core";
-import { codiconCss } from "./codicons.mjs";
+import { webviewCsp } from "../../src/orchestrator/webview-csp.ts";
 import { agentViewState, longTranscript, preferences, settingsState } from "./fixtures.mjs";
 import { bodyClass, THEMES } from "./themes.mjs";
 
 const OUT = "out/ui-gate";
 mkdirSync(OUT, { recursive: true });
 
-const read = (f) => readFileSync(`out/${f}`, "utf8");
+/** Where a fixture page and its files are served from — the webview's
+ * resource origin, stood in for. */
+const ORIGIN = "https://patchbay.ui-gate";
+/** The nonce a page's one starting script carries, as in the webview. */
+const NONCE = "ui-gate";
+const TYPES = { ".js": "text/javascript", ".css": "text/css", ".ttf": "font/ttf", ".woff2": "font/woff2", ".woff": "font/woff", ".html": "text/html" };
 
 function findChromium() {
   if (process.env.CHROMIUM) return process.env.CHROMIUM;
@@ -98,32 +103,44 @@ async function page(browser, themeName, { width, height }) {
     failures++;
   });
   // so is a resource the page couldn't load — a font, a script — which
-  // renders as a blank and nothing else would notice; and so is code the
-  // page's policy refused
+  // renders as a blank and nothing else would notice
   p.on("console", (m) => {
-    if (m.type() !== "error" || !/Failed to load resource|Not allowed to load local resource|Refused to/.test(m.text())) return;
+    if (m.type() !== "error" || !/Failed to load resource|Not allowed to load local resource/.test(m.text())) return;
     console.log(`FAIL  [${themeName}] resource: ${m.text().slice(0, 200)}`);
     failures++;
   });
-  // Lazy sibling bundles (mermaid.js) load exactly as in the real webview:
-  // through the patchbay-out-base meta + a script tag (lazy-script.ts). The
-  // route serves out/ for that fake origin — no pre-seeding, so a broken
-  // loader path fails the gate instead of being masked.
-  await p.route("https://patchbay.ui-gate/out/*", (route) =>
-    route.fulfill({
-      contentType: "text/javascript",
-      body: read(route.request().url().split("/").pop()),
-    }),
+  // and so is anything the page's policy refused — a load, an eval — told
+  // by the browser's own event, whatever words its console puts it in
+  await p.exposeFunction("__refused", (what) => {
+    console.log(`FAIL  [${themeName}] policy refused: ${what}`);
+    failures++;
+  });
+  await p.addInitScript(() =>
+    document.addEventListener("securitypolicyviolation", (e) => window.__refused(`${e.effectiveDirective} ${e.blockedURI}`)),
   );
-  // The webviews' policy allows no eval; neither does this page. The
-  // bundles themselves are evaluated over the devtools protocol, which no
-  // policy governs — what they run from inside is held to it.
-  await p.setContent(`<!DOCTYPE html><html><head>
-    <meta http-equiv="Content-Security-Policy" content="script-src https://patchbay.ui-gate">
-    <meta name="patchbay-out-base" content="https://patchbay.ui-gate/out/">
+  // The page runs under the webviews' own policy, its files served from the
+  // fake origin as a webview's are from its resource origin: the bundle,
+  // the Codicon stylesheet and its font, and lazy sibling bundles
+  // (mermaid.js), which load exactly as in the real webview — through the
+  // patchbay-out-base meta + a script tag (lazy-script.ts). No pre-seeding,
+  // so a broken loader path or a refused load fails the gate instead of
+  // being masked.
+  const html = `<!DOCTYPE html><html><head>
+    <meta http-equiv="Content-Security-Policy" content="${webviewCsp(ORIGIN, NONCE)}">
+    <meta name="patchbay-out-base" content="${ORIGIN}/out/">
     <style>:root{${THEMES[themeName]}}</style>
-    <style>${codiconCss}</style>
-  </head><body class="${bodyClass(themeName)}"><div id="root"></div></body></html>`);
+    <link rel="stylesheet" href="${ORIGIN}/out/codicons/codicon.css">
+  </head><body class="${bodyClass(themeName)}"><div id="root"></div></body></html>`;
+  await p.route(`${ORIGIN}/**`, (route) => {
+    const { pathname } = new URL(route.request().url());
+    if (pathname === "/") return route.fulfill({ contentType: TYPES[".html"], body: html });
+    const file = pathname.startsWith("/out/") ? `out/${pathname.slice("/out/".length)}` : null;
+    // a file the build didn't make is a 404, which the page reports as a
+    // resource it couldn't load — a failure, like anything refused
+    if (file === null || !existsSync(file)) return route.fulfill({ status: 404 });
+    return route.fulfill({ contentType: TYPES[pathname.slice(pathname.lastIndexOf("."))] ?? "application/octet-stream", body: readFileSync(file) });
+  });
+  await p.goto(`${ORIGIN}/`);
   // The fake host answers the ONE action a fixture page can't render
   // without: the settings nav's setSettingsSection (section state is
   // host-owned since the deep-link work — the view correctly refuses to
@@ -156,8 +173,33 @@ async function page(browser, themeName, { width, height }) {
 }
 
 async function renderView(p, bundle, state) {
-  await p.addStyleTag({ content: read(`${bundle}.css`) });
-  await p.evaluate(read(`${bundle}.js`));
+  // the bundle's stylesheet from out/, as the webview links it, so what it
+  // loads relative to itself (KaTeX's fonts) resolves where it would there
+  await p.evaluate(
+    (href) =>
+      new Promise((resolve, reject) => {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = href;
+        link.onload = resolve;
+        link.onerror = () => reject(new Error(`${href} did not load`));
+        document.head.append(link);
+      }),
+    `${ORIGIN}/out/${bundle}.css`,
+  );
+  // the one starting script, by its nonce, as the webview host writes it
+  await p.evaluate(
+    ({ src, nonce }) =>
+      new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.nonce = nonce;
+        script.src = src;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error(`${src} did not load`));
+        document.body.append(script);
+      }),
+    { src: `${ORIGIN}/out/${bundle}.js`, nonce: NONCE },
+  );
   await p.evaluate((s) => window.postMessage({ kind: "snapshot", rev: 1, state: s }, "*"), state);
 }
 

@@ -33,6 +33,7 @@ import type { DiagramState, ViewToHost } from "../shared/protocol";
 import { ATTACHMENTS_DIR } from "./attachments";
 import { ChannelHost, type ChannelEndpoint } from "./channel";
 import type { SurfaceReport } from "./orchestrator";
+import { webviewCsp } from "./webview-csp";
 import type { PatchbaySessionId } from "../shared/ids";
 
 type Bundle = "agent-view" | "settings" | "diagram";
@@ -80,7 +81,7 @@ function webviewHtml(
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${n}' 'strict-dynamic'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource};">
+        content="${webviewCsp(webview.cspSource, n)}">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="patchbay-out-base" content="${outBase}/">
   <meta name="patchbay-attachments-base" content="${attachmentsBase}/">${

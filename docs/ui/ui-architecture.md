@@ -41,8 +41,12 @@ the bundler; Tailwind runs alongside it as a CSS build step.
   engine — an explicit implementation choice, never a silent widening. A
   library that would compile code from a string is switched off that path
   where it has one: zod parses jitless in Settings, set before its schemas
-  are built, since it reads the switch then. The ui-gate's pages refuse
-  eval as the webviews do, and a refusal fails the gate.
+  are built, since it reads the switch then. The policy has one home
+  (`webview-csp.ts`) and a test pins every directive, so widening it is a
+  visible change to that test. The ui-gate renders its pages under that
+  same policy, its files served from a stand-in origin as a webview's are
+  from its resource origin, so anything the policy refuses — a load or an
+  eval — fails the gate.
 
 Why one component layer and not several: the chat view and settings view are
 deliberately separate webviews (different update frequency, different data
