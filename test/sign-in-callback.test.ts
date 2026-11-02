@@ -11,6 +11,7 @@ import { SETTLE } from "./support/wait-for";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { MemorySecrets } from "../src/orchestrator/stores/mcp-server-tokens";
 import type { PatchbayMcpServerId } from "../src/shared/ids";
+import type { Logger } from "../src/orchestrator/logger";
 
 const ALL = { routing: "auto", workspaces: "auto" } as const;
 
@@ -38,9 +39,20 @@ function browser() {
   };
 }
 
+/** Every line both windows wrote to their logs. */
+let logged: string[] = [];
+const recording: Logger = {
+  trace: (line) => logged.push(line),
+  debug: (line) => logged.push(line),
+  info: (line) => logged.push(line),
+  warn: (line) => logged.push(line),
+  error: (line) => logged.push(line),
+};
+
 /** Two windows on one machine; the first one's sign-ins open in `tab`. */
 async function twoWindows(tab: ReturnType<typeof browser>) {
-  const shared = { machineKV: new MemoryKV(), secrets: new MemorySecrets() };
+  logged = [];
+  const shared = { machineKV: new MemoryKV(), secrets: new MemorySecrets(), log: recording };
   const a = orchestratorHarness(await tempDir("pb-window-a-"), { ...shared, ports: { openLink: tab.openLink } });
   const b = orchestratorHarness(await tempDir("pb-window-b-"), shared);
   return { a, b };
@@ -100,5 +112,25 @@ describe("the link pasted where the sign-in waits", () => {
       SETTLE,
     );
     expect(notices(a)).toEqual([]);
+  });
+});
+
+describe("the link carries the code", () => {
+  it("is masked wherever the wire log shows text, in the window that offered it and the one it was pasted in — and never logged", async () => {
+    const tab = browser();
+    const { a, b } = await twoWindows(tab);
+    const adding = addSignedIn(a);
+    await vi.waitFor(() => expect(tab.links).toHaveLength(1), SETTLE);
+    const link = tab.links[0]!;
+    const code = new URL(link).searchParams.get("code")!;
+    const shown = (window: OrchestratorHarness) => window.orchestrator.wireLog.redact(`"text":"${link}" code ${code}`);
+
+    deliver(b, link);
+    expect(shown(b)).not.toContain(code);
+    a.orchestrator.pasteSignInLink("custom:card", ` ${link}`);
+    expect(shown(a)).not.toContain(code);
+    await adding;
+    expect(logged.length).toBeGreaterThan(0);
+    expect(logged.filter((line) => line.includes(code))).toEqual([]);
   });
 });

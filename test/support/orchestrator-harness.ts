@@ -9,7 +9,7 @@ import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { vi } from "vitest";
 import { applyFileWrite } from "../../src/orchestrator/client-host";
-import { nullLogger } from "../../src/orchestrator/logger";
+import { nullLogger, type Logger } from "../../src/orchestrator/logger";
 import { Orchestrator, type OrchestratorPorts } from "../../src/orchestrator/orchestrator";
 import { MemoryKV } from "../../src/orchestrator/stores/kv";
 import { AgentConfigStore } from "../../src/orchestrator/stores/agent-configs";
@@ -90,6 +90,8 @@ export interface OrchestratorHarnessOptions {
   workspaceRoots?: readonly string[];
   /** Replaces a port's stand-in. */
   ports?: Partial<OrchestratorPorts>;
+  /** Where the orchestrator's log lines go — absent, nowhere. */
+  log?: Logger;
   /** The network, as the registry and every download see it — absent, the
    * test's own servers on loopback answer and anything else fails: no test
    * reaches an outside host. */
@@ -200,7 +202,7 @@ export function orchestratorHarness(cwd: string, opts: OrchestratorHarnessOption
       shellGrammar: SHELL_GRAMMAR,
     },
     ports,
-    nullLogger,
+    opts.log ?? nullLogger,
   );
   // Its startup runs on from the constructor; the view is told when it ends.
   // What the harness reads off the orchestrator it wraps by hand, never by

@@ -35,7 +35,7 @@ import { EDITOR_SERVER_ID, EDITOR_SERVER_NAME } from "../shared/names";
 import { PRODUCT } from "../shared/product";
 import { loggableUrl, nullLogger, type Logger } from "./logger";
 import { connectMcpOAuth, refreshMcpOAuth, type OAuthUserAgent } from "./mcp-oauth";
-import type { CallbackOutcome } from "./oauth-callback";
+import { linkQuery, type CallbackOutcome } from "./oauth-callback";
 import { McpServerTokenStore, type StoredToken } from "./stores/mcp-server-tokens";
 import {
   authTypeOf,
@@ -82,16 +82,6 @@ export interface McpServerWire {
  * editor delivers and a link the user pastes both go through `deliver`. */
 export interface SignInAgent extends OAuthUserAgent {
   deliver(query: string): CallbackOutcome;
-}
-
-/** The query a pasted sign-in link carries — null for text that isn't a
- * link. */
-function linkQuery(link: string): string | null {
-  try {
-    return new URL(link.trim()).search.slice(1);
-  } catch {
-    return null;
-  }
 }
 
 /** Where the stores keep a server's secrets: a stdio server's env, a

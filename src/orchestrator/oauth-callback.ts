@@ -12,6 +12,16 @@
  * ended — the two read the same); or carrying none, so no sign-in's. */
 export type CallbackOutcome = "delivered" | "not waiting" | "not a callback";
 
+/** The query a sign-in link carries — a link the user pasted, as `handle`
+ * reads it; null for text that isn't a link. */
+export function linkQuery(link: string): string | null {
+  try {
+    return new URL(link.trim()).search.slice(1);
+  } catch {
+    return null;
+  }
+}
+
 export class OAuthCallbackRegistry {
   private pending = new Map<string, (params: URLSearchParams) => void>();
 

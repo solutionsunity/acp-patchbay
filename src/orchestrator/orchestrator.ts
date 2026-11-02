@@ -61,7 +61,7 @@ import { count } from "../shared/count";
 import type { RequestUserInputParams } from "../mcp/ipc-protocol";
 import { McpServerGates } from "./mcp-server-gates";
 import { McpServersStore, type McpServerLineOperations } from "./mcp-servers-store";
-import { OAuthCallbackRegistry } from "./oauth-callback";
+import { linkQuery, OAuthCallbackRegistry } from "./oauth-callback";
 import { elicitationResponseOf, formFieldsOf, type ElicitationScope } from "./readers/elicitation";
 import { AgentPool } from "./pool";
 import { agentErrorText, authRequiredReasonOf } from "./readers/agent-error";
@@ -1548,6 +1548,7 @@ export class Orchestrator {
    * finishes it there. */
   signInCallback(query: string, link: string): void {
     if (this.oauthCallbacks.handle(query) !== "not waiting") return;
+    this.maskSignInLink(link);
     this.log.info("a sign-in callback arrived that no sign-in in this window waits on — offered to copy");
     this.ports.signInNotWaiting(link);
   }
@@ -1555,7 +1556,19 @@ export class Orchestrator {
   /** A sign-in link the user pasted into the card of the connect under
    * `key` — the link another window offered to copy. */
   pasteSignInLink(key: string, link: string): void {
+    this.maskSignInLink(link);
     void this.mcpServers.pasteSignInLink(key, link).catch(this.logCatch(`paste a sign-in link into ${key}`));
+  }
+
+  /** A sign-in link carries its code: single-use, short-lived and worthless
+   * without the waiting window's PKCE verifier — safe with its owner, who
+   * copies and pastes it — yet a credential all the same. Wherever the wire
+   * log shows text, the link and the code are masked; neither is ever
+   * logged. */
+  private maskSignInLink(link: string): void {
+    this.wireLog.registerSecret(link.trim());
+    const code = new URLSearchParams(linkQuery(link) ?? "").get("code");
+    if (code !== null) this.wireLog.registerSecret(code);
   }
 
   /** Formats a swallowed action failure for the Output channel — these
