@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A page opens at exactly its address.** Patchbay handed VS Code each
+  link in a form it re-encodes on the way to the browser, so an encoded
+  `?`, `#`, `&`, `=` or `+` inside a link's query arrived changed. An MCP
+  server's sign-in carries its return address that way, and a server that
+  checks it exactly refused it (DigitalOcean). Sign-in pages and the pages
+  an agent asks you to open now open as written. (#138)
 - **Settings no longer reports an error on every open.** Its errors chip
   read 1 and the log said `CSP blocked script-src: eval`: the config
   readers' library checked whether it may compile code, which the page's

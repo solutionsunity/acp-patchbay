@@ -62,6 +62,17 @@ describe("source boundaries", () => {
     expect(hits([join(SRC, "orchestrator", "sessions-store.ts")], /this\.sessions\.delete\(/)).toHaveLength(2);
   });
 
+  // A page opens through one door, which hands VS Code the address as
+  // built: a second caller of the opener could pass a `Uri`, and a `Uri`
+  // opens re-encoded. Blind to a page opened through the `vscode.open`
+  // command, whose one caller opens local files.
+  it("a page opens only through the one door", () => {
+    const opener = /^(?!\s*(\/\/|\*)).*\bopenExternal\(/;
+    const host = join(SRC, "orchestrator", "orchestrator-host.ts");
+    expect(hits(filesUnder(SRC, /\.tsx?$/).filter((file) => file !== host), opener)).toEqual([]);
+    expect(hits([host], opener)).toEqual([expect.stringContaining("openExternal(href as unknown as vscode.Uri)")]);
+  });
+
   // Secrets live in SecretStorage alone. VS Code's two other stores sync or
   // persist in plain sight — settings.json syncs, global and workspace state
   // are plain files — so they are reached only where patchbay's storage is

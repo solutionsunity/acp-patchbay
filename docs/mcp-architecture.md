@@ -171,6 +171,16 @@ restate it. Policy for what an entry is:
 5. **Discovery order matters**: `oauth-protected-resource` first (RFC 9728), then
    the authorization server's metadata — the reverse (what VS Code currently does,
    see §3) breaks against spec-correct servers.
+6. **The authorization URL opens exactly as built** (#138, 2026-11-02).
+   `vscode.env.openExternal` opens a `Uri` re-encoded — its query decoded
+   and encoded again — so the encoded `?` of a `redirect_uri` value
+   (`…/oauth-callback%3FwindowId%3D1`) reaches the server changed, and a
+   server matching redirect URIs exactly rejects it (DigitalOcean,
+   reproduced). Patchbay's one browser door hands VS Code the address as a
+   string, which its opener takes as written (VS Code's own MCP sign-in
+   opens this way); every page patchbay opens goes through that door —
+   an agent's url-mode page too — and a source test holds it the only
+   caller.
 
 ## Implementation — where each piece lives
 

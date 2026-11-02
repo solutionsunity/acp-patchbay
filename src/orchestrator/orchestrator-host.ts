@@ -45,9 +45,13 @@ import { isFolder, Orchestrator } from "./orchestrator";
 /** A web page in the system browser — outside the editor, so neither
  * patchbay nor an agent's model sees the page or what the user types. The
  * one way patchbay opens a page: an MCP server's sign-in and an agent's link
- * alike. */
+ * alike. Handed over as the string, not a `Uri`: VS Code opens a `Uri`
+ * re-encoded — its query decoded and encoded again, so an encoded `? # & =
+ * +` inside a query value (an OAuth redirect_uri) arrives changed — while a
+ * string opens exactly as built. The API types the target as a `Uri`; its
+ * opener takes the string as well. */
 function openInBrowser(href: string): Thenable<boolean> {
-  return vscode.env.openExternal(vscode.Uri.parse(href));
+  return vscode.env.openExternal(href as unknown as vscode.Uri);
 }
 
 /** A modal question with one affirmative choice — true when it was chosen. */
