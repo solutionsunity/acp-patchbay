@@ -9,7 +9,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { fakeAgent } from "./support/fake-agent";
 import { tempDir } from "./support/teardown";
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import type { SessionUpdate } from "../src/orchestrator/acp";
 import type { LaunchSpec } from "../src/orchestrator/pool";
 import type { AgentViewState } from "../src/shared/protocol";
 import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";

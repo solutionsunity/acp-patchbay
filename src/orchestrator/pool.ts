@@ -7,10 +7,10 @@
 // visible the moment it happens; recovery is one action.
 //
 // Connection handling approach checked against vscode-acp's ConnectionManager
-// (MIT, formulahendry); rebuilt here on the SDK 1.x client() builder API.
+// (MIT, formulahendry); rebuilt here on the SDK's client() builder API.
 import type { ChildProcess } from "node:child_process";
 import { PassThrough, Readable, Writable } from "node:stream";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "./acp";
 import { processUp, type AgentStatus, type CapabilityRowId, type DeclaredCapabilities, type KnobSeed } from "../shared/protocol";
 import { nullLogger, type Logger } from "./logger";
 import { unlessAborted } from "./abort";

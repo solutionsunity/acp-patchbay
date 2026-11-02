@@ -9,7 +9,7 @@ import type {
   ReadTextFileRequest,
   ReleaseTerminalRequest,
   WriteTextFileRequest,
-} from "@agentclientprotocol/sdk";
+} from "../acp";
 import { present } from "./content";
 
 /** fs/read_text_file: `line` is 1-based, `limit` a line count. */

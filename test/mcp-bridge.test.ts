@@ -12,7 +12,7 @@ import { createServer, type Server as HttpServer } from "node:http";
 import { createServer as createNetServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { McpServer } from "@agentclientprotocol/sdk";
+import type { McpServer } from "../src/orchestrator/acp";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { echoed } from "./support/transcript";
 import { fakeAgent } from "./support/fake-agent";

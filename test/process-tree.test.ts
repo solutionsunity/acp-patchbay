@@ -7,7 +7,7 @@
 // polite rung is already the forced one).
 import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
-import { PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
+import { PROTOCOL_VERSION } from "../src/orchestrator/acp";
 import { describe, expect, it, vi } from "vitest";
 import { IDLE, idler } from "./support/idler";
 import { stopsAtTestEnd } from "./support/teardown";

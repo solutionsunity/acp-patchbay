@@ -169,6 +169,12 @@
   writes before it dies can reach Patchbay just after its exit does, and
   the card then showed the crash without them. They now join the card
   whenever they arrive.
+- **On ACP SDK 2.4.0.** The protocol library Patchbay speaks to agents
+  through moves from 1.8.0 to 2.4.0 (ACP schema 1.29.1). Patchbay declares
+  to agents exactly what it did. The library now reads a few values the way
+  ACP's reference implementation does: an agent asking for a terminal with
+  `null` for its arguments or environment gets one, run with none, where
+  it used to be refused.
 
 ## 0.88.4 — 2026-10-26
 

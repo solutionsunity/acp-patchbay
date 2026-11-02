@@ -3,8 +3,8 @@
 // apply only where the spec names them, fields nothing renders yet are
 // carried, and what a reader can't take is noted — once.
 import { describe, expect, it, vi } from "vitest";
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
-import { RequestError } from "@agentclientprotocol/sdk";
+import type { SessionUpdate } from "../src/orchestrator/acp";
+import { RequestError } from "../src/orchestrator/acp";
 import { agentErrorText } from "../src/orchestrator/readers/agent-error";
 import { forModelOnly, readContent } from "../src/orchestrator/readers/content";
 import { NoteLog } from "../src/orchestrator/readers/notes";

@@ -8,7 +8,7 @@
 // noted — until a surface of its own is decided. Nothing an agent sends is
 // dropped without a word.
 import { readConfigOptions } from "./config-options";
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import type { SessionUpdate } from "../acp";
 import type { AvailableCommand, PlanEntry, PlanUsageInfo, SessionKnobView } from "../../shared/protocol";
 import { planUsageOf } from "../meta";
 import { present, readContent, type ContentFact } from "./content";

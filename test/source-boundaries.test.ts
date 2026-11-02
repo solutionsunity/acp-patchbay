@@ -73,6 +73,21 @@ describe("source boundaries", () => {
     expect(hits([host], opener)).toEqual([expect.stringContaining("openExternal(href as unknown as vscode.Uri)")]);
   });
 
+  // The SDK is imported in one module, which picks its entrypoint: types,
+  // method constants and the connection all come from that one — the stable
+  // entrypoint's types lack fields the unstable one's carry, and a second
+  // import site could pick the other without a compile error. The tests
+  // take the module too, so they type what the source types; the fake agent
+  // is a program of its own, speaking the standard side, and picks its own.
+  it("only the entrypoint module imports the SDK", () => {
+    const entry = join(SRC, "orchestrator", "acp.ts");
+    const fakeAgent = fileURLToPath(new URL("./fake-agent/", import.meta.url));
+    const sdk = /^(?!\s*(\/\/|\*)).*\b(from|import)\s*\(?\s*["']@agentclientprotocol\/sdk(\/[^"']*)?["']/;
+    const files = [...filesUnder(SRC, /\.tsx?$/), ...filesUnder(fileURLToPath(new URL("./", import.meta.url)), /\.tsx?$/)];
+    expect(hits(files.filter((file) => file !== entry && !file.startsWith(fakeAgent)), sdk)).toEqual([]);
+    expect(hits([entry], sdk)).toEqual([expect.stringMatching(/export \* from "@agentclientprotocol\/sdk\/unstable";$/)]);
+  });
+
   // Secrets live in SecretStorage alone. VS Code's two other stores sync or
   // persist in plain sight — settings.json syncs, global and workspace state
   // are plain files — so they are reached only where patchbay's storage is

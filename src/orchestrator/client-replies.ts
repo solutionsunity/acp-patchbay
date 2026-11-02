@@ -13,7 +13,7 @@
 // same way a success does; a fault (anything else thrown) is patchbay
 // failing and proves nothing. `isRefusal` is how the pool's chokepoint
 // tells the two apart.
-import { RequestError } from "@agentclientprotocol/sdk";
+import { RequestError } from "./acp";
 import type { GateOutcome } from "./broker";
 
 /** ACP's error codes are open (any integer), but none means "refused".

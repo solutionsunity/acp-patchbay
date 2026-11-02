@@ -1,7 +1,7 @@
 // The turn-auth-failure door is shape-gated: -32603 AND an auth-classified
 // `data.errorKind`. Everything else — including the spec's own -32000, which
 // pool.ts reads without this module — is null.
-import { RequestError } from "@agentclientprotocol/sdk";
+import { RequestError } from "../src/orchestrator/acp";
 import { describe, expect, it } from "vitest";
 import { turnAuthFailureReasonOf } from "../src/orchestrator/extensions/turn-auth-failure";
 

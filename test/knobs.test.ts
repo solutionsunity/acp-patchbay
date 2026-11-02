@@ -4,7 +4,7 @@
 // SHOULD use configOptions exclusively and ignore modes), the modes
 // fallback, set routing, and the legacy seed fold.
 import { describe, expect, it } from "vitest";
-import type { SessionConfigOption, SessionModeState } from "@agentclientprotocol/sdk";
+import type { SessionConfigOption, SessionModeState } from "../src/orchestrator/acp";
 import {
   applyConfigUpdate as applyTyped,
   applyModeUpdate,

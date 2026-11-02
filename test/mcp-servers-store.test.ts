@@ -59,7 +59,7 @@ function entry(overrides: Partial<CatalogEntry> = {}): CatalogEntry {
   };
 }
 
-function envOf(server: import("@agentclientprotocol/sdk").McpServer): Record<string, string> {
+function envOf(server: import("../src/orchestrator/acp").McpServer): Record<string, string> {
   if (!("command" in server)) throw new Error("expected a stdio server entry");
   return Object.fromEntries((server.env ?? []).map((e) => [e.name, e.value]));
 }

@@ -2,8 +2,8 @@
 
 Facts as checked **2026-07-12** against the pinned wire surface of
 `@agentclientprotocol/sdk` **1.2.1** (ground truth for method names and type unions),
-with the type unions and stability markers (§9, §10, §19) re-checked **2026-10-10**
-against **1.8.0** (spec schema 1.25.0)
+with the type unions and stability markers (§9, §10, §19) re-checked **2026-11-02**
+against **2.4.0** (v1 spec schema 1.29.1, as its `/unstable` entrypoint carries it)
 and https://agentclientprotocol.com/protocol/v1 (ground truth for normative
 MUST/SHOULD/MAY language). Patchbay is a **Client**: compliance means (a) every
 client-side duty is met, and (b) every agent-side surface the protocol lets a client
@@ -104,7 +104,7 @@ recognized.
 | Capability-gated prompt content | ✅ | `sessions-store.ts:runTurn` — images ride as `ImageContent` only when `promptCapabilities.image` is declared, else bytes go to a temp file sent as `resource_link` (baseline every agent MUST accept). Mentions ride as positional `resource_link` parts. |
 | Stop reason handling | ✅ | `stopReason` flows through `turnEnded` verbatim and renders; non-`end_turn` reasons logged. No per-reason branching is required by spec; display is honest. Stop reasons exist only on the live prompt response — replay carries no turn resolution anywhere in the protocol, so a replayed turn's boundary renders with `stopReason: null` (absence over fake; wire-verified on claude-agent-acp and auggie, 2026-07-12). |
 | A failed prompt | ✅ | The turn ends as `error`, its reason on a line under the turn — the error's message and what its `data` adds (`readers/agent-error.ts:agentErrorText`, the one reading every catch site shares: a failed log-in, log-out, knob change, fork or delete says it in a warning the same way). |
-| Usage on response (`usage`) | ✅ | `readers/responses.ts:readTurnEnd` on the prompt response + `usage_update` notifications both feed the ticker; every count the agent breaks out rides along. |
+| Usage on response (`usage`; UNSTABLE, §19) | ✅ | `readers/responses.ts:readTurnEnd` on the prompt response + `usage_update` notifications both feed the ticker; every count the agent breaks out rides along. |
 
 ## 7. Cancellation
 
@@ -138,7 +138,7 @@ against this project's own honesty rules, which bind harder than the spec here.
 
 ## 9. Session updates — the full union
 
-SDK 1.8.0 `sessionUpdate` union (19 kinds), read by `readers/session-update.ts` (an exhaustive switch: every kind read or carried) and consumed by `sessions-store.ts:handleUpdate` (title and knobs) and `session-stream.ts:apply` (the transcript):
+SDK 2.4.0 v1 `sessionUpdate` union (19 kinds, 14 of them stable), read by `readers/session-update.ts` (an exhaustive switch: every kind read or carried) and consumed by `sessions-store.ts:handleUpdate` (title and knobs) and `session-stream.ts:apply` (the transcript):
 
 | Kind | Verdict | Notes |
 |---|---|---|
@@ -160,7 +160,7 @@ SDK 1.8.0 `sessionUpdate` union (19 kinds), read by `readers/session-update.ts` 
 
 ## 10. Tool calls
 
-`ToolCallContent` union: `content` | `diff` | `terminal` (re-checked at 1.8.0). The
+`ToolCallContent` union: `content` | `diff` | `terminal` (re-checked at 2.4.0). The
 optional `ToolCall.name` (programmatic tool name, stabilized 2026-09-17) rides the
 block and shows as the card icon's tooltip: the card names the call by its
 `title`, which every agent sends.
@@ -257,13 +257,22 @@ The per-command input hint rides through to the slash menu.
 
 ## 19. Unstable SDK surface — adoption stances
 
-Stability markers as of SDK **1.8.0**. Stance: adopt only what has a proven consumer,
-always offered on what the agent declares, never silently.
+Stability markers as of SDK **2.4.0** (v1 schema 1.29.1). Stance: adopt only what has
+a proven consumer, always offered on what the agent declares, never silently.
 
-| Surface | 1.8.0 marker | Stance |
+Since SDK 2.0 its default entrypoint carries the stable v1 surface alone. Patchbay reads
+unstable surfaces — `session/fork`, a turn's `usage`, and the five carried kinds of §9 —
+so it speaks the SDK through the `/unstable` entrypoint, the full v1 surface, in one
+module (`acp.ts`; no other file imports the SDK). The entrypoint widens what patchbay
+can type, not what it claims: everything `clientCapabilitiesWire` declares is stable
+v1, and every client handler the pool registers is a stable method (re-audited
+2026-11-02 against 2.4.0).
+
+| Surface | 2.4.0 marker | Stance |
 |---|---|---|
 | `session/resume` | stable | **Adopted** — real agents declare it; capability-gated and used-tracked. |
-| `session/fork` | UNSTABLE (the SDK method is still `unstable_forkSession`) | **Adopted** — the session menu's Fork, offered where declared. |
+| `session/fork` | UNSTABLE (`methods.agent.session.fork`, the unstable entrypoint's) | **Adopted** — the session menu's Fork, offered where declared. |
+| Turn `usage` on the prompt response | UNSTABLE | **Adopted** (§6) — read where an agent sends it; nothing to declare. |
 | `session/close` | stable | **Adopted** (§5). |
 | `session.configOptions` client capability | stable | **Declared** (§2, §16). |
 | `session_info_update`, `usage_update` | stable | **Adopted** — purely additive notifications with visible value. |
@@ -272,7 +281,13 @@ always offered on what the agent declares, never silently.
 | Session notices | stable (since 1.8.0; new in 1.2.1) | **Adopted** (§9) — `session.notices` declared. |
 | Subagents (`subagent_update`, `session_message`, `session_message_chunk`; the `subagents` client capability) | UNSTABLE (new in 1.8.0) | **Declined** (§9). |
 | `plan_update` / `plan_removed` | UNSTABLE | **Declined** (§9). |
-| Providers config (`ProviderId`), NES (`NesSuggestionId`), position encoding | UNSTABLE | **Declined** — no consumer in patchbay's feature set; re-evaluate per feature, not per SDK release. A `models` root field observed from auggie on new/load responses is outside even this SDK's schema — an agent-side preview surface, nothing to consume (the Auggie dossier). |
+| Providers config (`providers/list`, `providers/set`, `providers/disable`) | UNSTABLE | **Declined** — no consumer in patchbay's feature set; re-evaluate per feature, not per SDK release. A `models` root field observed from auggie on new/load responses is outside even this SDK's schema — an agent-side preview surface, nothing to consume (the Auggie dossier). |
+| NES, position encoding | not in v1 (SDK 2.x moved them to its separate `experimental/nes` entrypoint) | **Not adopted** — nothing of them left in the v1 surface. |
+| Auth status (`auth/status`, the `auth/status_update` notification) | UNSTABLE (new since 1.8.0) | **Not adopted** — no consumer yet; it bears on the auth lock (§3). |
+| Session status, title and archive (`session/status`, `session/set_title`, `session/archive` / `unarchive`, `SessionInfo.archived`) | UNSTABLE (new since 1.8.0) | **Not adopted** — no consumer yet. |
+| System prompt (`systemPrompt` on new / load / resume / fork, its session capability) | UNSTABLE (new since 1.8.0) | **Not adopted** — no consumer yet. |
+| MCP-over-ACP (`McpServerAcp`, `mcp/message` both ways; the SDK's caller, provider and HTTP bridge since 2.1) | UNSTABLE | **Not adopted** — no consumer yet; it bears on patchbay's MCP bridge. |
+| Proxy chains (`proxy/initialize`, `proxy/successor`) | UNSTABLE (new since 1.8.0) | **Not adopted** — a conductor's surface between chained components; a client at the head of a chain has no part in it. |
 
 ## Open gaps
 

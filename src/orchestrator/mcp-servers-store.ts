@@ -16,7 +16,7 @@
 import { IPC_ENV } from "../mcp/ipc-protocol";
 import { isDeepStrictEqual } from "node:util";
 import { randomUUID } from "node:crypto";
-import type { EnvVariable, McpServer, McpServerStdio } from "@agentclientprotocol/sdk";
+import type { EnvVariable, McpServer, McpServerStdio } from "./acp";
 import type {
   McpServerConnectView,
   McpServerListedView,

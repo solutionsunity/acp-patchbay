@@ -4,7 +4,7 @@
 // `session/request_permission`: the session it asks in, the tool call it
 // asks about — read by the one tool-call reader, the same call the session's
 // stream shows — and the options the agent offers, exactly as offered.
-import type { RequestPermissionRequest } from "@agentclientprotocol/sdk";
+import type { RequestPermissionRequest } from "../acp";
 import type { PermissionOptionView } from "../../shared/protocol";
 import { readToolCall, type ToolCallFact } from "./tool-call";
 

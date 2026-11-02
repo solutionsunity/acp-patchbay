@@ -5,7 +5,7 @@
 // evidence the wire actually delivers to it — and that a persisted lock is
 // never laundered by facts that don't contradict it.
 import { existsSync } from "node:fs";
-import { methods } from "@agentclientprotocol/sdk";
+import { methods } from "../src/orchestrator/acp";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeAgent, fakeConfig, fakeSessionRecord } from "./support/fake-agent";
 import { tempDir } from "./support/teardown";

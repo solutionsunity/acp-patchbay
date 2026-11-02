@@ -6,7 +6,7 @@
 // is what the agent claims at initialize (its reader fills the declared
 // table), refreshed every connect; used is proven by CAPABILITY_PROOFS
 // below, consulted at pool.ts's wire chokepoints and by the auth authority.
-import { methods, type ClientCapabilities, type PromptRequest } from "@agentclientprotocol/sdk";
+import { methods, type ClientCapabilities, type PromptRequest } from "./acp";
 import type { CapabilityMatrix, CapabilityRowId, DeclaredCapabilities } from "../shared/protocol";
 import type { AuthEvidence } from "./auth-evidence";
 import { clientMetaWire } from "./meta";

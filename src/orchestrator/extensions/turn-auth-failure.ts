@@ -23,7 +23,7 @@
 // rejects turn-time auth failures with -32000 — delete this file and its
 // line in extensions/index.ts; pool.ts's -32000 arm then carries the case
 // alone.
-import { RequestError } from "@agentclientprotocol/sdk";
+import { RequestError } from "../acp";
 import { z } from "zod";
 
 const authFailureData = z.object({

@@ -12,7 +12,7 @@
 // caller then answers cancel — no user saw it, so none declined it. Dropping
 // the field instead would send the agent content the user never gave, and
 // guessing a control for an unknown type would be worse.
-import type { CreateElicitationResponse } from "@agentclientprotocol/sdk";
+import type { CreateElicitationResponse } from "../acp";
 import type {
   ElicitationAnswer,
   ElicitationAsk,

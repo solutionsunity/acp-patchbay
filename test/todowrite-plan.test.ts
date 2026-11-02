@@ -6,7 +6,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { fakeAgent } from "./support/fake-agent";
 import { tempDir } from "./support/teardown";
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import type { SessionUpdate } from "../src/orchestrator/acp";
 import type { ToolCallReading } from "../src/orchestrator/extensions";
 import { createTodoWritePlanRewriter } from "../src/orchestrator/extensions/todowrite-plan";
 import type { PatchbayAgentId } from "../src/shared/ids";

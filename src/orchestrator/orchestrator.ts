@@ -10,7 +10,7 @@ import { existsSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RequestError } from "@agentclientprotocol/sdk";
+import { RequestError } from "./acp";
 import {
   chatPaneShows,
   coalesceAgentViewEvent,

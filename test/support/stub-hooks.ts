@@ -2,7 +2,7 @@
 // behavior (session lifecycle, capability verification) and don't care about
 // real fs/terminal handling — spread into a PoolHooks object so those tests
 // don't need to know about P6's broker at all.
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "../../src/orchestrator/acp";
 
 export function stubFsTerminalHooks() {
   return {

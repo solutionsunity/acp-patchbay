@@ -6,7 +6,7 @@
 // agent sent and nothing it didn't: an absent field stays absent, never a
 // default, and fields nothing renders yet (a link's description, an
 // audience) are carried so a surface can take them up later.
-import type { ContentBlock, ToolCallContent } from "@agentclientprotocol/sdk";
+import type { ContentBlock, ToolCallContent } from "../acp";
 
 /** Who a piece of content is meant for (ACP annotations' audience). */
 export type Audience = readonly ("user" | "assistant")[];

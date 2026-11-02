@@ -6,7 +6,7 @@
 // exited with code 1"), the message being little more than "Internal
 // error". An error is thrown, not handed over, so it is read where it is
 // caught; these are the readings every catch site shares.
-import { RequestError } from "@agentclientprotocol/sdk";
+import { RequestError } from "../acp";
 import { turnAuthFailureReasonOf } from "../extensions";
 import { record } from "./wire-shape";
 

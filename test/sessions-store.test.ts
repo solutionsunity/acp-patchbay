@@ -28,7 +28,7 @@ import {
 import type { FakeAgentScript } from "./fake-agent/main";
 import { readUpdate } from "./support/read-update";
 import { orchestratorHarness, type OrchestratorHarnessOptions } from "./support/orchestrator-harness";
-import { methods } from "@agentclientprotocol/sdk";
+import { methods } from "../src/orchestrator/acp";
 import type { PatchbayAgentId, PatchbayMcpServerId, PatchbaySessionId } from "../src/shared/ids";
 import { deriveTranscript } from "../src/webview/agent-view/chat/view-model";
 import { STORAGE_KEYS } from "../src/orchestrator/stores/storage-keys";

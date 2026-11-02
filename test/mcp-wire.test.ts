@@ -6,7 +6,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { McpServerStdio } from "@agentclientprotocol/sdk";
+import type { McpServerStdio } from "../src/orchestrator/acp";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mergeEnv } from "../src/orchestrator/spawn-resolve";
 import type { EditorReads } from "../src/orchestrator/ipc-host";

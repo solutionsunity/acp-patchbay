@@ -19,7 +19,7 @@ import { randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
 import { basename, join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ContentBlock, McpServer } from "@agentclientprotocol/sdk";
+import type { ContentBlock, McpServer } from "./acp";
 import {
   type AgentStatus,
   type AgentViewEvent,

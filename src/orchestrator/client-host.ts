@@ -10,7 +10,7 @@
 // same ones the tests run.
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "./acp";
 import { randomUUID } from "node:crypto";
 import { formatCommandLine } from "../shared/command-line";
 import { terminalBlockId, type AgentViewEvent } from "../shared/protocol";

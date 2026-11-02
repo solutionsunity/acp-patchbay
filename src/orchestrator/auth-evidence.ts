@@ -28,7 +28,7 @@
 // bears on a lock only if its RPC started after the lock's `at`; older
 // evidence never overwrites newer state. A wire `auth_required` needs no
 // ordering: whenever it settles, the wire said locked.
-import { methods } from "@agentclientprotocol/sdk";
+import { methods } from "./acp";
 
 /** A standing reason the agent is unusable without login. `loggedOut` is
  * patchbay-witnessed (the logout round-trip succeeded); `authRequired`

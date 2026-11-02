@@ -6,7 +6,7 @@
 // the same update shape for the call it asks about. An update says only what
 // changed — every absent field is unchanged, never a default. Only an
 // announcement (`tool_call`) has defaults, the spec's own: pending, other.
-import type { ToolCall, ToolCallUpdate } from "@agentclientprotocol/sdk";
+import type { ToolCall, ToolCallUpdate } from "../acp";
 import type { ToolCallKind, ToolCallStatus, ToolLocation } from "../../shared/protocol";
 import { agentTerminalOf, type AgentTerminalReading } from "../meta";
 import { present, readToolContent, type ToolContentFact } from "./content";
