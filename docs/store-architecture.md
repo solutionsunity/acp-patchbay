@@ -453,9 +453,15 @@ on/off became the workspaces a server is on in, and a custom remote
 server's key became its headers — moved into SecretStorage once, the key
 left where an older window reads it) and the saved roots
 (`acpPatchbay.machineSavedRoots` → `acpPatchbay.savedRootList`, each with its
-workspaces). A field added to a session's continuity row is the accepted
-exception: an older window that rewrites the row drops it (a session's own
-MCP servers) — moving the row would split every session in two. Each
+workspaces). Two exceptions are accepted. A field added to a session's
+continuity row: an older window that rewrites the row drops it (a session's
+own MCP servers) — moving the row would split every session in two. And a
+preference added to the preferences record: an older window that saves any
+preference writes back only the ones it knows, so a newer one reads as its
+default until set again — for the composer gauges' displays (0.90), as the
+older window's switches, brought over again at the next start. Moving the
+record would move every preference for the sake of one, and the loss lasts
+only while a window not yet reloaded is saving preferences. Each
 key has its fate in one table (`config-export.ts` `STORED_KEYS`) — the part
 that carries it, why it never leaves, or, for an earlier version's key, the
 part an older file's entry is read into — typed over the key table, so a key
