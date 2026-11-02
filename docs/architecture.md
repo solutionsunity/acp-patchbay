@@ -1437,8 +1437,12 @@ mechanism — MCP servers routed to agents:
   (below) against the draft, not a stored record: a refused key, a failing
   command or an unset variable stores nothing and the add card keeps the
   reason; a remote server that answers 401 is offered its sign-in (MCP's own
-  discovery), and the add runs again signed in. An edit is checked the same
-  way. A stdio server added where it is off is not checked here — its
+  discovery), and the add runs again signed in. The sign-in's callback comes
+  back through VS Code, which picks the window: the window holding it by
+  `state` takes it, any other says so and offers the link to copy, and the
+  waiting card takes the link pasted — through the same handler, nothing
+  routed between windows ([MCP architecture](mcp-architecture.md), flow
+  step 5). An edit is checked the same way. A stdio server added where it is off is not checked here — its
   command never runs in a workspace it is off in — and is stored unchecked.
 - **Capability-conditional transport**: an agent declaring `mcp.http` gets the
   remote server passed through as a real `type: "http"` entry — its own MCP

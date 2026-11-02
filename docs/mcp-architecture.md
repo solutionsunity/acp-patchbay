@@ -64,7 +64,13 @@ signed in:
    `resource_metadata` URL from a 401's `WWW-Authenticate` header.
 2. Discover the authorization server's metadata from its `authorization_servers[0]`:
    `/.well-known/oauth-authorization-server` and OIDC-configuration variants
-   (RFC 8414), path-aware first, origin fallback.
+   (RFC 8414), path-aware first, origin fallback. Its
+   `code_challenge_methods_supported` must list `S256`, or the sign-in stops
+   here, before registering, with the reason on the add card: patchbay is a
+   public client, PKCE is its only proof, and MCP requires a client to
+   refuse a server that doesn't list it — an absent list included. Checked
+   at sign-in only: a refresh carries no PKCE, so a server already signed in
+   keeps refreshing until its next sign-in (#137, 2026-11-02).
 3. Dynamic Client Registration (RFC 7591) against `registration_endpoint`:
    `POST { client_name, client_uri, redirect_uris, grant_types:
    ["authorization_code","refresh_token"], response_types: ["code"] }` →
@@ -72,6 +78,26 @@ signed in:
 4. Authorization Code + PKCE (RFC 7636, S256).
 5. Redirect handled via **`vscode.window.registerUriHandler` +
    `vscode.env.asExternalUri`** — never a raw loopback HTTP server (see Pitfalls §1).
+   VS Code picks the window the callback opens in, and its pick can miss
+   (Pitfalls §7). The window holding the sign-in — pending callbacks are
+   keyed by `state` — takes it. Any other window says the sign-in was started
+   in another window or is no longer waiting (the two read the same), and
+   offers **Copy link**: the callback as received. While a sign-in waits on
+   the browser, its connect card has a **Paste link** field beside Cancel;
+   a pasted link goes through the same handler as a delivered callback, once
+   its `state` is this sign-in's (anything else is refused with the reason),
+   and the code is exchanged with this window's PKCE verifier. Patchbay never
+   reads the clipboard. The link carries the code — single-use, short-lived,
+   worthless without the waiting window's verifier, so safe with its owner —
+   and is masked by the wire log and never logged. Nothing routes callbacks
+   between windows (decided 2026-11-02, #137).
+   The redirect stays VS Code's `vscode://` — a deliberate scope decision.
+   OAuth 2.1 §8.4.3 asks a native app's private-use scheme to be a reverse
+   domain name the app controls; `vscode` is neither, it is the editor's,
+   shared by every extension. PKCE covers the interception that rule guards
+   against, and servers are only advised (SHOULD) to reject it. Revisit when
+   a server rejects it; a refused registration names that cause (Pitfalls
+   §2).
 6. Tokens (access + refresh) into `McpServerTokenStore`; the existing
    refresh-on-expiry logic in `McpServersStore.getToken` carries over.
 
@@ -151,8 +177,12 @@ restate it. Policy for what an entry is:
 2. **Treat DCR rejection as an immediate, labeled failure.** Figma 403s unknown
    `client_name`s with no hint that an allowlist exists; a known client library
    hangs forever on it ([mcporter#115](https://github.com/steipete/mcporter/issues/115)).
-   Patchbay must surface "this server rejected client registration — likely gated;
-   use its API-key path" and stop. No retry, no hang.
+   The same refusal comes from a server that won't take the `vscode://`
+   redirect address, and the two can't be told apart from here. Patchbay
+   gives the server's own detail, then both causes — it may allow only
+   approved clients, or may not accept the sign-in address (named) — and
+   both ways forward: the server's API-key path if it has one, or asking its
+   provider to allow this sign-in. Then it stops. No retry, no hang.
 3. **Do not delegate to VS Code's native MCP-client OAuth**
    (`contributes.mcpServerDefinitionProviders`). It has open bugs as of this
    research — wrong discovery order (skips `oauth-protected-resource`), no audience
@@ -181,6 +211,16 @@ restate it. Policy for what an entry is:
    opens this way); every page patchbay opens goes through that door —
    an agent's url-mode page too — and a source test holds it the only
    caller.
+7. **A callback can open in a window other than the one waiting.** VS Code's
+   main process routes an extension URI to the window whose IPC connection
+   matches `window:<id>`, by an unanchored pattern
+   ([vscode#345470](https://github.com/microsoft/vscode/issues/345470)):
+   window 1 also matches windows 10–19, and the first match wins. Reproduced
+   2026-11-02 (a sign-in from window 1 opened in window 10). A window that
+   ended or reloaded mid sign-in loses it the same way. Builds without an
+   upstream fix (`engines.vscode` reaches back to 1.96; forks follow late)
+   keep it, so the hand-off in flow step 5 stays: the receiving window says
+   so, and the link is pasted where the sign-in waits.
 
 ## Implementation — where each piece lives
 
@@ -193,9 +233,15 @@ restate it. Policy for what an entry is:
    Authorization Code + PKCE; redirect via an injected `OAuthUserAgent` — the
    orchestrator implements it with `registerUriHandler` (extension.ts) +
    `asExternalUri`, pending callbacks keyed by `state` in `oauth-callback.ts`.
-   Gated DCR throws `DcrRejectedError`, labeled, immediately. Tested against a fake
-   spec-compliant provider that genuinely verifies S256 PKCE
-   (`test/support/fake-oauth-provider.ts`, `test/mcp-oauth.test.ts`).
+   A refused registration throws `DcrRejectedError` naming both causes, a
+   server without PKCE S256 an `OAuthDiscoveryError`, labeled, immediately.
+   A callback reaches the registry through `Orchestrator.signInCallback`, a
+   pasted link through `McpServersStore.pasteSignInLink` and the sign-in
+   agent's `deliver` — one handler, two ways in. Tested against a fake
+   spec-compliant provider that genuinely verifies S256 PKCE and serves an
+   MCP endpoint behind its tokens (`test/support/fake-oauth-provider.ts`,
+   `test/mcp-oauth.test.ts`); two orchestrators on one machine play the
+   wrong-window hand-off (`test/sign-in-callback.test.ts`).
 3. `data/mcp-catalog.json` ships the entries; `stores/mcp-catalog.ts` loads them
    through the schema (the loader is the one seam a fetched source would use).
 4. Per-account endpoints: the registry-kind source persists the pasted `url`;

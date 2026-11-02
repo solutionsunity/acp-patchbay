@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **An MCP sign-in that comes back to the wrong window is no longer
+  lost.** VS Code can open a sign-in's return in a window other than the
+  one waiting on it, which then dropped it without a word. That window now
+  says the sign-in was started elsewhere and offers Copy link; the card
+  waiting on the sign-in takes the link pasted and finishes it. A server
+  that doesn't support PKCE (S256), the proof a public client signs in
+  with, is refused before anything is registered; servers already signed in
+  keep refreshing. A server that refuses Patchbay's registration now gets
+  both possible reasons named — approved clients only, or not accepting
+  Patchbay's sign-in address — with both ways forward. (#137)
 - **A page opens at exactly its address.** Patchbay handed VS Code each
   link in a form it re-encodes on the way to the browser, so an encoded
   `?`, `#`, `&`, `=` or `+` inside a link's query arrived changed. An MCP

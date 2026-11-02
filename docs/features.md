@@ -238,7 +238,9 @@ deliverable.
 - Every add and edit is checked against the server before anything is
   stored: a wrong key, a failing command or an unset variable leaves nothing
   behind and the card open with the reason; a server that asks for a
-  sign-in gets a Sign in button. `${VAR}` references are filled in from the
+  sign-in gets a Sign in button. A sign-in that comes back to another
+  window is never lost: that window offers its link to copy, and the card
+  waiting on it takes the link pasted. `${VAR}` references are filled in from the
   agent's environment when the server is handed over, never stored filled
   in.
 - Two-state lifecycle: **on or off in a workspace** without touching the

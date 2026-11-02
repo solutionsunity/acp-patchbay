@@ -328,8 +328,12 @@ and the add waits for the pick), then the agents (all, preselected).
 `Cancel`; a refused key, a failing command or an unset variable stores
 nothing and keeps the card open with the reason (`Dismiss`); a server that
 asks for a sign-in gets `Sign in`, which runs its browser flow and adds
-again. The browser is waited on as long as the user takes, and Cancel ends
-an abandoned tab with no outcome invented. On success the card closes and
+again. The browser is waited on as long as the user takes — the card says
+`Waiting for your sign-in in the browser…`, with a `Paste link` field
+beside `Cancel` for a sign-in whose callback opened in another window
+(that window offers `Copy link`); a pasted link is sent as it lands or on
+Enter, and one that isn't this sign-in's is refused, the reason under the
+field. Cancel ends an abandoned tab with no outcome invented. On success the card closes and
 the new server's card is brought into view.
 
 Then the working set, one card per server (dot · mark · name ·
