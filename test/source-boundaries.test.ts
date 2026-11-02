@@ -58,6 +58,28 @@ describe("source boundaries", () => {
     expect(hits(files, new RegExp(`^(?!\\s*(//|\\*)).*["'\`](${vendors.join("|")})["'\`]`))).toEqual([]);
   });
 
+  // A wire-extension module carries a deviation from the spec, so it carries
+  // its own way out: its header dates the adoption and says when it
+  // retires, and an agent dossier names the module — the note holds the
+  // version, the repro and the vendor trail, the module never names the
+  // note. The compose file is the one that isn't an extension.
+  it("every wire-extension module dates its adoption, says when it retires, and has a dossier naming it", () => {
+    const home = join(SRC, "orchestrator", "extensions");
+    const dossiers = filesUnder(fileURLToPath(new URL("../docs/agents/", import.meta.url)), /\.md$/).map((file) => readFileSync(file, "utf8"));
+    const missing = filesUnder(home, /\.ts$/)
+      .filter((file) => file !== join(home, "index.ts"))
+      .flatMap((file) => {
+        const text = readFileSync(file, "utf8");
+        const name = relative(home, file);
+        return [
+          ...(/^\/\/.*Adopted \d{4}-\d{2}-\d{2}/m.test(text) ? [] : [`${name}: no adoption date`]),
+          ...(/^\/\/.*RETIRE (when|per)\b/m.test(text) ? [] : [`${name}: no retire condition`]),
+          ...(dossiers.some((note) => note.includes(name)) ? [] : [`${name}: no dossier names it`]),
+        ];
+      });
+    expect(missing).toEqual([]);
+  });
+
   // Which fact proves which capability row is the proof table's to say: a
   // caller reports what it saw and marks the rows the table names, never a
   // row it chose.
