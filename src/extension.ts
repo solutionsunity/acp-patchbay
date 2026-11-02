@@ -92,11 +92,10 @@ export function activate(context: vscode.ExtensionContext): {
     // OAuth redirect target: MCP servers'
     // browser flows come back as vscode://solutionsunity.acp-patchbay/...
     // URIs — resolved correctly in every environment by asExternalUri,
-    // unlike a loopback HTTP server.
+    // unlike a loopback HTTP server. The link goes unencoded: pasted back,
+    // it reads as the query the handler read.
     vscode.window.registerUriHandler({
-      handleUri: (uri) => {
-        orchestrator.oauthCallbacks.handle(uri.query);
-      },
+      handleUri: (uri) => orchestrator.signInCallback(uri.query, uri.toString(true)),
     }),
   );
 

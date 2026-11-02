@@ -157,6 +157,9 @@ export interface OrchestratorPorts {
   openLink(href: string): PromiseLike<boolean>;
   confirm(message: string, choice: string): Promise<boolean>;
   warn(message: string): void;
+  /** A sign-in callback no sign-in here waits on: the user is told, and
+   * offered `link` to copy into the window where it waits. */
+  signInNotWaiting(link: string): void;
   runLoginTask: AgentsStoreHooks["runLoginTask"];
   announceUpdates(): Promise<void>;
   wireSink(): WireLogSink;
@@ -232,8 +235,8 @@ export class Orchestrator {
    * are reached only through the MCP gates. */
   readonly mcpServers: Omit<McpServersStore, keyof McpServerLineOperations>;
   readonly mcpServerGates: McpServerGates;
-  /** Pending OAuth callbacks — extension.ts's UriHandler feeds this. */
-  readonly oauthCallbacks = new OAuthCallbackRegistry();
+  /** Pending OAuth callbacks — fed by `signInCallback`. */
+  private readonly oauthCallbacks = new OAuthCallbackRegistry();
 
   /** The one directory this window's work runs in: agents spawn here (and
    * their stdio MCP children inherit it), sessions open here, MCP server
@@ -1535,6 +1538,17 @@ export class Orchestrator {
 
   agentName(patchbayAgentId: PatchbayAgentId): string {
     return this.agents.name(patchbayAgentId) ?? patchbayAgentId;
+  }
+
+  /** A sign-in callback the editor handed this window — the query it reads
+   * and the link as received. Taken by the sign-in waiting on its state;
+   * one no sign-in here waits on is said, never dropped: VS Code may have
+   * handed it to the wrong window, and the link pasted where it waits
+   * finishes it there. */
+  signInCallback(query: string, link: string): void {
+    if (this.oauthCallbacks.handle(query) !== "not waiting") return;
+    this.log.info("a sign-in callback arrived that no sign-in in this window waits on — offered to copy");
+    this.ports.signInNotWaiting(link);
   }
 
   /** Formats a swallowed action failure for the Output channel — these

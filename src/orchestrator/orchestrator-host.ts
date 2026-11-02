@@ -54,6 +54,21 @@ function openInBrowser(href: string): Thenable<boolean> {
   return vscode.env.openExternal(href as unknown as vscode.Uri);
 }
 
+/** A sign-in callback no sign-in in this window waits on. VS Code chose
+ * the window, and its choice can miss; the link, copied into the window
+ * where the sign-in waits, finishes it there. Copied on the user's word
+ * only — the code inside is worthless without that window's PKCE verifier,
+ * so it is safe with its owner. */
+function signInNotWaiting(link: string): void {
+  const copy = "Copy link";
+  void vscode.window
+    .showWarningMessage(
+      "This sign-in was started in another window, or is no longer waiting — copy the link and paste it where it's waiting.",
+      copy,
+    )
+    .then((picked) => (picked === copy ? vscode.env.clipboard.writeText(link) : undefined));
+}
+
 /** A modal question with one affirmative choice — true when it was chosen. */
 async function askModal(message: string, choice: string): Promise<boolean> {
   return (await vscode.window.showWarningMessage(message, { modal: true }, choice)) === choice;
@@ -106,7 +121,7 @@ export class OrchestratorHost {
     // the redirect target is this extension's own vscode:// URI, passed
     // through asExternalUri so VS Code resolves it correctly under SSH
     // remote / WSL / Codespaces — never a hand-rolled 127.0.0.1 server.
-    // extension.ts's registerUriHandler feeds callbacks into oauthCallbacks.
+    // extension.ts's registerUriHandler hands callbacks to the orchestrator.
     const extensionId = context.extension.id; // "solutionsunity.acp-patchbay"
     const workspaceRootsView = () =>
       (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
@@ -145,6 +160,7 @@ export class OrchestratorHost {
         openLink: (href) => openInBrowser(href),
         confirm: askModal,
         warn: (message) => void vscode.window.showWarningMessage(message),
+        signInNotWaiting: (link) => signInNotWaiting(link),
         runLoginTask: (name, recipe) => runLoginTask(name, recipe),
         announceUpdates: () => this.announceUpdates(),
         wireSink: () => {

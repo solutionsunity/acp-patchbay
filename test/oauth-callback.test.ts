@@ -8,13 +8,14 @@ describe("OAuthCallbackRegistry", () => {
     vi.useFakeTimers();
     const registry = new OAuthCallbackRegistry();
     const waiting = registry.wait("abc");
-    expect(registry.handle("state=other&code=x")).toBe(false);
+    expect(registry.handle("state=other&code=x")).toBe("not waiting");
     // the user takes an hour in the browser: no clock may end the wait
     await vi.advanceTimersByTimeAsync(60 * 60_000);
     vi.useRealTimers();
-    expect(registry.handle("state=abc&code=granted")).toBe(true);
+    expect(registry.handle("state=abc&code=granted")).toBe("delivered");
     expect((await waiting).get("code")).toBe("granted");
-    expect(registry.handle("state=abc&code=again")).toBe(false);
+    expect(registry.handle("state=abc&code=again")).toBe("not waiting");
+    expect(registry.handle("code=stateless")).toBe("not a callback");
   });
 
   it("the attempt's end gives the wait up: it rejects with the reason, and a late tab finds nothing", async () => {
@@ -23,6 +24,6 @@ describe("OAuthCallbackRegistry", () => {
     const waiting = registry.wait("abc", controller.signal);
     controller.abort(new Error("cancelled by test"));
     await expect(waiting).rejects.toThrow("cancelled by test");
-    expect(registry.handle("state=abc&code=late")).toBe(false);
+    expect(registry.handle("state=abc&code=late")).toBe("not waiting");
   });
 });

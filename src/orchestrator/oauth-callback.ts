@@ -3,8 +3,15 @@
 
 // Pending-OAuth-callback registry, keyed by the `state` parameter. The
 // vscode glue is one line in extension.ts: registerUriHandler routes every
-// incoming `vscode://solutionsunity.acp-patchbay/...` URI's query string to
-// `handle()`. Kept vscode-free so flow tests can drive callbacks directly.
+// incoming `vscode://solutionsunity.acp-patchbay/...` URI to the
+// orchestrator, which hands its query string to `handle()`. Kept
+// vscode-free so flow tests can drive callbacks directly.
+
+/** What became of a callback: handed to the sign-in waiting on its state;
+ * carrying a state no sign-in here waits on (another window's, or one that
+ * ended — the two read the same); or carrying none, so no sign-in's. */
+export type CallbackOutcome = "delivered" | "not waiting" | "not a callback";
+
 export class OAuthCallbackRegistry {
   private pending = new Map<string, (params: URLSearchParams) => void>();
 
@@ -29,18 +36,15 @@ export class OAuthCallbackRegistry {
     });
   }
 
-  /** Feed an incoming callback URI's query string. Returns false for URIs
-   * that aren't a pending OAuth callback (unknown/absent state) — the
-   * handler ignores them rather than erroring, since the extension's URI
-   * namespace may carry other traffic someday. */
-  handle(query: string): boolean {
+  /** Feed an incoming callback URI's query string. */
+  handle(query: string): CallbackOutcome {
     const params = new URLSearchParams(query);
     const state = params.get("state");
-    if (state === null) return false;
+    if (state === null) return "not a callback";
     const waiter = this.pending.get(state);
-    if (waiter === undefined) return false;
+    if (waiter === undefined) return "not waiting";
     this.pending.delete(state);
     waiter(params);
-    return true;
+    return "delivered";
   }
 }

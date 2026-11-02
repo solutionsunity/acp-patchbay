@@ -149,6 +149,7 @@ export function orchestratorHarness(cwd: string, opts: OrchestratorHarnessOption
     openLink: async (href) => (note("openLink", href), true),
     confirm: async (message, choice) => (note("confirm", message, choice), true),
     warn: (message) => note("warn", message),
+    signInNotWaiting: (link) => note("signInNotWaiting", link),
     runLoginTask: async (name, recipe) => (note("runLoginTask", name, recipe), 0),
     announceUpdates: async () => {},
     wireSink: () => ({ appendLine: () => {} }),
