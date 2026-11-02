@@ -63,6 +63,15 @@ describe("connectMcpOAuth", () => {
     );
   });
 
+  it("a refused registration says the server's own word, then both causes — approved clients, or the sign-in address", async () => {
+    provider.gateDcr = true;
+    await expect(connectMcpOAuth(provider.mcpUrl, CLIENT_INFO, fakeUserAgent())).rejects.toThrow(
+      'client registration rejected (HTTP 403): {"error":"forbidden"} — this server may allow only approved clients, ' +
+        "or may not accept Patchbay's sign-in address (vscode://solutionsunity.acp-patchbay/oauth-callback). " +
+        "Use its API-key path if it has one, or ask the server's provider to allow this sign-in.",
+    );
+  });
+
   it("a server that doesn't list PKCE S256 is refused before any registration", async () => {
     for (const methods of [undefined, [], ["plain"], "S256"]) {
       provider.pkceMethods = methods as string[] | undefined;

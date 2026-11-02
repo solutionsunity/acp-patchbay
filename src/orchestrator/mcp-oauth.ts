@@ -15,17 +15,22 @@ import { z } from "zod";
 import { nullLogger } from "./logger";
 import { describeNetFailure, exchange, type FetchFn, readJson } from "./net";
 
-/** DCR rejected: some vendors allowlist client registration
- * (Figma 403s unknown client_name with no explanation). This must surface
- * as an immediate, labeled failure, never a retry or a hang. */
+/** DCR rejected — an immediate, labeled failure, never a retry or a hang.
+ * Two causes read the same from here: a vendor that allowlists client
+ * registration (Figma 403s an unknown client_name with no explanation),
+ * and a server that refuses the redirect address, which is VS Code's
+ * shared `vscode` scheme rather than one of patchbay's own. So the message
+ * names both, after the server's own word. */
 export class DcrRejectedError extends Error {
   constructor(
     readonly status: number,
     detail: string,
+    redirectUri: string,
   ) {
     super(
       `client registration rejected (HTTP ${status}): ${detail} — ` +
-        `this server likely gates registration to approved clients; use its API-key path instead`,
+        `this server may allow only approved clients, or may not accept Patchbay's sign-in address (${redirectUri}). ` +
+        `Use its API-key path if it has one, or ask the server's provider to allow this sign-in.`,
     );
   }
 }
@@ -195,7 +200,7 @@ export async function registerClient(
       `couldn't register with ${new URL(registrationEndpoint).host} — ${describeNetFailure(sent.failure)}`,
     );
   }
-  if (sent.value.kind === "rejected") throw new DcrRejectedError(sent.value.status, sent.value.detail);
+  if (sent.value.kind === "rejected") throw new DcrRejectedError(sent.value.status, sent.value.detail, redirectUri);
   const { client } = sent.value;
   return { clientId: client.client_id, clientSecret: client.client_secret };
 }
