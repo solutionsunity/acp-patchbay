@@ -1694,6 +1694,71 @@ for (const theme of Object.keys(THEMES)) {
   await p.close();
 }
 
+// ── the composer foot wraps by what it holds (#117): the whole knob set
+// and every read-out with details, across the widths a panel takes — every
+// label whole on one line, the read-outs beside the knobs or on a line of
+// their own above them, Send at the bottom-right. Theme-independent. ──
+{
+  const sel = (id, name, category, value, values) => ({ id, name, category, type: "select", currentValue: value, options: values.map((v) => ({ value: v, name: v })) });
+  const footState = agentViewState({ live: false });
+  footState.sessionKnobs = {
+    s1: [
+      sel("mode", "Mode", "mode", "Accept edits", ["Accept edits", "Plan"]),
+      sel("model", "Model", "model", "Opus 5.5", ["Opus 5.5", "Sonnet 5.5"]),
+      sel("effort", "Effort", "thought_level", "High", ["High", "Low"]),
+      { id: "fast", name: "Fast mode", type: "boolean", currentValue: false },
+      { id: "ultra", name: "Ultracode", type: "boolean", currentValue: false },
+    ],
+  };
+  footState.sessionUsage = {
+    s1: { used: 244400, size: 1000000, cost: { amount: 8.36, currency: "USD" }, plan: { seven_day: { status: "ok", window: "seven_day", utilization: 0.58, resetsAt: "2026-11-03T22:00:00.000Z" } } },
+  };
+  for (const width of [260, 340, 420, 480, 560, 650, 760, 900, 1100]) {
+    const p = await page(browser, Object.keys(THEMES)[0], { width, height: 700 });
+    await renderView(p, "agent-view", footState);
+    await p.waitForSelector(".input-foot .composer-stats .plan-gauge");
+    const foot = await p.evaluate(() => {
+      const box = (el) => el.getBoundingClientRect();
+      const footBox = box(document.querySelector(".input-foot"));
+      const knobs = [...document.querySelectorAll(".input-foot .knob")];
+      const strip = document.querySelector(".input-foot .composer-stats");
+      const send = box(document.querySelector(".input-foot > button"));
+      // a text broken over lines has a box per line
+      const oneLine = (el) => {
+        const texts = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        for (let t = texts.nextNode(); t !== null; t = texts.nextNode()) {
+          if (t.textContent.trim() === "") continue;
+          const r = document.createRange();
+          r.selectNodeContents(t);
+          if (new Set([...r.getClientRects()].map((c) => Math.round(c.top))).size > 1) return false;
+        }
+        return true;
+      };
+      const whole = knobs.filter((k) => !(k.scrollWidth <= k.clientWidth + 1 && oneLine(k))).map((k) => k.textContent.trim());
+      const pieces = [...strip.children].filter((c) => !oneLine(c)).map((c) => c.textContent.trim());
+      const s = box(strip);
+      const kb = knobs.map(box);
+      const knobsTop = Math.min(...kb.map((r) => r.top));
+      const lastLine = kb.filter((r) => r.bottom > Math.max(...kb.map((k) => k.bottom)) - 2);
+      const beside = lastLine.some((r) => r.top < s.bottom && s.top < r.bottom) && kb.every((r) => r.right <= s.left + 1 || r.bottom <= s.top + 1 || r.top >= s.bottom - 1);
+      const above = s.bottom <= knobsTop + 1;
+      const W = document.documentElement.clientWidth;
+      return {
+        broken: [...whole, ...pieces],
+        placed: beside ? "beside" : above ? "above" : "neither",
+        sendCorner: Math.abs(send.right - footBox.right) <= 1 && Math.abs(send.bottom - footBox.bottom) <= 1,
+        inside: [...kb, s, send].every((r) => r.left >= -1 && r.right <= W + 1),
+      };
+    });
+    check(
+      `the composer foot at ${width}px: every label whole, read-outs ${foot.placed}, Send bottom-right (${JSON.stringify(foot)})`,
+      foot.broken.length === 0 && foot.placed !== "neither" && foot.sendCorner && foot.inside,
+    );
+    if (width === 650 || width === 1100) await p.locator(".input-foot").screenshot({ path: `${OUT}/composer-foot-${width}.png` });
+    await p.close();
+  }
+}
+
 // ── nothing hides at a narrow width (#67): with long unbreakable content
 // everywhere — paths, names, titles — every control stays in view, none
 // behind a sideways scroll, and every overlay opens inside the panel.

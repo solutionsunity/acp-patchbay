@@ -17,7 +17,9 @@
   gauge's tooltip. The plan gauge's tooltip is the shared one, so the
   keyboard reaches it. Everything shows by default, the gauges with
   details; a gauge you had hidden stays hidden, and the cost stays hidden
-  if the context gauge was. (#117)
+  if the context gauge was. The read-outs move to a line above the knobs
+  whenever the two don't fit side by side, at any panel width, so no knob
+  label is cut short to make room. (#117)
 - **Adding an MCP server is one card at the top, checked before it's
   saved.** As on the Agents page, the add tile opens one card: pick a
   curated server from a search, or add your own as a command, a URL, or

@@ -315,11 +315,14 @@ export function Composer(props: {
       {/* Outside the input-shell on purpose: the foot sits on the composer's
           elevated surface (--card); only the prompt box keeps --pb-panel. */}
       <div className="input-foot">
-        <Knobs patchbaySessionId={patchbaySessionId} knobs={props.knobs} />
-        <span className="flex-1" />
-        {props.session !== null && (
-          <ComposerStats totals={props.totals} usage={props.usage} show={props.preferences} />
-        )}
+        <div className="foot-body">
+          <span className="foot-knobs">
+            <Knobs patchbaySessionId={patchbaySessionId} knobs={props.knobs} />
+          </span>
+          {props.session !== null && (
+            <ComposerStats totals={props.totals} usage={props.usage} show={props.preferences} />
+          )}
+        </div>
         {/* theme-token primary (brand fills superseded — theme.css
             identity palette); while a turn is underway it becomes Stop,
             which is destructive. Each role has its own gate (composerControls
@@ -327,7 +330,7 @@ export function Composer(props: {
         <Button
           variant={button.role === "send" ? "default" : "destructive"}
           size="icon"
-          className="ml-auto size-[26px] rounded-[7px]"
+          className="size-[26px] rounded-[7px]"
           disabled={button.disabled}
           title={buttonLabel}
           aria-label={buttonLabel}

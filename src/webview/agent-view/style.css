@@ -1103,31 +1103,39 @@ body {
 
 .input-foot {
   display: flex;
-  align-items: center;
+  align-items: flex-end; /* Send keeps the bottom-right anchor */
   gap: 4px;
   /* sits on the composer surface now, below the input-shell — the
    * composer's own side padding frames it, no bottom inset needed */
   padding: 4px 0 0;
 }
 
-/* Narrow composer: the foot's read-outs (composer-stats) relocate to their
- * own line ABOVE the controls row — controls (knobs, send) never leave the
- * bottom edge, and Send keeps the bottom-right anchor at every width.
- * Read-outs above, controls below: the same vertical grammar as the
- * read-out strip over the composer. 480px ≈ the worst realistic single row
- * (full knob set + every counter lit) at default font; with nothing to
- * read out (every read-out switched off, or a fresh session) the strip
- * doesn't render and the foot stays one row at any width. */
-@container (max-width: 480px) {
-  .input-foot {
-    flex-wrap: wrap;
-  }
-  .input-foot .composer-stats {
-    order: -1;
-    flex-basis: 100%;
-    justify-content: flex-end; /* stays in the right visual column it owned */
-    margin-right: 0; /* the mr-6 send-button air is a same-row concern */
-  }
+/* The knobs and the read-outs wrap by what they hold, never by a width
+ * guessed for them: the read-outs sit beside the knobs while both fit at
+ * their natural widths, and take a line of their own above them once they
+ * don't (wrap-reverse stacks the later line on top) — read-outs above,
+ * controls below, the same vertical grammar as the read-out strip over the
+ * composer. Nothing shrinks for the other's sake; knobs alone on a line
+ * too narrow for them wrap among themselves, in order. Send stays outside,
+ * so it never leaves the bottom edge. */
+.foot-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap-reverse;
+  align-items: center;
+  column-gap: 4px;
+  row-gap: 2px;
+}
+.foot-knobs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.foot-body .composer-stats {
+  margin-left: auto; /* the right visual column, on either line */
 }
 
 /* A knob never outgrows the composer: a long value (a model's full name)
