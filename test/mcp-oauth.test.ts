@@ -63,6 +63,16 @@ describe("connectMcpOAuth", () => {
     );
   });
 
+  it("a server that doesn't list PKCE S256 is refused before any registration", async () => {
+    for (const methods of [undefined, [], ["plain"], "S256"]) {
+      provider.pkceMethods = methods as string[] | undefined;
+      await expect(connectMcpOAuth(provider.mcpUrl, CLIENT_INFO, fakeUserAgent())).rejects.toThrow(/PKCE \(S256\)/);
+    }
+    expect(provider.registrations).toEqual([]);
+    provider.pkceMethods = ["plain", "S256"];
+    await expect(connectMcpOAuth(provider.mcpUrl, CLIENT_INFO, fakeUserAgent())).resolves.toMatchObject({ accessToken: "access-1" });
+  });
+
   it("a server with no OAuth metadata fails as non-compliant, not as a crash", async () => {
     provider.noMetadata = true;
     await expect(connectMcpOAuth(provider.mcpUrl, CLIENT_INFO, fakeUserAgent())).rejects.toThrow(

@@ -38,6 +38,8 @@ export class FakeOAuthProvider {
   denyConsent = false;
   /** Omit all discovery metadata (a non-compliant server). */
   noMetadata = false;
+  /** The PKCE methods the metadata lists; undefined = the field is absent. */
+  pkceMethods: string[] | undefined = ["S256"];
   /** expires_in on issued tokens; undefined = no expiry reported. */
   expiresIn: number | undefined = 3600;
 
@@ -70,6 +72,7 @@ export class FakeOAuthProvider {
               authorization_endpoint: `${this.origin}/auth/authorize`,
               token_endpoint: `${this.origin}/auth/token`,
               registration_endpoint: `${this.origin}/auth/register`,
+              code_challenge_methods_supported: this.pkceMethods,
             }),
           );
           return;

@@ -73,6 +73,9 @@ const authServerMetadataSchema = z.object({
   authorization_endpoint: z.string(),
   token_endpoint: z.string(),
   registration_endpoint: z.string().optional(),
+  // Malformed reads as absent: the sign-in is refused for PKCE, never sent
+  // on to the next metadata candidate.
+  code_challenge_methods_supported: z.array(z.string()).optional().catch(undefined),
 });
 
 export type AuthServerMetadata = z.infer<typeof authServerMetadataSchema>;
@@ -199,6 +202,9 @@ export async function registerClient(
 
 // ── PKCE (RFC 7636, S256) ────────────────────────────────────────────────────
 
+/** The one PKCE method patchbay sends — and so the one a server must list. */
+const PKCE_METHOD = "S256";
+
 export function generatePkce(): { verifier: string; challenge: string } {
   const verifier = randomBytes(48).toString("base64url"); // 64 chars, within 43–128
   const challenge = createHash("sha256").update(verifier).digest("base64url");
@@ -238,8 +244,9 @@ async function postForm(url: string, params: Record<string, string>, fetchFn?: F
 
 /** Connects to a remote MCP server with nothing but its URL: discovery →
  * DCR → Authorization Code + PKCE via the injected user agent. Throws
- * `DcrRejectedError` (gated registration) and `OAuthDiscoveryError`
- * (non-compliant server) as labeled, immediate failures. */
+ * `DcrRejectedError` (registration refused) and `OAuthDiscoveryError`
+ * (non-compliant server, PKCE S256 unlisted) as labeled, immediate
+ * failures. */
 export async function connectMcpOAuth(
   mcpServerUrl: string,
   clientInfo: ClientInfo,
@@ -248,6 +255,14 @@ export async function connectMcpOAuth(
 ): Promise<McpOAuthTokens> {
   const authServer = await discoverAuthorizationServer(mcpServerUrl, fetchFn);
   const metadata = await discoverAuthServerMetadata(authServer, fetchFn);
+  // A public client's only proof is PKCE, and MCP requires a client to
+  // refuse a server that doesn't list it — an absent list included. Checked
+  // at sign-in alone: a refresh carries no PKCE.
+  if (metadata.code_challenge_methods_supported?.includes(PKCE_METHOD) !== true) {
+    throw new OAuthDiscoveryError(
+      `this server doesn't list PKCE (${PKCE_METHOD}) among its sign-in methods, which MCP requires — Patchbay won't sign in without it`,
+    );
+  }
   if (metadata.registration_endpoint === undefined) {
     throw new OAuthDiscoveryError(
       "authorization server does not offer dynamic client registration — use this server's API-key path instead",
@@ -269,7 +284,7 @@ export async function connectMcpOAuth(
   authorizationUrl.searchParams.set("redirect_uri", redirectUri);
   authorizationUrl.searchParams.set("state", state);
   authorizationUrl.searchParams.set("code_challenge", challenge);
-  authorizationUrl.searchParams.set("code_challenge_method", "S256");
+  authorizationUrl.searchParams.set("code_challenge_method", PKCE_METHOD);
   authorizationUrl.searchParams.set("resource", mcpServerUrl); // RFC 8707 audience binding
 
   const callback = await userAgent.authorize(authorizationUrl.toString(), state);

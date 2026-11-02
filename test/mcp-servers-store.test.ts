@@ -348,6 +348,15 @@ describe("McpServersStore — OAuth connect (MCP-spec, discovery + DCR + PKCE)",
     expect(h.storedKeys).toEqual([]);
   });
 
+  it("a server without PKCE S256 is refused before registering — the card keeps the reason", async () => {
+    provider.pkceMethods = undefined;
+    const h = harness([entry()]);
+    await expect(h.gates.connectOAuth("svc", "Service", undefined, ALL)).rejects.toThrow(/PKCE \(S256\)/);
+    expect(await published(h)).toEqual([failure("catalog:svc", /PKCE \(S256\)/)]);
+    expect(provider.registrations).toEqual([]);
+    expect(h.storedKeys).toEqual([]);
+  });
+
   it("refuses on an entry without an OAuth mode", async () => {
     const h = harness([entry({ auth: { header: { headerName: "Authorization", valuePrefix: "Bearer ", hint: "", keyUrl: "" }, oauth: false } })]);
     await expect(h.gates.connectOAuth("svc", "Service", undefined, ALL)).rejects.toThrow(/no OAuth mode/);
@@ -1111,6 +1120,15 @@ describe("McpServersStore — a bridge's headers", () => {
     await h.tokens.set(id, { ...stored, expiresAt: new Date(Date.now() + 1000).toISOString() });
     expect(await h.manager.headersFor(id, "agent-a" as PatchbayAgentId)).toEqual({ Authorization: "Bearer refreshed-2" });
     expect((await h.tokens.get(id))?.accessToken).toBe("refreshed-2");
+  });
+
+  it("a server signed in before it listed no PKCE keeps refreshing — the check is a sign-in's", async () => {
+    const h = harness([entry()]);
+    const id = await h.gates.connectOAuth("svc", "Service", undefined, ALL);
+    provider.pkceMethods = undefined;
+    const stored = (await h.tokens.get(id))!;
+    await h.tokens.set(id, { ...stored, expiresAt: new Date(Date.now() + 1000).toISOString() });
+    expect(await h.manager.headersFor(id, "agent-a" as PatchbayAgentId)).toEqual({ Authorization: "Bearer refreshed-2" });
   });
 
   it("asked at once by several, a near-expiry credential spends its refresh token once", async () => {
