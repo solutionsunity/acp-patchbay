@@ -3,6 +3,7 @@
 
 // Settings — render only. Ephemeral state; rehydrates from the orchestrator
 // on every mount.
+import "./zod-jitless";
 import {
   reduceSettings,
   type SettingsEvent,

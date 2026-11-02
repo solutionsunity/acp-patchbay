@@ -38,7 +38,11 @@ the bundler; Tailwind runs alongside it as a CSS build step.
 - **CSP is authored here, never widened silently.** Radix needs inline `style`
   attributes (already allowed; no inline `<script>`/`eval`); Shiki's default
   engine needs `wasm-unsafe-eval` *or* Streamdown configured with Shiki's JS
-  engine — an explicit implementation choice, never a silent widening.
+  engine — an explicit implementation choice, never a silent widening. A
+  library that would compile code from a string is switched off that path
+  where it has one: zod parses jitless in Settings, set before its schemas
+  are built, since it reads the switch then. The ui-gate's pages refuse
+  eval as the webviews do, and a refusal fails the gate.
 
 Why one component layer and not several: the chat view and settings view are
 deliberately separate webviews (different update frequency, different data

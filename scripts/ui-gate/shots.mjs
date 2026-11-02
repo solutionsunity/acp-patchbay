@@ -98,9 +98,10 @@ async function page(browser, themeName, { width, height }) {
     failures++;
   });
   // so is a resource the page couldn't load — a font, a script — which
-  // renders as a blank and nothing else would notice
+  // renders as a blank and nothing else would notice; and so is code the
+  // page's policy refused
   p.on("console", (m) => {
-    if (m.type() !== "error" || !/Failed to load resource|Not allowed to load local resource/.test(m.text())) return;
+    if (m.type() !== "error" || !/Failed to load resource|Not allowed to load local resource|Refused to/.test(m.text())) return;
     console.log(`FAIL  [${themeName}] resource: ${m.text().slice(0, 200)}`);
     failures++;
   });
@@ -114,7 +115,11 @@ async function page(browser, themeName, { width, height }) {
       body: read(route.request().url().split("/").pop()),
     }),
   );
+  // The webviews' policy allows no eval; neither does this page. The
+  // bundles themselves are evaluated over the devtools protocol, which no
+  // policy governs — what they run from inside is held to it.
   await p.setContent(`<!DOCTYPE html><html><head>
+    <meta http-equiv="Content-Security-Policy" content="script-src https://patchbay.ui-gate">
     <meta name="patchbay-out-base" content="https://patchbay.ui-gate/out/">
     <style>:root{${THEMES[themeName]}}</style>
     <style>${codiconCss}</style>

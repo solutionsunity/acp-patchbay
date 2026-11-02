@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Settings no longer reports an error on every open.** Its errors chip
+  read 1 and the log said `CSP blocked script-src: eval`: the config
+  readers' library checked whether it may compile code, which the page's
+  policy rightly refuses. It no longer asks. (#139)
 - **Patchbay says what its own version just did.** A fresh install points
   to adding the first agent; after an update, a notice offers what's new,
   from this changelog. And when a newer Patchbay is installed while a
