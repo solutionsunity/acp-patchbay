@@ -32,6 +32,7 @@ import type { ToolCallFact } from "./readers/tool-call";
 import { randomUUID } from "node:crypto";
 import type { PatchbaySessionId } from "../shared/ids";
 import { newBlockId } from "./block-ids";
+import { agentErrorText } from "./readers/agent-error";
 
 /** Joins several changed regions of one file into one openable diff — the
  * same line on both sides, so it reads as a boundary and never as a change. */
@@ -672,7 +673,7 @@ export class SessionStream {
   private imageStash(patchbaySessionId: PatchbaySessionId, source: string): ImageStash {
     return {
       id: () => `${source}-${randomUUID()}`,
-      onError: (err) => this.log.info(`session ${patchbaySessionId}: ${source} image stash failed — ${err.message}`),
+      onError: (err) => this.log.info(`session ${patchbaySessionId}: ${source} image stash failed — ${agentErrorText(err)}`),
     };
   }
 

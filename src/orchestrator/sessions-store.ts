@@ -465,7 +465,7 @@ export class SessionsStore {
     void (fields === null
       ? this.continuity.forget(row.patchbayAgentId, row.sessionId)
       : this.continuity.patch(row.patchbayAgentId, row.sessionId, this.cwd(), fields)
-    ).catch((err: Error) => this.log.error(`session continuity ${row.sessionId} — ${err.message}`));
+    ).catch((err: Error) => this.log.error(`session continuity ${row.sessionId} — ${agentErrorText(err)}`));
   }
 
   /** The still-new (never-prompted) session for an agent, if one exists —
@@ -974,7 +974,7 @@ export class SessionsStore {
     const agent = this.pool.get(row.patchbayAgentId);
     if (!attached || agent?.status !== "running" || agent.declared?.sessionClose !== true) return;
     await this.pool.closeSession(row.patchbayAgentId, row.sessionId).catch((err: Error) => {
-      this.log.info(`session ${patchbaySessionId}: session/close failed — ${err.message}`);
+      this.log.info(`session ${patchbaySessionId}: session/close failed — ${agentErrorText(err)}`);
     });
   }
 
@@ -997,7 +997,7 @@ export class SessionsStore {
     this.write(row, null);
     void this.files
       .forget(row.patchbayAgentId, row.sessionId, this.cwd())
-      .catch((err: Error) => this.log.error(`session files ${row.sessionId} — ${err.message}`));
+      .catch((err: Error) => this.log.error(`session files ${row.sessionId} — ${agentErrorText(err)}`));
     this.entomb(row);
   }
 
@@ -1046,10 +1046,10 @@ export class SessionsStore {
     // not by index: rows of other workspaces were never indexed here.
     void this.continuity
       .forgetAgent(patchbayAgentId)
-      .catch((err: Error) => this.log.error(`session continuity drop ${patchbayAgentId} — ${err.message}`));
+      .catch((err: Error) => this.log.error(`session continuity drop ${patchbayAgentId} — ${agentErrorText(err)}`));
     void this.files
       .forgetAgent(patchbayAgentId)
-      .catch((err: Error) => this.log.error(`session files drop ${patchbayAgentId} — ${err.message}`));
+      .catch((err: Error) => this.log.error(`session files drop ${patchbayAgentId} — ${agentErrorText(err)}`));
   }
 
   /** Sessions ride their agent's connection: any status but running — a
@@ -1118,10 +1118,10 @@ export class SessionsStore {
   private reconcile(patchbayAgentId: PatchbayAgentId, kept: ReadonlySet<string>): void {
     void this.continuity
       .reconcile(patchbayAgentId, this.cwd(), (sessionId) => kept.has(sessionId))
-      .catch((err: Error) => this.log.error(`session continuity reconcile ${patchbayAgentId} — ${err.message}`));
+      .catch((err: Error) => this.log.error(`session continuity reconcile ${patchbayAgentId} — ${agentErrorText(err)}`));
     void this.files
       .reconcile(patchbayAgentId, this.cwd(), kept)
-      .catch((err: Error) => this.log.error(`session files reconcile ${patchbayAgentId} — ${err.message}`));
+      .catch((err: Error) => this.log.error(`session files reconcile ${patchbayAgentId} — ${agentErrorText(err)}`));
   }
 
   /** The user is about to read the list (drawer opening, palette pick):
@@ -1136,7 +1136,7 @@ export class SessionsStore {
         .filter((agent) => agent.status === "running" && agent.declared?.sessionList === true)
         .map((agent) =>
           this.walkAgentSessions(agent.spec.patchbayAgentId).catch((err: Error) => {
-            this.log.info(`${agent.spec.patchbayAgentId}: session/list re-read failed — ${err.message}`);
+            this.log.info(`${agent.spec.patchbayAgentId}: session/list re-read failed — ${agentErrorText(err)}`);
           }),
         ),
     );
@@ -1396,7 +1396,7 @@ export class SessionsStore {
         // The agent may no longer hold this session — descend to resume
         // rather than erroring forever.
         error = err as Error;
-        this.log.info(`session ${patchbaySessionId}: load failed, descending the ladder — ${error.message}`);
+        this.log.info(`session ${patchbaySessionId}: load failed, descending the ladder — ${agentErrorText(error)}`);
       }
     }
     if (declared?.sessionResume) {
@@ -1408,7 +1408,7 @@ export class SessionsStore {
         this.dropLiveSession(patchbaySessionId);
         if (signal.aborted) throw err;
         error = err as Error;
-        this.log.info(`session ${patchbaySessionId}: resume failed — ${error.message}`);
+        this.log.info(`session ${patchbaySessionId}: resume failed — ${agentErrorText(error)}`);
       }
     }
     if (error !== undefined) return { attached: false, reason: "failed", error };
@@ -1599,7 +1599,7 @@ export class SessionsStore {
         return;
       }
       void stashPreview(name, chip.content).catch((err: Error) =>
-        this.log.info(`session ${patchbaySessionId}: image preview not stashed — ${err.message}`),
+        this.log.info(`session ${patchbaySessionId}: image preview not stashed — ${agentErrorText(err)}`),
       );
       if (!this.known.has(patchbaySessionId)) return; // closed while the bytes landed
     } else {
@@ -2341,7 +2341,7 @@ export class SessionsStore {
           continue;
         }
         void stashPreview(imageFileName(chip.id, chip.mimeType), content).catch((err: Error) =>
-          this.log.info(`session ${patchbaySessionId}: image preview not stashed — ${err.message}`),
+          this.log.info(`session ${patchbaySessionId}: image preview not stashed — ${agentErrorText(err)}`),
         );
         chips.push({ kind: "image", id: chip.id, label: chip.label, mimeType: chip.mimeType, content });
       } else if (chip.kind === "attachment") {

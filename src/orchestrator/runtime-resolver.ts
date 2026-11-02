@@ -43,6 +43,7 @@ import {
   type BinaryInstallSpec,
   type InstalledBinary,
 } from "./stores/binary-installer";
+import { agentErrorText } from "./readers/agent-error";
 
 export type RuntimeKind = "node" | "uv";
 
@@ -339,7 +340,7 @@ function installOnce(
         installed = await install(deps.cacheRoot, { ...catalog, sha256 }, deps.log);
       } catch (err) {
         if (!(err instanceof ChecksumMismatch)) throw err;
-        deps.log.info(`${catalog.distribution} ${catalog.version}: ${err.message} — reading the digest again, downloading once more`);
+        deps.log.info(`${catalog.distribution} ${catalog.version}: ${agentErrorText(err)} — reading the digest again, downloading once more`);
         const again = (gate.digest === undefined ? null : (await gate.digest()).sha256) ?? sha256;
         installed = await install(deps.cacheRoot, { ...catalog, sha256: again }, deps.log);
       }

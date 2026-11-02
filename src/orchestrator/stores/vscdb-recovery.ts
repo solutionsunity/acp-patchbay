@@ -27,6 +27,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { KV } from "./kv";
 import { STORAGE_KEYS } from "./storage-keys";
+import { agentErrorText } from "../readers/agent-error";
 
 /** The pre-0.82.6 extension id — the Memento row the data lives under. */
 export const LEGACY_EXTENSION_ID = "solutionsunity.acp-patchbay";
@@ -107,7 +108,7 @@ export async function recoverLegacyGlobalState(opts: {
   } catch (error) {
     // Absent db, zero-byte truncation, or a malformed row — all the same
     // honest answer: nothing readable to recover, said once, never retried.
-    log(`could not read ${opts.vscdbPath}: ${String(error)}`);
+    log(`could not read ${opts.vscdbPath}: ${agentErrorText(error)}`);
     return await mark("unreadable", 0);
   } finally {
     rmSync(copy, { force: true });

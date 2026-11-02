@@ -139,7 +139,7 @@ function read<T>(
 function errorDetail(err: unknown): string {
   const message = agentErrorText(err);
   const cause = (err as { cause?: unknown } | null)?.cause;
-  const why = cause instanceof Error ? ((cause as { code?: string }).code ?? cause.message) : undefined;
+  const why = cause instanceof Error ? ((cause as { code?: string }).code ?? agentErrorText(cause)) : undefined;
   return why !== undefined && why !== message ? `${message} (${why})` : message;
 }
 

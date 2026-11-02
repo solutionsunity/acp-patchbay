@@ -25,9 +25,15 @@ const hits = (files: readonly string[], pattern: RegExp): string[] =>
   );
 
 describe("source boundaries", () => {
+  // The reader layer reads raw errors by design: the error reader itself,
+  // and an extension module classifying a vendor's message. Elsewhere a
+  // caught error is known by its name — err, error, failure, cause — so a
+  // read of its message under another name goes unseen.
   it("the extension host reads a caught error through agentErrorText, never its bare message", () => {
-    const files = [...filesUnder(join(SRC, "orchestrator"), /\.tsx?$/), join(SRC, "extension.ts")];
-    expect(hits(files, /instanceof Error \? \w+\.message|\(\w+ as Error\)\.message/)).toEqual([]);
+    const readers = [join(SRC, "orchestrator", "readers"), join(SRC, "orchestrator", "extensions")];
+    const files = [...filesUnder(join(SRC, "orchestrator"), /\.tsx?$/), join(SRC, "extension.ts")].filter((file) => !readers.some((home) => file.startsWith(home)));
+    const bare = /^(?!\s*(\/\/|\*)).*(instanceof Error \? \w+\.message|\(\w+ as Error\)\.message|\b(err|error|failure|cause)\.message\b|\bString\((err|error|failure|cause)\))/;
+    expect(hits(files, bare)).toEqual([]);
   });
 
   it("no comment names a document, a section or a planning id", () => {

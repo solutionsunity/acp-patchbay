@@ -376,7 +376,7 @@ export async function prepareLauncher(
           : null;
     if (failure === null) return;
     if (retry === INSTALL_RETRIES) throw failure;
-    opts.log.info(`${opts.who}: ${failure.message} — trying again (${retry + 1} of ${INSTALL_RETRIES})`);
+    opts.log.info(`${opts.who}: ${agentErrorText(failure)} — trying again (${retry + 1} of ${INSTALL_RETRIES})`);
     opts.onPhase?.(`the download didn't complete — trying again (${retry + 1} of ${INSTALL_RETRIES})…`);
   }
 }

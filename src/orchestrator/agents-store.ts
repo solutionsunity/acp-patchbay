@@ -330,7 +330,7 @@ export class AgentsStore implements ConnectionOperations {
     if (!result.changed) return;
     if (result.lock === null) {
       this.deps.authLocks.remove(patchbayAgentId).catch((err: Error) => {
-        this.log.error(`${patchbayAgentId}: auth-lock remove failed — ${err.message}`);
+        this.log.error(`${patchbayAgentId}: auth-lock remove failed — ${agentErrorText(err)}`);
       });
       this.publish(patchbayAgentId);
       for (const row of rowsProvenBy({ via: "lockCleared", evidence })) this.noteEvidence(patchbayAgentId, row, "used");
@@ -341,7 +341,7 @@ export class AgentsStore implements ConnectionOperations {
       this.hooks.authCleared(patchbayAgentId);
     } else {
       this.deps.authLocks.upsert({ id: patchbayAgentId, lock: result.lock }).catch((err: Error) => {
-        this.log.error(`${patchbayAgentId}: auth-lock write failed — ${err.message}`);
+        this.log.error(`${patchbayAgentId}: auth-lock write failed — ${agentErrorText(err)}`);
       });
       this.publish(patchbayAgentId);
     }

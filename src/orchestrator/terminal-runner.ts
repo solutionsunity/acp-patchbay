@@ -122,7 +122,7 @@ export class NodeTerminalRunner implements TerminalRunner {
       child.stdout!.setEncoding("utf8").on("data", append);
       child.stderr!.setEncoding("utf8").on("data", append);
       child.on("exit", (code, signal) => finish({ exitCode: code, signal }));
-      child.on("error", (err) => neverStarted(err.message));
+      child.on("error", (err) => neverStarted(agentErrorText(err)));
     }
     const started = child;
 

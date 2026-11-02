@@ -87,7 +87,7 @@ export class FileKV implements KV {
       disk = this.readDisk();
     } catch (error) {
       this.log(`write refused: ${agentErrorText(error)}`);
-      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+      return Promise.reject(error instanceof Error ? error : new Error(agentErrorText(error)));
     }
     const next = { ...(disk ?? this.map) };
     if (value === undefined) delete next[key];
@@ -99,8 +99,8 @@ export class FileKV implements KV {
     try {
       this.writeDisk(next);
     } catch (error) {
-      this.log(`write failed for ${this.filePath}: ${String(error)}`);
-      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+      this.log(`write failed for ${this.filePath}: ${agentErrorText(error)}`);
+      return Promise.reject(error instanceof Error ? error : new Error(agentErrorText(error)));
     }
     return Promise.resolve();
   }
@@ -144,7 +144,7 @@ export class FileKV implements KV {
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") return null;
-      throw new Error(`${this.filePath} can't be read (${code ?? String(error)})`);
+      throw new Error(`${this.filePath} can't be read (${code ?? agentErrorText(error)})`);
     }
     try {
       const parsed: unknown = JSON.parse(text);

@@ -1579,7 +1579,7 @@ export class Orchestrator {
     return (err) => {
       // Ended by the user's own hand — an agent's Stop or Remove, a
       // session's Stop, Reload or Close — no failure.
-      if (err instanceof Cancelled) this.log.info(`${context}: ${err.message}`);
+      if (err instanceof Cancelled) this.log.info(`${context}: ${agentErrorText(err)}`);
       else this.log.error(`${context}: ${agentErrorText(err)}`);
     };
   }

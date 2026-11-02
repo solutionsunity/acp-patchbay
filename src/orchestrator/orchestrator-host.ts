@@ -116,7 +116,7 @@ export class OrchestratorHost {
       kv: machineKV,
       vscdbPath: join(dirname(context.globalStorageUri.fsPath), "state.vscdb"),
       log: (message) => log.info(`legacy recovery: ${message}`),
-    }).catch((error: unknown) => log.info(`legacy recovery failed: ${String(error)}`));
+    }).catch((error: unknown) => log.info(`legacy recovery failed: ${agentErrorText(error)}`));
     // OAuth browser/redirect step:
     // the redirect target is this extension's own vscode:// URI, passed
     // through asExternalUri so VS Code resolves it correctly under SSH

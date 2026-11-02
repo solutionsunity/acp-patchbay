@@ -14,6 +14,7 @@ import { basename, dirname, join } from "node:path";
 import * as vscode from "vscode";
 import { selfVersionMoments, type SelfVersionFacts, type SelfVersionMoment } from "./self-version";
 import type { SeenVersionStore } from "./stores/seen-version";
+import { agentErrorText } from "./readers/agent-error";
 
 const ADD_AGENT = "Add your first agent";
 const WHATS_NEW = "What's new";
@@ -47,9 +48,9 @@ export class SelfVersionHost implements vscode.Disposable {
     if (!this.installed) return;
     try {
       this.watcher = watch(dirname(this.extension.extensionPath), () => this.look());
-      this.watcher.on("error", (error) => this.deps.log.info(`self version: the extensions folder can't be watched — ${String(error)}`));
+      this.watcher.on("error", (error) => this.deps.log.info(`self version: the extensions folder can't be watched — ${agentErrorText(error)}`));
     } catch (error) {
-      this.deps.log.info(`self version: the extensions folder can't be watched — ${String(error)}`);
+      this.deps.log.info(`self version: the extensions folder can't be watched — ${agentErrorText(error)}`);
     }
   }
 
@@ -75,7 +76,7 @@ export class SelfVersionHost implements vscode.Disposable {
       this.said.add(key);
       if (moment.kind !== "waiting") {
         void this.deps.seenVersion.record(moment.version).then(undefined, (error: unknown) =>
-          this.deps.log.info(`self version: ${moment.version} not recorded — ${String(error)}`),
+          this.deps.log.info(`self version: ${moment.version} not recorded — ${agentErrorText(error)}`),
         );
       }
       void this.say(moment);

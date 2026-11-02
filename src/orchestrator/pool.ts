@@ -436,7 +436,7 @@ export class AgentPool {
     const tracked = trackedChild(child);
     if (tracked !== null) this.hooks.onProcessSpawned?.(tracked);
     child.on("error", (err) => {
-      this.markDead(entry, `spawn failed: ${err.message}`);
+      this.markDead(entry, `spawn failed: ${agentErrorText(err)}`);
     });
     child.on("exit", (code, signal) => {
       if (entry.stopping) this.setStatus(entry, "stopped");

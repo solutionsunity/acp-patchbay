@@ -275,7 +275,7 @@ export class CapabilityTracker {
       if (declared.sessionClose) {
         await this.pool.closeSession(patchbayAgentId, probeSessionId).then(
           () => probes.delete(probeSessionId),
-          (err: Error) => this.log.debug(`${patchbayAgentId}: probe session/close failed — ${err.message}`),
+          (err: Error) => this.log.debug(`${patchbayAgentId}: probe session/close failed — ${agentErrorText(err)}`),
         );
       }
       return "ok";

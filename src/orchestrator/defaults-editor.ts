@@ -237,7 +237,7 @@ export class DefaultsEditor {
   private enqueue(patchbayAgentId: PatchbayAgentId, task: () => Promise<void>): Promise<void> {
     const chain = (this.queues.get(patchbayAgentId) ?? Promise.resolve())
       .then(task)
-      .catch((err: Error) => this.log.info(`${patchbayAgentId}: defaults editor — ${err.message}`));
+      .catch((err: Error) => this.log.info(`${patchbayAgentId}: defaults editor — ${agentErrorText(err)}`));
     this.queues.set(patchbayAgentId, chain);
     return chain;
   }
