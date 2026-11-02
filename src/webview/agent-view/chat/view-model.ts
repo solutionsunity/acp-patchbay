@@ -32,6 +32,11 @@ export type TranscriptItem =
   | { kind: "single"; block: ChatBlock }
   | { kind: "toolRun"; id: string; calls: readonly ToolCallBlock[] };
 
+/** An item's identity: its row's key, and what a reading position names. */
+export function itemId(item: TranscriptItem): string {
+  return item.kind === "toolRun" ? item.id : item.block.id;
+}
+
 export interface TurnRollup {
   /** Total tool_call blocks in the turn — raw event count. */
   toolCalls: number;

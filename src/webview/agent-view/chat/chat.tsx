@@ -6,7 +6,7 @@
 // metadata line, and the live elapsed ticker. Long transcripts ride the
 // three-mechanism scale strategy: windowed mount, content-visibility
 // containment (style.css), and memoized rows.
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Component, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   attaching,
   userPartsText,
@@ -19,7 +19,8 @@ import { useActions } from "../../shared/actions";
 import { chatPaneProgress } from "../../shared/agent-work";
 import { Icon } from "../../shared/icon";
 import { count } from "../../../shared/count";
-import { formatDuration, type TranscriptView, type TurnRollup } from "./view-model";
+import { formatDuration, itemId, type TranscriptView, type TurnRollup } from "./view-model";
+import { readingPosition, windowHolding, type ReadingPosition } from "./reading-position";
 import { Disclosure } from "../../shared/disclosure";
 import {
   CarriedUpdate,
@@ -226,6 +227,34 @@ const WINDOW_BATCH = 30;
  * break follow, narrow enough that "reading the last message" isn't it. */
 const PIN_BAND_PX = 48;
 
+type Left = { session: PatchbaySessionId; position: ReadingPosition | null };
+
+/** Records where the user was as the chat leaves a session. A class because
+ * getSnapshotBeforeUpdate is the one moment React gives before a commit
+ * changes the DOM: a function component's effects all run after the next
+ * session's rows have replaced the ones to read. Renders nothing. */
+class OnLeave extends Component<
+  {
+    session: PatchbaySessionId | undefined;
+    read(): ReadingPosition | null;
+    keep(left: Left): void;
+  },
+  unknown,
+  Left | null
+> {
+  override getSnapshotBeforeUpdate(prev: Readonly<OnLeave["props"]>): Left | null {
+    return prev.session !== undefined && prev.session !== this.props.session
+      ? { session: prev.session, position: this.props.read() }
+      : null;
+  }
+  override componentDidUpdate(_prev: unknown, _state: unknown, left: Left | null) {
+    if (left !== null) this.props.keep(left);
+  }
+  override render() {
+    return null;
+  }
+}
+
 export function Chat(props: {
   state: AgentViewState;
   activeSession: SessionSummary | null;
@@ -260,6 +289,8 @@ export function Chat(props: {
   const hidden = Math.max(0, derived.items.length - mounted);
   const hiddenRef = useRef(hidden);
   hiddenRef.current = hidden;
+  const itemsRef = useRef(derived.items);
+  itemsRef.current = derived.items;
   /** Scroll-follow contract:
    * auto-follow only while pinned to the bottom — scrollback is never
    * yanked. Unpin is intent-based (upward wheel, touch drag): a position
@@ -291,34 +322,55 @@ export function Chat(props: {
     }
   }, []);
 
-  // Going to a prompt: the window first grows to hold it, then the view
-  // lands on it once it is mounted — unpinned, since the user is reading
-  // back — and the bubble flashes once so the eye finds it.
-  const [landing, setLanding] = useState<string | null>(null);
-  const goTo = useCallback(
-    (id: string) => {
-      const index = derived.items.findIndex((item) => item.kind === "single" && item.block.id === id);
-      if (index < 0) return;
-      setMounted((c) => Math.max(c, derived.items.length - index));
-      setLanding(id);
-    },
-    [derived.items],
-  );
+  // Landing on an item — a prompt gone to, or the place a session was left
+  // reading: the window first grows to hold it, then the view lands on it
+  // once it is mounted, unpinned, since the user is reading back. A prompt
+  // gone to flashes once so the eye finds it.
+  const [landing, setLanding] = useState<(ReadingPosition & { flash: boolean }) | null>(null);
+  const land = useCallback((to: ReadingPosition & { flash: boolean }) => {
+    const size = windowHolding(itemsRef.current.map(itemId), to.item);
+    if (size === null) return;
+    setMounted((c) => Math.max(c, size));
+    setLanding(to);
+  }, []);
+  const goTo = useCallback((id: string) => land({ item: id, offset: 0, flash: true }), [land]);
+  /** The row a landing put at the top, held there for as long as the view
+   * stays where the landing left it: in the frames after a jump, rows
+   * render in place of their placeholders and move what follows them, and
+   * the browser's scroll anchoring doesn't hold through them yet. Any other
+   * move of the view — the user's, or the anchoring's once it holds — lets
+   * the row go. */
+  const held = useRef<{ row: Element; offset: number; at: number } | null>(null);
+  const hold = useCallback(() => {
+    const el = chatRef.current;
+    const h = held.current;
+    if (el === null || h === null) return;
+    if (el.scrollTop !== h.at || !h.row.isConnected) {
+      held.current = null;
+      return;
+    }
+    el.scrollTop += h.row.getBoundingClientRect().top - el.getBoundingClientRect().top + h.offset;
+    h.at = el.scrollTop;
+  }, []);
   useLayoutEffect(() => {
     if (landing === null) return;
-    // One shot: the window grew in the same render, so a prompt that isn't
+    // One shot: the window grew in the same render, so an item that isn't
     // mounted now never will be — a landing left pending would yank the
     // view at some later, unasked moment.
     setLanding(null);
-    const el = chatRef.current?.querySelector(`[data-prompt="${CSS.escape(landing)}"]`);
-    if (el === null || el === undefined) return;
+    const el = chatRef.current;
+    const row = el?.querySelector(`.chat-body > [data-item="${CSS.escape(landing.item)}"]`);
+    if (el === null || el === undefined || row === null || row === undefined) return;
     setPin(false);
-    el.scrollIntoView({ block: "start" });
-    el.querySelector(".msg-user")?.animate(
-      [{ boxShadow: "0 0 0 2px var(--pb-accent)" }, { boxShadow: "0 0 0 2px transparent" }],
-      { duration: 900, easing: "ease-out" },
-    );
-  }, [landing, mounted, setPin]);
+    held.current = { row, offset: landing.offset, at: el.scrollTop };
+    hold();
+    if (landing.flash) {
+      row.querySelector(".msg-user")?.animate(
+        [{ boxShadow: "0 0 0 2px var(--pb-accent)" }, { boxShadow: "0 0 0 2px transparent" }],
+        { duration: 900, easing: "ease-out" },
+      );
+    }
+  }, [landing, mounted, setPin, hold]);
   const seenGoTo = useRef(props.goTo?.seq);
   useEffect(() => {
     if (props.goTo === null || props.goTo.seq === seenGoTo.current) return;
@@ -327,14 +379,35 @@ export function Chat(props: {
   }, [props.goTo, goTo]);
   const promptNav = useMemo(() => ({ order: derived.totals.prompts.map((p) => p.id), goTo }), [derived.totals.prompts, goTo]);
 
-  // Session switch: fresh window, pinned, jump to the tail.
+  // Where each session was left reading, by this view alone — render state:
+  // a reload starts every session at its end. A session left following its
+  // end has no entry.
+  const positions = useRef(new Map<PatchbaySessionId, ReadingPosition>());
+  const readPosition = useCallback((): ReadingPosition | null => {
+    const el = chatRef.current;
+    if (el === null) return null;
+    const rows = [...el.querySelectorAll<HTMLElement>(".chat-body > [data-item]")].map((row) => {
+      const box = row.getBoundingClientRect();
+      return { item: row.dataset.item!, top: box.top, bottom: box.bottom };
+    });
+    return readingPosition(pinned.current, rows, el.getBoundingClientRect().top);
+  }, []);
+  const keepPosition = useCallback(({ session, position }: Left) => {
+    if (position === null) positions.current.delete(session);
+    else positions.current.set(session, position);
+  }, []);
+
+  // Session switch: fresh window, pinned, at the tail — then back to the
+  // place the session was left reading, while its transcript still has it.
   useLayoutEffect(() => {
     setMounted(INITIAL_WINDOW);
     setLanding(null);
     setPin(true);
     lastScrollTop.current = 0;
     stick();
-  }, [activePatchbaySessionId, setPin, stick]);
+    const left = activePatchbaySessionId === undefined ? undefined : positions.current.get(activePatchbaySessionId);
+    if (left !== undefined) land({ ...left, flash: false });
+  }, [activePatchbaySessionId, setPin, stick, land]);
 
   // Growing the window prepends rows above what the user is reading, and
   // the browser's scroll anchoring keeps that in place — a second
@@ -359,18 +432,20 @@ export function Chat(props: {
   // strands the view a few lines short of the tail (seen on session/load
   // replay). The content's real size is the truth: while pinned, any growth
   // of the body — or resize of the scroller itself (composer drag) —
-  // re-sticks the tail. Never while unpinned: scrollback is never yanked.
+  // re-sticks the tail; while a landed row is held, it re-lands the row.
+  // Never otherwise: scrollback is never yanked.
   const [body, setBody] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = chatRef.current;
     if (el === null || body === null) return;
     const ro = new ResizeObserver(() => {
       if (pinned.current) stick();
+      else hold();
     });
     ro.observe(body);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [body, stick]);
+  }, [body, stick, hold]);
 
   // The top sentinel extends the window before its edge is ever seen:
   // rootMargin 75% of the viewport ≥ v·t with ~2× headroom (the safety
@@ -390,6 +465,16 @@ export function Chat(props: {
     return () => io.disconnect();
   }, [sentinel, grow]);
 
+  // Every page the pane shows carries the leave reader in the same place,
+  // so it lives through the state pages and sees every session the pane
+  // leaves.
+  const pane = (page: ReactNode) => (
+    <>
+      <OnLeave session={activePatchbaySessionId} read={readPosition} keep={keepPosition} />
+      {page}
+    </>
+  );
+
   // The in-pane connect state: a chat being started takes over the
   // pane — what its agent is busy with, resolving into the session, or the
   // failure with its specific reason and a Retry, never a bounce to the
@@ -400,9 +485,9 @@ export function Chat(props: {
     const agent = agents.find((a) => a.id === connect.patchbayAgentId);
     const name = agent?.name ?? connect.patchbayAgentId;
     if (connect.reason === undefined) {
-      return <StatePage icon="loading" spin tag={chatPaneProgress(connect, agent)} />;
+      return pane(<StatePage icon="loading" spin tag={chatPaneProgress(connect, agent)} />);
     }
-    return (
+    return pane(
       <StatePage
         icon="warning"
         tag={
@@ -431,7 +516,7 @@ export function Chat(props: {
         <Button variant="ghost" size="sm" onClick={() => send({ kind: "dismissChatConnect" })}>
           Dismiss
         </Button>
-      </StatePage>
+      </StatePage>,
     );
   }
 
@@ -439,11 +524,11 @@ export function Chat(props: {
   // session is on its way back — hold a loading page rather than flashing
   // the empty state. `?? false` guards snapshots minted before the field.
   if (active === null && (props.state.restoring ?? false)) {
-    return <StatePage icon="loading" spin tag="Restoring last session…" />;
+    return pane(<StatePage icon="loading" spin tag="Restoring last session…" />);
   }
 
   if (active === null) {
-    return (
+    return pane(
       <StatePage
         icon="comment-discussion"
         tag={
@@ -461,7 +546,7 @@ export function Chat(props: {
             </>
           )}
         </Button>
-      </StatePage>
+      </StatePage>,
     );
   }
 
@@ -472,12 +557,12 @@ export function Chat(props: {
   // loading page. Only the involuntary reopen after a connection death
   // keeps its transcript standing through the replay's wholesale swap.
   if (attaching(active) && items.length === 0) {
-    return <StatePage icon="loading" spin tag="Loading session history…" />;
+    return pane(<StatePage icon="loading" spin tag="Loading session history…" />);
   }
   const visible = hidden > 0 ? items.slice(hidden) : items;
   const activeTurnStartedAt = props.state.activeTurn[active.id];
 
-  return (
+  return pane(
     <TerminalBlocks.Provider value={terminalBlocks}>
     <ToolDisplayPrefs.Provider value={props.state.preferences}>
     <PromptNav.Provider value={promptNav}>
@@ -506,32 +591,34 @@ export function Chat(props: {
           <Icon name="loading" spin /> loading earlier messages…
         </div>
       )}
-      {visible.map((item) =>
-        item.kind === "toolRun" ? (
-          <MemoToolRun key={item.id} calls={item.calls} patchbaySessionId={active.id} roots={props.state.workspaceRoots} />
-        ) : item.block.kind === "turnEnd" ? (
-          <TurnLine
-            key={item.block.id}
-            live={false}
-            startedAt={item.block.startedAt}
-            endedAt={item.block.endedAt}
-            stopReason={item.block.stopReason}
-            usage={item.block.usage}
-            error={item.block.error}
-            rollup={rollups.get(item.block.id)!}
-          />
-        ) : (
-          <MemoBlock
-            key={item.block.id}
-            block={item.block}
-            live={item.block.id === liveBlockId}
-            openThinking={props.state.preferences.openThinking}
-            patchbaySessionId={active.id}
-            agentName={agentName}
-            roots={props.state.workspaceRoots}
-          />
-        ),
-      )}
+      {/* One row per item, named by it: what a reading position records
+          and a landing finds. */}
+      {visible.map((item) => (
+        <div key={itemId(item)} className="chat-row" data-item={itemId(item)}>
+          {item.kind === "toolRun" ? (
+            <MemoToolRun calls={item.calls} patchbaySessionId={active.id} roots={props.state.workspaceRoots} />
+          ) : item.block.kind === "turnEnd" ? (
+            <TurnLine
+              live={false}
+              startedAt={item.block.startedAt}
+              endedAt={item.block.endedAt}
+              stopReason={item.block.stopReason}
+              usage={item.block.usage}
+              error={item.block.error}
+              rollup={rollups.get(item.block.id)!}
+            />
+          ) : (
+            <MemoBlock
+              block={item.block}
+              live={item.block.id === liveBlockId}
+              openThinking={props.state.preferences.openThinking}
+              patchbaySessionId={active.id}
+              agentName={agentName}
+              roots={props.state.workspaceRoots}
+            />
+          )}
+        </div>
+      ))}
       {activeTurnStartedAt !== undefined && (
         <TurnLine
           live
@@ -568,6 +655,6 @@ export function Chat(props: {
     </div>
     </PromptNav.Provider>
     </ToolDisplayPrefs.Provider>
-    </TerminalBlocks.Provider>
+    </TerminalBlocks.Provider>,
   );
 }

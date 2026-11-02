@@ -96,7 +96,10 @@ deliverable.
   from the agent's history where the agent can delete (asked first), or close
   it where the agent keeps no session list. An agent that lists its sessions
   but can't delete them offers neither — patchbay hides nothing the agent
-  keeps. Switching never closes the session being left. An idle session releases its agent-side resources on its own (row
+  keeps. Switching never closes the session being left, and coming back
+  finds it where it was left: scrolled back, the same message at the top
+  and the way to the latest showing; at its end, at its end, still
+  following. Each view remembers for itself until it reloads. An idle session releases its agent-side resources on its own (row
   kept, reopened on the next click) only when nothing can be lost: never a new
   session, never mid-turn, never one with a result not yet seen or words still
   held, and only where the agent can bring it back with full replay — patchbay

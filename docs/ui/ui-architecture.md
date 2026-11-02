@@ -486,13 +486,29 @@ sees the window's top edge.** With `H` = viewport height:
   prefetch. Split the promise: *smooth for scrolling, chunked fill for jumps* —
   rAF-batched mounts behind a slim "loading earlier…" shim, each chunk under 100 ms.
 - **Live appends** are end-anchored and bypass the window entirely.
-- The window index (`windowStart`) is **ephemeral webview state** in chat.tsx —
+- The window's size (`mounted`) is **ephemeral webview state** in chat.tsx —
   exactly what the render-only rule assigns to the UI. The full transcript still
   rides the snapshot from the orchestrator; only *mounting* is windowed. No
   protocol change, no new actions.
 - **Going to a prompt** (the prompts chip, a prompt's ↑/↓) is a jump to a known
   item: the window grows to hold it in one render, then the view lands on it —
   no chunked fill, since the target, not the top, is the destination.
+- **Coming back to a session** is a landing too. As the chat leaves a session it
+  records, once, where the user was: nothing when pinned — the session comes
+  back at its end, following — otherwise the item at the viewport's top edge and
+  the offset into it. An item, not pixels: pixels drift with the width and with
+  late rendering (diagrams, formulas). Coming back lands on that item the way
+  going to a prompt does, unpinned, so jump-to-latest shows as it was left; an
+  item the transcript no longer has means the end, pinned. The record is taken
+  in `getSnapshotBeforeUpdate`, the one point before the next session's rows
+  replace the DOM. One map per view, in chat.tsx's render state — the sidebar
+  and each detached panel keep their own, a reload starts every session at its
+  end, and nothing reaches the orchestrator.
+- **A landing holds its row** while the view stays where the landing put it: in
+  the frames after a jump, rows render out of their placeholders and move it,
+  and native anchoring doesn't hold through them yet. The ResizeObserver that
+  re-sticks a pinned tail re-lands a held row; any other move of the view lets
+  it go.
 - **Self-scoping**: when the window is larger than the transcript it renders
   everything and the mechanism is a no-op — it only engages for sessions long
   enough to hurt.
@@ -504,9 +520,9 @@ Blocks, once mounted, stay mounted for the webview's lifetime. Three reasons:
 1. `content-visibility: auto` *is* un-rendering, done by the compositor per frame —
    offscreen blocks cost zero layout/paint; what remains is text DOM, a few MB per
    thousand blocks.
-2. The platform already un-mounts everything at a coarser grain: these webviews are
-   disposed whenever hidden, so every re-show is a fresh mount where the initial
-   window applies. In-session unmounting would duplicate that while taking on the
+2. The platform already un-mounts everything at a coarser grain: every page load
+   (opening the view, Hide view and reload, a window reload) is a fresh mount where
+   the initial window applies. In-session unmounting would duplicate that while taking on the
    genuinely hairy part of list virtualization (bidirectional edge anchoring).
 3. Unmounting below the viewport would make jump-to-bottom — the *common* move in a
    live agent session — the janky path, to save a cost nobody has demonstrated.
@@ -520,9 +536,9 @@ a complexity sink; containment gets the paint win for zero deps.)
 Force-scrolling to the bottom on every block change is wrong during live turns — it
 makes scrollback physically impossible while streaming. The contract: track whether
 the user is **pinned** to the bottom (within a small threshold, from the scroll
-handler); auto-follow only while pinned; on session switch or transcript seed, jump
-instantly to the bottom once. Scrolling up detaches; returning to the bottom
-re-pins.
+handler); auto-follow only while pinned; on transcript seed, jump instantly to the
+bottom once, and on session switch too, unless the session was left reading back
+(above). Scrolling up detaches; returning to the bottom re-pins.
 
 The two directions use different signals — the asymmetry is the design. **Unpin on
 intent** (upward wheel, touch drag), not position: under a fast stream the first

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A session comes back where you left it.** Switching away and back
+  used to land a session at its end, wherever you were reading. Now one
+  left scrolled back comes back with the same message at the top and the
+  jump-to-latest arrow showing; one left at its end comes back at its
+  end, still following. Each view remembers for itself — the sidebar and
+  every detached panel — until it reloads. (#132)
 - **Reading back no longer jumps forward.** In a long session, each time
   earlier messages loaded above you, the view was thrown forward by
   dozens of messages. It now keeps your place and goes on moving up.

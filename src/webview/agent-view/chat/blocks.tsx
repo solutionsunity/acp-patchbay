@@ -172,7 +172,7 @@ export function UserMessage({ id, parts }: { id: string; parts: readonly UserPar
     </button>
   );
   return (
-    <div className="group flex max-w-[85%] items-start gap-1.5 self-end" data-prompt={id}>
+    <div className="group flex max-w-[85%] items-start gap-1.5 self-end">
       <span className="mt-1.5 flex shrink-0 items-center">
         {step(prev, "arrow-up", "Previous prompt")}
         {step(next, "arrow-down", "Next prompt")}

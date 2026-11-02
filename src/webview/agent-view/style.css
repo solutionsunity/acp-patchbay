@@ -506,6 +506,19 @@ body {
   contain-intrinsic-size: auto 32px;
 }
 
+/* One row per transcript item (chat.tsx) — the box a reading position
+ * names. A column flex like the body, so what the row holds aligns as it
+ * would in the body itself (a prompt's bubble at the end); an item that
+ * renders nothing takes no row, and no gap. */
+.chat-row {
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-row:empty {
+  display: none;
+}
+
 /* Jump-to-latest control (chat.tsx): sticks to the scrollport's bottom
  * edge while the user is scrolled up. Zero height keeps it out of the
  * scroll math — it must never grow scrollHeight, or showing it would move

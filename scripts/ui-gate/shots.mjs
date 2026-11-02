@@ -527,7 +527,7 @@ for (const theme of Object.keys(THEMES)) {
   const landedAtTop = (id) =>
     p.waitForFunction(
       (prompt) => {
-        const top = document.querySelector(`[data-prompt="${prompt}"]`)?.getBoundingClientRect().top;
+        const top = document.querySelector(`[data-item="${prompt}"]`)?.getBoundingClientRect().top;
         return top !== undefined && Math.abs(top - document.querySelector(".chat").getBoundingClientRect().top) <= 2;
       },
       id,
@@ -537,7 +537,7 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] going to a prompt closes the panel`, await p.waitForSelector(".prompts-panel", { state: "detached", timeout: 3000 }).then(() => true, () => false));
   check(`[${theme}] the words go to the prompt — it lands at the top of the chat`, await landedAtTop("u1"));
   check(`[${theme}] reading back unpins the view`, (await p.$(".chat-jump")) !== null);
-  const first = p.locator('[data-prompt="u1"]');
+  const first = p.locator('[data-item="u1"] > *');
   await first.hover();
   check(
     `[${theme}] the first prompt has no previous, its place kept`,
@@ -551,11 +551,11 @@ for (const theme of Object.keys(THEMES)) {
     `[${theme}] Next brings the next prompt into view`,
     await p.waitForFunction(() => {
       const chat = document.querySelector(".chat").getBoundingClientRect();
-      const el = document.querySelector('[data-prompt="u2"]').getBoundingClientRect();
+      const el = document.querySelector('[data-item="u2"]').getBoundingClientRect();
       return el.top >= chat.top - 2 && el.bottom <= chat.bottom + 2;
     }, null, { timeout: 3000 }).then(() => true, () => false),
   );
-  const last = p.locator('[data-prompt="u2"]');
+  const last = p.locator('[data-item="u2"] > *');
   await last.hover();
   check(`[${theme}] the last prompt has no next`, await last.locator('button[aria-label="Next prompt"]').evaluate((el) => getComputedStyle(el).visibility === "hidden"));
   await last.locator('button[aria-label="Previous prompt"]').click();
@@ -1333,6 +1333,85 @@ for (const theme of Object.keys(THEMES)) {
     `reading back, every load of earlier messages keeps the view moving up (${JSON.stringify(loads)})`,
     loads.length >= 2 && loads.every(([was, now]) => now <= was),
   );
+  await p.close();
+}
+
+// ── a session keeps the user's place (#132): left scrolled back, it comes
+// back with the same row at the top and the way to the latest showing —
+// even a row the chat's mounted window no longer holds; left following its
+// end, it comes back at its end, still following. Theme-independent: run
+// once. ──
+{
+  const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
+  const state = agentViewState({ live: false });
+  await renderView(p, "agent-view", { ...state, activePatchbaySessionId: "s2", transcripts: { ...state.transcripts, s2: longTranscript } });
+  await p.waitForSelector(".chat .msg-agent");
+  // the row at the chat's top edge, and how far the edge is into it
+  const topRow = () =>
+    p.evaluate(() => {
+      const top = document.querySelector(".chat").getBoundingClientRect().top;
+      const el = [...document.querySelectorAll(".chat-body > *")].find((r) => r.getBoundingClientRect().bottom > top);
+      return el === undefined ? null : { text: el.textContent.trim().split(".")[0], offset: Math.round(top - el.getBoundingClientRect().top) };
+    });
+  const steady = async () => {
+    await settled(p);
+    for (let i = 0, last = null; i < 20; i++) {
+      await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const now = JSON.stringify(await topRow());
+      if (now === last) return JSON.parse(now);
+      last = now;
+    }
+    return topRow();
+  };
+  const switchTo = (s) => p.evaluate((id) => window.__patch([{ kind: "sessionActivated", patchbaySessionId: id }]), s);
+  const atEnd = () =>
+    p.waitForFunction(() => {
+      const chat = document.querySelector(".chat");
+      return chat !== null && chat.scrollHeight - chat.scrollTop - chat.clientHeight <= 2;
+    }, null, { timeout: 3000 }).then(() => true, () => false);
+
+  // read back to row 20 — far past the mounted window — and leave it a few
+  // pixels into the top edge
+  await p.waitForFunction(
+    () => {
+      document.querySelector(".chat").scrollTop = 0;
+      return [...document.querySelectorAll(".chat-body > *")].some((r) => r.textContent.trim().startsWith("Reading line 20."));
+    },
+    null,
+    { timeout: 5000, polling: 100 },
+  ).catch(() => {});
+  await p.evaluate(() => {
+    const chat = document.querySelector(".chat");
+    const el = [...document.querySelectorAll(".chat-body > *")].find((r) => r.textContent.trim().startsWith("Reading line 20."));
+    chat.scrollTop += el.getBoundingClientRect().top - chat.getBoundingClientRect().top + 9;
+  });
+  const left = await steady();
+  check(`reading back leaves row 20 at the top (${JSON.stringify(left)})`, left?.text === "Reading line 20" && (await p.$(".chat-jump")) !== null);
+
+  await switchTo("s1");
+  await p.waitForSelector('.chat [data-item="u1"]', { timeout: 3000 }).catch(() => {});
+  await switchTo("s2");
+  await p.waitForSelector(".chat .msg-agent", { timeout: 3000 }).catch(() => {});
+  const back = await steady();
+  check(
+    `back in the session, the same row is at the top (${JSON.stringify(back)} for ${JSON.stringify(left)})`,
+    back?.text === left?.text && Math.abs(back.offset - left.offset) <= 2,
+  );
+  check("…and the way to the latest still shows", (await p.$(".chat-jump")) !== null);
+
+  // following the end: the session comes back at its end, still following
+  await p.click(".chat-jump button");
+  check("Jump to latest reaches the end", await atEnd());
+  await switchTo("s1");
+  await p.waitForSelector('.chat [data-item="u1"]', { timeout: 3000 }).catch(() => {});
+  await switchTo("s2");
+  await p.waitForSelector(".chat .msg-agent", { timeout: 3000 }).catch(() => {});
+  check("a session left at its end comes back at its end", (await atEnd()) && (await p.$(".chat-jump")) === null);
+  await p.evaluate(() =>
+    window.__patch([{ kind: "agentTextDelta", patchbaySessionId: "s2", blockId: "r-new", text: "Reading line new.\n\nOne more.\n\nAnd more." }]),
+  );
+  await p.waitForFunction(() => document.querySelector(".chat-body").textContent.includes("Reading line new."), null, { timeout: 3000 }).catch(() => {});
+  check("…still following what arrives", await atEnd());
   await p.close();
 }
 
