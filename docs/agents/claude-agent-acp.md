@@ -171,8 +171,8 @@ shows them **as sent** — no vendor filter in core:
   paste any part of it, …)"; the background run then sends no reply — its
   answer is only in the child's own transcript.
 
-- **Status:** report drafted, not yet posted upstream.
+- **Status:** reported upstream 2026-11-02 — agentclientprotocol/claude-agent-acp#1519.
 
 ## Communication log
 
-- *(empty)*
+- 2026-11-02 — #1519 filed: the RFD sub-agent replies carry `<tools-used-before-summary>` and async-launch metadata.
