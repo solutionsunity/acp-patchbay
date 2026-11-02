@@ -1,0 +1,257 @@
+{
+  "transcript": [
+    {
+      "kind": "user",
+      "id": "<id-1>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "go"
+        }
+      ]
+    },
+    {
+      "kind": "sessionMessage",
+      "id": "message:toolu-1",
+      "direction": "to",
+      "peer": "<subagent-2>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Create the file /w/c.txt containing the single word hello, using the Write tool. Do not create any other files. Once written, reply with one line confirming the path and content."
+        }
+      ]
+    },
+    {
+      "kind": "permission",
+      "id": "<id-3>",
+      "subagent": {
+        "id": "<subagent-2>",
+        "title": "Create c.txt with hello"
+      },
+      "title": "Write c.txt",
+      "detail": "",
+      "facts": [],
+      "options": [
+        {
+          "optionId": "allow_once",
+          "label": "Allow once",
+          "kind": "allow_once"
+        },
+        {
+          "optionId": "allow_always",
+          "label": "Always allow",
+          "kind": "allow_always"
+        },
+        {
+          "optionId": "reject_once",
+          "label": "Reject",
+          "kind": "reject_once"
+        }
+      ],
+      "call": {
+        "toolCallId": "toolu-2",
+        "toolKind": "edit",
+        "locations": [
+          {
+            "path": "/w/c.txt",
+            "line": null
+          }
+        ],
+        "content": [],
+        "diffs": {
+          "/w/c.txt": {
+            "additions": 1,
+            "deletions": 0,
+            "preview": [
+              {
+                "kind": "add",
+                "text": "hello"
+              }
+            ]
+          }
+        },
+        "input": "{\n  \"file_path\": \"/w/c.txt\",\n  \"content\": \"hello\"\n}"
+      },
+      "resolution": {
+        "label": "Allow once",
+        "auto": false
+      }
+    },
+    {
+      "kind": "sessionMessage",
+      "id": "message:toolu-1:reply",
+      "direction": "from",
+      "peer": "<subagent-2>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "<tools-used-before-summary>Write</tools-used-before-summary>\n"
+        },
+        {
+          "kind": "text",
+          "text": "Created `/w/c.txt` containing `hello`."
+        }
+      ]
+    },
+    {
+      "kind": "toolCall",
+      "id": "<id-4>",
+      "title": "Read c.txt",
+      "name": "Read",
+      "status": "completed",
+      "toolKind": "read",
+      "input": "{\n  \"file_path\": \"/w/c.txt\"\n}",
+      "output": "1\thello",
+      "locations": [
+        {
+          "path": "/w/c.txt",
+          "line": 1
+        }
+      ],
+      "content": [
+        {
+          "kind": "text",
+          "text": "```\n1\thello\n```"
+        }
+      ],
+      "diffs": {},
+      "denied": false,
+      "interrupted": false
+    },
+    {
+      "kind": "text",
+      "id": "<id-5>",
+      "text": "Created `/w/c.txt` containing `hello` via a general-purpose sub-agent, and I confirmed the contents directly."
+    },
+    {
+      "kind": "turnEnd",
+      "id": "<id-6>",
+      "startedAt": "<time>",
+      "endedAt": "<time>",
+      "stopReason": "end_turn",
+      "usage": null
+    }
+  ],
+  "subagents": [
+    {
+      "id": "<subagent-2>",
+      "parentId": "<session>",
+      "title": "Create c.txt with hello",
+      "description": "general-purpose",
+      "conversationTitle": null,
+      "state": {
+        "state": "idle",
+        "stopReason": "end_turn"
+      },
+      "lastKnown": {
+        "state": "idle",
+        "stopReason": "end_turn"
+      },
+      "cancel": true,
+      "cwd": null,
+      "additionalDirectories": null,
+      "config": [
+        {
+          "id": "mode",
+          "name": "Mode",
+          "description": "Session permission mode",
+          "category": "mode",
+          "type": "select",
+          "currentValue": "default",
+          "options": [
+            {
+              "value": "default",
+              "name": "Manual",
+              "description": "Always ask before making changes"
+            }
+          ]
+        },
+        {
+          "id": "model",
+          "name": "Model",
+          "category": "model",
+          "type": "select",
+          "currentValue": "haiku",
+          "options": [
+            {
+              "value": "haiku",
+              "name": "Haiku 5.5"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "description": "Current reasoning effort",
+          "category": "thought_level",
+          "type": "select",
+          "currentValue": "medium",
+          "options": [
+            {
+              "value": "medium",
+              "name": "Medium"
+            }
+          ]
+        },
+        {
+          "id": "agent",
+          "name": "Agent",
+          "description": "Subagent type",
+          "type": "select",
+          "currentValue": "general-purpose",
+          "options": [
+            {
+              "value": "general-purpose",
+              "name": "general-purpose"
+            }
+          ]
+        }
+      ],
+      "transcript": [
+        {
+          "kind": "sessionMessage",
+          "id": "message:toolu-1",
+          "direction": "from",
+          "peer": "<session>",
+          "parts": [
+            {
+              "kind": "text",
+              "text": "Create the file /w/c.txt containing the single word hello, using the Write tool. Do not create any other files. Once written, reply with one line confirming the path and content."
+            }
+          ]
+        },
+        {
+          "kind": "toolCall",
+          "id": "<id-7>",
+          "title": "Write c.txt",
+          "name": "Write",
+          "status": "completed",
+          "toolKind": "edit",
+          "input": "{\n  \"file_path\": \"/w/c.txt\",\n  \"content\": \"hello\"\n}",
+          "output": "File created successfully at: /w/c.txt (file state is current in your context — no need to Read it back)",
+          "locations": [
+            {
+              "path": "/w/c.txt",
+              "line": null
+            }
+          ],
+          "content": [],
+          "diffs": {
+            "/w/c.txt": {
+              "additions": 1,
+              "deletions": 0
+            }
+          },
+          "denied": false,
+          "interrupted": false
+        },
+        {
+          "kind": "text",
+          "id": "<id-8>",
+          "text": "Created `/w/c.txt` containing `hello`."
+        }
+      ]
+    }
+  ]
+}

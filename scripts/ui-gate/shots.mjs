@@ -2006,6 +2006,13 @@ for (const theme of Object.keys(THEMES)) {
     { id: "spare", name: "spare", workspaces: [] },
   ];
   av.sessionMcp = { s1: { given: ["patchbay:editor", "files"], added: ["deploy"] } };
+  // sub-agents with long names, one in a worktree of a long path, one with
+  // Cancel — the roster's every control inside the panel
+  av.subagents = {
+    s1: [
+      { id: "s1/a", parentId: "s1", title: `Explore ${LONG}`, description: "general-purpose", conversationTitle: null, state: { state: "running" }, lastKnown: { state: "running" }, cancel: true, cwd: longPath, additionalDirectories: [], config: [] },
+    ],
+  };
   av.sessionKnobs = {
     s1: [
       {
@@ -2046,6 +2053,8 @@ for (const theme of Object.keys(THEMES)) {
   await sweep(p, "agent view");
   await stripFits(p, "agent view");
   await p.locator(".input-foot").screenshot({ path: `${OUT}/narrow-composer-stats.png` });
+  await opened(p, ".readout-strip .chip.subagents", "popover-content", "sub-agents roster");
+  await p.keyboard.press("Escape");
   await opened(p, '.ctx-chip:has-text("root")', "popover-content", "roots popover");
   await opened(p, '[data-slot="popover-content"] button:has-text("Save")', "dropdown-menu-content", "a root's Save menu");
   await p.keyboard.press("Escape");
@@ -2490,6 +2499,90 @@ for (const theme of Object.keys(THEMES)) {
     await p.screenshot({ path: `${OUT}/settings-commands-tester-${width}.png`, fullPage: true });
     await p.close();
   }
+}
+
+// ── sub-agents (#60): a chip in the read-out strip in the session marks'
+// vocabulary, its own last-known look for work no longer confirmed; a
+// Radix roster in tree order, Cancel only where granted; a row opens the
+// sub-agent's transcript inside the session's chat, read-only, with a way
+// back; To/From messages link their other side; a sub-agent's ask names it.
+// Theme-independent: run once. ──
+{
+  const theme0 = Object.keys(THEMES)[0];
+  const sub = (id, over) => ({
+    id, parentId: "s1", title: null, description: "general-purpose", conversationTitle: null, state: null, lastKnown: null,
+    cancel: false, cwd: null, additionalDirectories: null, config: [], ...over,
+  });
+  const av = agentViewState({ live: false });
+  av.subagents = {
+    s1: [
+      sub("s1/a", { title: "Count lines in a.txt", state: { state: "running" }, lastKnown: { state: "running" }, cancel: true, config: [{ id: "model", name: "Model", type: "select", currentValue: "haiku", options: [{ value: "haiku", name: "Haiku" }] }] }),
+      sub("s1/b", { title: "Create c.txt", state: { state: "requires_action" }, lastKnown: { state: "requires_action" }, cwd: "/ws/.claude/worktrees/agent-b" }),
+      sub("s1/a1", { parentId: "s1/a", title: "Nested read", state: { state: "unknown" }, lastKnown: { state: "running" } }),
+      sub("s1/d", { title: "Done one", state: { state: "idle", stopReason: "end_turn" }, lastKnown: { state: "idle", stopReason: "end_turn" }, cancel: true }),
+    ],
+  };
+  av.transcripts = {
+    ...av.transcripts,
+    s1: [
+      ...av.transcripts.s1,
+      { kind: "sessionMessage", id: "message:m1", direction: "to", peer: "s1/a", parts: [{ kind: "text", text: "Count the lines in /ws/a.txt." }] },
+      { kind: "sessionMessage", id: "message:m1r", direction: "from", peer: "s1/a", parts: [{ kind: "text", text: "a.txt has **4** lines." }] },
+      {
+        kind: "permission", id: "perm-sub", subagent: { id: "s1/b", title: "Create c.txt" }, title: "Write c.txt", detail: "", facts: [],
+        options: [{ optionId: "y", label: "Allow once", kind: "allow_once" }, { optionId: "n", label: "Reject", kind: "reject_once" }], resolution: null,
+      },
+    ],
+    "s1/a": [
+      { kind: "sessionMessage", id: "message:m1in", direction: "from", peer: "s1", parts: [{ kind: "text", text: "Count the lines in /ws/a.txt." }] },
+      { kind: "text", id: "text-sub-1", text: "Reading it now." },
+    ],
+  };
+  const p = await page(browser, theme0, { width: 420, height: 900 });
+  await renderView(p, "agent-view", av);
+  await p.waitForSelector(".readout-strip .chip.subagents");
+  const chip = await p.$eval(".readout-strip .chip.subagents", (el) => el.textContent.trim());
+  check(`[sub-agents] the chip counts them, at work and waiting ("${chip}")`, chip === "4 sub-agents · 1 running · 1 waiting on you");
+  check("[sub-agents] the chip carries the most urgent mark — waiting on you", (await p.$(".readout-strip .chip.subagents .bg-warn")) !== null);
+  const chips = await p.$$eval(".readout-strip .chip", (els) => els.map((el) => el.getBoundingClientRect().toJSON()));
+  const overlap = chips.some((a, i) => chips.slice(i + 1).some((b) => a.left < b.right - 1 && b.left < a.right - 1));
+  check(`[sub-agents] four chips share the strip, none over another (${chips.length})`, chips.length === 4 && !overlap);
+  await p.click(".readout-strip .chip.subagents");
+  check("[sub-agents] the roster opens from the strip, a Radix popover", await p.waitForSelector('[data-slot="popover-content"].subagents-panel', { timeout: 3000 }).then(() => true, () => false));
+  const names = await p.$$eval(".subagents-panel .subagent-row .name", (els) => els.map((el) => el.textContent));
+  check(`[sub-agents] the roster is in tree order (${names.join(", ")})`, JSON.stringify(names) === JSON.stringify(["Count lines in a.txt", "Nested read", "Create c.txt", "Done one"]));
+  const nested = p.locator(".subagents-panel .subagent-row", { hasText: "Nested read" });
+  check("[sub-agents] work no longer confirmed shows its last-known look, never live", (await nested.locator(".unknown-dot.running").count()) === 1 && (await nested.locator(".live-dot").count()) === 0);
+  check("[sub-agents] it says what was last known", (await nested.locator(".state", { hasText: "unknown — last running" }).count()) === 1);
+  check("[sub-agents] where its agent placed it apart, the row says where", (await p.locator(".subagents-panel .subagent-row", { hasText: "Create c.txt" }).locator(".where", { hasText: "worktrees/agent-b" }).count()) === 1);
+  check(
+    "[sub-agents] Cancel only where granted and there is work to cancel",
+    (await p.locator(".subagents-panel .subagent-row .cancel").count()) === 1 &&
+      (await p.locator(".subagents-panel .subagent-row", { hasText: "Count lines in a.txt" }).locator(".cancel").count()) === 1,
+  );
+  await settled(p); // the panel's entry animation (rise)
+  await p.screenshot({ path: `${OUT}/subagents-roster.png` });
+  await p.click('.subagents-panel .subagent-row:has-text("Count lines in a.txt") .cancel');
+  const cancelled = await p.evaluate(() => window.__actions.at(-1));
+  check("[sub-agents] Cancel asks the host for that sub-agent", JSON.stringify(cancelled) === JSON.stringify({ kind: "cancelSubagent", patchbaySessionId: "s1", subagentId: "s1/a" }));
+  await p.click('.subagents-panel .subagent-row:has-text("Count lines in a.txt") .open');
+  check("[sub-agents] a row opens its transcript inside the session's chat", await p.waitForSelector(".subagent-bar", { timeout: 3000 }).then(() => true, () => false));
+  check("[sub-agents] the roster closes as it opens one", (await p.$(".subagents-panel")) === null);
+  const bar = await p.$eval(".subagent-bar", (el) => el.textContent);
+  check(`[sub-agents] the bar names it, its state and settings, read-only ("${bar}")`, bar.includes("Count lines in a.txt") && bar.includes("running") && bar.includes("Model: Haiku") && bar.includes("read-only"));
+  check("[sub-agents] its own transcript shows — the task it was given, from the session", (await p.locator(".chat .session-message", { hasText: "From" }).locator(".session-link", { hasText: "find foo" }).count()) === 1 && (await p.locator(".chat .msg-agent", { hasText: "Reading it now." }).count()) === 1);
+  check("[sub-agents] none of the session's own blocks show inside it", (await p.locator(".chat .msg-user").count()) === 0);
+  await p.screenshot({ path: `${OUT}/subagents-transcript.png`, fullPage: true });
+  await p.click(".subagent-bar .back");
+  check("[sub-agents] the way back is the session's chat again", await p.waitForSelector(".subagent-bar", { state: "detached", timeout: 3000 }).then(() => true, () => false));
+  const to = p.locator(".chat .session-message", { hasText: "Count the lines" }).first();
+  check("[sub-agents] a message to a sub-agent reads To, its name a link", (await to.locator(".head", { hasText: "To" }).locator(".session-link", { hasText: "Count lines in a.txt" }).count()) === 1);
+  const reply = await p.locator(".chat .session-message", { hasText: "a.txt has" }).innerText();
+  check(`[sub-agents] its reply reads From, rendered as an agent's prose (${JSON.stringify(reply)})`, reply.includes("From") && reply.includes("a.txt has 4 lines.") && !reply.includes("**"));
+  check("[sub-agents] a sub-agent's ask names it above its card", (await p.locator(".chat .asked-by", { hasText: "Asked by sub-agent" }).locator(".session-link", { hasText: "Create c.txt" }).count()) === 1);
+  await to.locator(".session-link").click();
+  check("[sub-agents] a message's link opens the other side's transcript", await p.waitForSelector(".subagent-bar", { timeout: 3000 }).then(() => true, () => false));
+  await p.close();
 }
 
 await browser.close();

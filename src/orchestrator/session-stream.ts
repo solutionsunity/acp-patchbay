@@ -12,6 +12,7 @@
 import {
   compactionBlockId,
   isToolCallOpen,
+  sessionMessageBlockId,
   terminalBlockId,
   type AgentViewEvent,
   type DiffStat,
@@ -115,11 +116,23 @@ export interface StreamState {
    * see protocol.ts) so loaded history keeps its per-turn rollup lines.
    * Live turns never touch it: their boundary is the real turnEnded. */
   replayTurnDirty: boolean;
+  /** Each session message this transcript has seen, by the agent's id for
+   * it, with who sent it and who it went to as last said — an upsert says
+   * only what changed. */
+  messages: Map<string, { sender: string | null; recipient: string | null }>;
+}
+
+/** Who a transcript's session messages are between: the agent's id for
+ * this transcript's own session, and patchbay's for any session the agent
+ * names — null for one this window doesn't hold. */
+export interface Peers {
+  self: string;
+  idOf(sessionId: string): PatchbaySessionId | null;
 }
 
 /** What a session's updates carry for its transcript — every kind but the
- * session's own facts, its title and its knobs. */
-export type TranscriptFact = Exclude<SessionUpdateFact, { kind: "info" | "mode" | "configOptions" }>;
+ * session's own facts: its title, its knobs, its sub-agents. */
+export type TranscriptFact = Exclude<SessionUpdateFact, { kind: "info" | "mode" | "configOptions" | "subagent" }>;
 
 export class SessionStream {
   /** Agent-reported diff content per tool call (ToolCallContent "diff") —
@@ -130,6 +143,9 @@ export class SessionStream {
   private readonly toolDiffs = new Map<string, Map<string, Map<string, { oldText: string; newText: string }>>>();
   /** Sessions inside a replay window (openReplay … closeReplay). */
   private readonly replaying = new Set<string>();
+  /** Each sub-agent's transcript, with the session it hangs in: it shares
+   * that session's replay window and leaves with it. */
+  private readonly roots = new Map<string, PatchbaySessionId>();
 
   constructor(
     private readonly hooks: {
@@ -177,7 +193,7 @@ export class SessionStream {
    * canonical state — the closing resync delivers them wholesale; everywhere
    * else they patch the webview live. */
   emitter(patchbaySessionId: PatchbaySessionId): (...events: AgentViewEvent[]) => void {
-    return this.replaying.has(patchbaySessionId) && this.hooks.emitSilent !== undefined
+    return this.replaying.has(this.roots.get(patchbaySessionId) ?? patchbaySessionId) && this.hooks.emitSilent !== undefined
       ? this.hooks.emitSilent.bind(this.hooks)
       : this.hooks.emit.bind(this.hooks);
   }
@@ -204,9 +220,16 @@ export class SessionStream {
     });
   }
 
+  /** A sub-agent's transcript joins the session it hangs in: its events
+   * ride that session's replay window, and go when the session does. Its
+   * own turn structure is none — a sub-agent has no turns of patchbay's. */
+  adopt(subagent: PatchbaySessionId, root: PatchbaySessionId): void {
+    this.roots.set(subagent, root);
+  }
+
   /** One update into the session's transcript — live and replayed alike
    * (same notification shape). */
-  apply(patchbaySessionId: PatchbaySessionId, session: StreamState, update: TranscriptFact): void {
+  apply(patchbaySessionId: PatchbaySessionId, session: StreamState, update: TranscriptFact, peers: Peers): void {
     const emit = this.emitter(patchbaySessionId);
 
     // Replay boundary tracking: the replay wire carries no turn-resolution
@@ -269,6 +292,10 @@ export class SessionStream {
           description: update.description ?? null,
         });
         break;
+      case "sessionMessage":
+      case "sessionMessageChunk":
+        this.applySessionMessage(patchbaySessionId, session, update, peers, emit);
+        break;
       case "carried":
         // A kind with no surface of its own yet: shown as the agent sent it,
         // between prose runs like any other piece of the conversation.
@@ -282,6 +309,54 @@ export class SessionStream {
         });
         break;
     }
+  }
+
+  /** A session message, by the agent's id for it in this transcript: its
+   * first word fixes where it sits (the prose run it interrupts ends
+   * there); every later one patches it in place. Which way it went is read
+   * from who sent it and who it went to, as last said, against this
+   * transcript's own session; the other side, by patchbay's id — the other
+   * side the agent never named stays unnamed, and a message no side of
+   * which is named goes no way. */
+  private applySessionMessage(
+    patchbaySessionId: PatchbaySessionId,
+    session: StreamState,
+    update: Extract<TranscriptFact, { kind: "sessionMessage" | "sessionMessageChunk" }>,
+    peers: Peers,
+    emit: (...events: AgentViewEvent[]) => void,
+  ): void {
+    const blockId = sessionMessageBlockId(update.messageId);
+    const stash = this.imageStash(patchbaySessionId, "message");
+    let sides = session.messages.get(update.messageId);
+    if (sides === undefined) {
+      this.seal(patchbaySessionId, session);
+      session.messages.set(update.messageId, (sides = { sender: null, recipient: null }));
+    }
+    if (update.kind === "sessionMessageChunk") {
+      emit({ kind: "sessionMessageAppended", patchbaySessionId, blockId, part: contentPartOf(update.content, stash) });
+      return;
+    }
+    const { patch } = update;
+    if (patch.senderSessionId !== undefined) sides.sender = patch.senderSessionId;
+    if (patch.recipientSessionId !== undefined) sides.recipient = patch.recipientSessionId;
+    // The transcript is one of the two sides, so one side named is enough:
+    // named as the sender, another session sent it here; as the recipient,
+    // this one sent it there.
+    const direction =
+      sides.sender === peers.self || (sides.sender === null && sides.recipient !== null && sides.recipient !== peers.self)
+        ? "to"
+        : sides.sender !== null || sides.recipient === peers.self
+          ? "from"
+          : null;
+    const other = direction === "to" ? sides.recipient : direction === "from" ? sides.sender : null;
+    emit({
+      kind: "sessionMessageUpserted",
+      patchbaySessionId,
+      blockId,
+      direction,
+      peer: other === null ? null : peers.idOf(other),
+      ...(patch.content !== undefined ? { parts: (patch.content ?? []).map((c) => contentPartOf(c, stash)) } : {}),
+    });
   }
 
   /** A compaction, by the agent's id: its first word fixes where it sits
@@ -777,11 +852,17 @@ export class SessionStream {
    * stashToolDiffs re-stashes it. */
   forget(patchbaySessionId: PatchbaySessionId): void {
     this.toolDiffs.delete(patchbaySessionId);
+    for (const [subagent, root] of this.roots) {
+      if (root !== patchbaySessionId) continue;
+      this.toolDiffs.delete(subagent);
+      this.roots.delete(subagent);
+    }
   }
 
   /** "Disconnect & erase all data": every session's diff texts. */
   reset(): void {
     this.toolDiffs.clear();
+    this.roots.clear();
   }
 }
 

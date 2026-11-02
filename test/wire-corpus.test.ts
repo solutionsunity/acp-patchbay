@@ -187,9 +187,10 @@ const CORPUS: SessionUpdate[] = [
   // kinds behind client capabilities patchbay doesn't declare
   { sessionUpdate: "plan_update", plan: { type: "markdown", planId: "p-1", content: "# Plan" } },
   { sessionUpdate: "plan_removed", planId: "p-1" } as SessionUpdate,
+  // a sub-agent, and its reply streamed to the session
   { sessionUpdate: "subagent_update", sessionId: "child-1", title: "Explore", state: { state: "running" } },
-  { sessionUpdate: "session_message", messageId: "sm-1", senderSessionId: "child-1", content: [{ type: "text", text: "found it" }] },
-  { sessionUpdate: "session_message_chunk", messageId: "sm-1", content: { type: "text", text: "found it" } },
+  { sessionUpdate: "session_message", messageId: "sm-1", senderSessionId: "child-1", content: [{ type: "text", text: "found " }] },
+  { sessionUpdate: "session_message_chunk", messageId: "sm-1", content: { type: "text", text: "it" } },
   // the closing words
   { sessionUpdate: "agent_message_chunk", messageId: "m-3", content: { type: "text", text: "Done." } },
 ];
@@ -215,7 +216,8 @@ function rendered(state: AgentViewState, patchbaySessionId: PatchbaySessionId): 
     view,
     (key, value: unknown) => {
       if (typeof value !== "string") return value;
-      if (value === patchbaySessionId) return "<session>";
+      // a sub-agent's id is its session's, with the agent's own id for it
+      if (value === patchbaySessionId || value.startsWith(`${patchbaySessionId}/`)) return `<session>${value.slice(patchbaySessionId.length)}`;
       if (key === "file" || ((key === "id" || key === "blockId") && /^[a-z]+-\d+$/.test(value))) return label(key, value);
       if (/^\d{4}-\d\d-\d\dT/.test(value)) return "<time>";
       return value;

@@ -1,0 +1,910 @@
+{
+  "turn": [
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "title": "Parallel sub-agent sleep test",
+        "updatedAt": "2026-11-02T18:39:25.423Z"
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "usage_update",
+        "used": 24296,
+        "size": 1000000,
+        "_meta": {
+          "_claude/model": "claude-haiku-5-5"
+        }
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "Launching both sub-agents in parallel."
+        },
+        "messageId": "msg_011Cgeb8V66CbEPejZkiXNAd"
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "subagent_update",
+        "sessionId": "$c1",
+        "title": "Run LONG sleep command",
+        "description": "general-purpose",
+        "capabilities": {
+          "cancel": {}
+        },
+        "state": {
+          "state": "running"
+        }
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "session_message",
+        "messageId": "toolu-1",
+        "senderSessionId": "$P",
+        "recipientSessionId": "$c1",
+        "content": [
+          {
+            "type": "text",
+            "text": "Use the Bash tool to run exactly this shell command: `sleep 45 && echo LONG-done`. Do not run any other commands. When it finishes, reply with only the command's output (and whether it succeeded or failed)."
+          }
+        ],
+        "recipientMessageId": "toolu-1"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "sessionUpdate": "session_message",
+        "messageId": "toolu-1",
+        "senderSessionId": "$P",
+        "recipientSessionId": "$c1",
+        "content": [
+          {
+            "type": "text",
+            "text": "Use the Bash tool to run exactly this shell command: `sleep 45 && echo LONG-done`. Do not run any other commands. When it finishes, reply with only the command's output (and whether it succeeded or failed)."
+          }
+        ],
+        "senderMessageId": "toolu-1"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "sessionUpdate": "config_option_update",
+        "configOptions": [
+          {
+            "id": "agent",
+            "name": "Agent",
+            "description": "Subagent type",
+            "type": "select",
+            "currentValue": "general-purpose",
+            "options": [
+              {
+                "value": "general-purpose",
+                "name": "general-purpose"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "subagent_update",
+        "sessionId": "$c2",
+        "title": "Run SHORT sleep command",
+        "description": "general-purpose",
+        "capabilities": {
+          "cancel": {}
+        },
+        "state": {
+          "state": "running"
+        }
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "session_message",
+        "messageId": "toolu-2",
+        "senderSessionId": "$P",
+        "recipientSessionId": "$c2",
+        "content": [
+          {
+            "type": "text",
+            "text": "Use the Bash tool to run exactly this shell command: `sleep 3 && echo SHORT-done`. Do not run any other commands. When it finishes, reply with only the command's output (and whether it succeeded or failed)."
+          }
+        ],
+        "recipientMessageId": "toolu-2"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "sessionUpdate": "session_message",
+        "messageId": "toolu-2",
+        "senderSessionId": "$P",
+        "recipientSessionId": "$c2",
+        "content": [
+          {
+            "type": "text",
+            "text": "Use the Bash tool to run exactly this shell command: `sleep 3 && echo SHORT-done`. Do not run any other commands. When it finishes, reply with only the command's output (and whether it succeeded or failed)."
+          }
+        ],
+        "senderMessageId": "toolu-2"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "sessionUpdate": "config_option_update",
+        "configOptions": [
+          {
+            "id": "agent",
+            "name": "Agent",
+            "description": "Subagent type",
+            "type": "select",
+            "currentValue": "general-purpose",
+            "options": [
+              {
+                "value": "general-purpose",
+                "name": "general-purpose"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "usage_update",
+        "used": 24880,
+        "size": 1000000,
+        "_meta": {
+          "_claude/model": "claude-haiku-5-5"
+        }
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "sessionUpdate": "config_option_update",
+        "configOptions": [
+          {
+            "id": "model",
+            "name": "Model",
+            "category": "model",
+            "type": "select",
+            "currentValue": "haiku",
+            "options": [
+              {
+                "value": "haiku",
+                "name": "Haiku 5.5"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "name": "Agent",
+            "description": "Subagent type",
+            "type": "select",
+            "currentValue": "general-purpose",
+            "options": [
+              {
+                "value": "general-purpose",
+                "name": "general-purpose"
+              }
+            ]
+          }
+        ],
+        "_meta": {
+          "claudeCode": {
+            "parentToolUseId": "toolu-1"
+          }
+        }
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolName": "Bash",
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "toolCallId": "toolu-3",
+        "sessionUpdate": "tool_call",
+        "name": "Bash",
+        "rawInput": {
+          "command": "sleep 45 && echo LONG-done",
+          "description": "Sleep 45 seconds then print LONG-done"
+        },
+        "status": "pending",
+        "title": "sleep 45 && echo LONG-done",
+        "kind": "execute",
+        "content": [
+          {
+            "type": "content",
+            "content": {
+              "type": "text",
+              "text": "Sleep 45 seconds then print LONG-done"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolName": "Bash",
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "toolCallId": "toolu-3",
+        "sessionUpdate": "tool_call_update",
+        "status": "failed",
+        "rawOutput": "<tool_use_error>Blocked: sleep 45 followed by: echo LONG-done. To wait for a condition, use Monitor with an until-loop (e.g. `until <check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain shorter sleeps to work around this block.</tool_use_error>",
+        "content": [
+          {
+            "type": "content",
+            "content": {
+              "type": "text",
+              "text": "```\n<tool_use_error>Blocked: sleep 45 followed by: echo LONG-done. To wait for a condition, use Monitor with an until-loop (e.g. `until <check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain shorter sleeps to work around this block.</tool_use_error>\n```"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "sessionUpdate": "config_option_update",
+        "configOptions": [
+          {
+            "id": "model",
+            "name": "Model",
+            "category": "model",
+            "type": "select",
+            "currentValue": "haiku",
+            "options": [
+              {
+                "value": "haiku",
+                "name": "Haiku 5.5"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "name": "Agent",
+            "description": "Subagent type",
+            "type": "select",
+            "currentValue": "general-purpose",
+            "options": [
+              {
+                "value": "general-purpose",
+                "name": "general-purpose"
+              }
+            ]
+          }
+        ],
+        "_meta": {
+          "claudeCode": {
+            "parentToolUseId": "toolu-2"
+          }
+        }
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "sessionUpdate": "config_option_update",
+        "configOptions": [
+          {
+            "id": "mode",
+            "name": "Mode",
+            "description": "Session permission mode",
+            "category": "mode",
+            "type": "select",
+            "currentValue": "default",
+            "options": [
+              {
+                "value": "default",
+                "name": "Manual",
+                "description": "Always ask before making changes"
+              }
+            ]
+          },
+          {
+            "id": "model",
+            "name": "Model",
+            "category": "model",
+            "type": "select",
+            "currentValue": "haiku",
+            "options": [
+              {
+                "value": "haiku",
+                "name": "Haiku 5.5"
+              }
+            ]
+          },
+          {
+            "id": "effort",
+            "name": "Effort",
+            "description": "Current reasoning effort",
+            "category": "thought_level",
+            "type": "select",
+            "currentValue": "medium",
+            "options": [
+              {
+                "value": "medium",
+                "name": "Medium"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "name": "Agent",
+            "description": "Subagent type",
+            "type": "select",
+            "currentValue": "general-purpose",
+            "options": [
+              {
+                "value": "general-purpose",
+                "name": "general-purpose"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolName": "Bash",
+            "parentToolUseId": "toolu-2"
+          }
+        },
+        "toolCallId": "toolu-4",
+        "sessionUpdate": "tool_call",
+        "name": "Bash",
+        "rawInput": {
+          "command": "sleep 3 && echo SHORT-done",
+          "description": "Sleep 3 seconds then echo SHORT-done"
+        },
+        "status": "pending",
+        "title": "sleep 3 && echo SHORT-done",
+        "kind": "execute",
+        "content": [
+          {
+            "type": "content",
+            "content": {
+              "type": "text",
+              "text": "Sleep 3 seconds then echo SHORT-done"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "The harness blocked the foreground `sleep`, so I'll run the same command in the background, as its error message suggests."
+        },
+        "_meta": {
+          "claudeCode": {
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "messageId": "msg_011Cgeb8qVRKRNtYcrHzQxYS"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "sessionUpdate": "config_option_update",
+        "configOptions": [
+          {
+            "id": "mode",
+            "name": "Mode",
+            "description": "Session permission mode",
+            "category": "mode",
+            "type": "select",
+            "currentValue": "default",
+            "options": [
+              {
+                "value": "default",
+                "name": "Manual",
+                "description": "Always ask before making changes"
+              }
+            ]
+          },
+          {
+            "id": "model",
+            "name": "Model",
+            "category": "model",
+            "type": "select",
+            "currentValue": "haiku",
+            "options": [
+              {
+                "value": "haiku",
+                "name": "Haiku 5.5"
+              }
+            ]
+          },
+          {
+            "id": "effort",
+            "name": "Effort",
+            "description": "Current reasoning effort",
+            "category": "thought_level",
+            "type": "select",
+            "currentValue": "medium",
+            "options": [
+              {
+                "value": "medium",
+                "name": "Medium"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "name": "Agent",
+            "description": "Subagent type",
+            "type": "select",
+            "currentValue": "general-purpose",
+            "options": [
+              {
+                "value": "general-purpose",
+                "name": "general-purpose"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolName": "Bash",
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "toolCallId": "toolu-5",
+        "sessionUpdate": "tool_call",
+        "name": "Bash",
+        "rawInput": {
+          "command": "sleep 45 && echo LONG-done",
+          "description": "Sleep 45 seconds then print LONG-done",
+          "run_in_background": true
+        },
+        "status": "pending",
+        "title": "sleep 45 && echo LONG-done",
+        "kind": "execute",
+        "content": [
+          {
+            "type": "content",
+            "content": {
+              "type": "text",
+              "text": "Sleep 45 seconds then print LONG-done"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolResponse": {
+              "stdout": "",
+              "stderr": "",
+              "interrupted": false,
+              "isImage": false,
+              "noOutputExpected": false,
+              "backgroundTaskId": "bdg8txzz7",
+              "backgroundEndsWithFinalResponse": true
+            },
+            "toolName": "Bash",
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "toolCallId": "toolu-5",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolName": "Bash",
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "toolCallId": "toolu-5",
+        "sessionUpdate": "tool_call_update",
+        "status": "completed",
+        "rawOutput": "Command running in background with ID: bdg8txzz7. Output is being written to: /tmp/claude-0/-w/P/tasks/bdg8txzz7.output. If it exits while you are still working you will be notified, but it is terminated when you give your final response and no notification can follow that — so do not end your turn to wait for it; if you need its result, wait for it before giving your final response. To check interim output, use Read on that file path.",
+        "content": [
+          {
+            "type": "content",
+            "content": {
+              "type": "text",
+              "text": "```console\nCommand running in background with ID: bdg8txzz7. Output is being written to: /tmp/claude-0/-w/P/tasks/bdg8txzz7.output. If it exits while you are still working you will be notified, but it is terminated when you give your final response and no notification can follow that — so do not end your turn to wait for it; if you need its result, wait for it before giving your final response. To check interim output, use Read on that file path.\n```"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "The command is running in the background, and I need its result before I answer. I'll load the Monitor tool so I can wait on the output file."
+        },
+        "_meta": {
+          "claudeCode": {
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "messageId": "msg_011Cgeb92jME1pP8YztKRaQr"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolName": "ToolSearch",
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "toolCallId": "toolu-6",
+        "sessionUpdate": "tool_call",
+        "name": "ToolSearch",
+        "rawInput": {
+          "query": "select:Monitor",
+          "max_results": 1
+        },
+        "status": "pending",
+        "title": "ToolSearch",
+        "kind": "other",
+        "content": []
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolResponse": {
+              "matches": [
+                "Monitor"
+              ],
+              "query": "select:Monitor",
+              "total_deferred_tools": 19
+            },
+            "toolName": "ToolSearch",
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "toolCallId": "toolu-6",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolName": "ToolSearch",
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "toolCallId": "toolu-6",
+        "sessionUpdate": "tool_call_update",
+        "status": "completed",
+        "rawOutput": [
+          {
+            "type": "tool_reference",
+            "tool_name": "Monitor"
+          }
+        ],
+        "content": [
+          {
+            "type": "content",
+            "content": {
+              "type": "text",
+              "text": "Tool: Monitor"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolResponse": {
+              "stdout": "SHORT-done",
+              "stderr": "",
+              "interrupted": false,
+              "isImage": false,
+              "noOutputExpected": false
+            },
+            "toolName": "Bash",
+            "parentToolUseId": "toolu-2"
+          }
+        },
+        "toolCallId": "toolu-4",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolName": "Bash",
+            "parentToolUseId": "toolu-2"
+          }
+        },
+        "toolCallId": "toolu-4",
+        "sessionUpdate": "tool_call_update",
+        "status": "completed",
+        "rawOutput": "SHORT-done",
+        "content": [
+          {
+            "type": "content",
+            "content": {
+              "type": "text",
+              "text": "```console\nSHORT-done\n```"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "SHORT-done\n\nSucceeded. The command ran once and printed `SHORT-done`."
+        },
+        "_meta": {
+          "claudeCode": {
+            "parentToolUseId": "toolu-2"
+          }
+        },
+        "messageId": "msg_011Cgeb9Buzb34hFPoqPYKaP"
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "subagent_update",
+        "sessionId": "$c2",
+        "state": {
+          "state": "idle",
+          "stopReason": "end_turn"
+        }
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "session_message",
+        "messageId": "toolu-2:reply",
+        "senderSessionId": "$c2",
+        "recipientSessionId": "$P",
+        "content": [
+          {
+            "type": "text",
+            "text": "<tools-used-before-summary>Bash</tools-used-before-summary>\n"
+          },
+          {
+            "type": "text",
+            "text": "SHORT-done\n\nSucceeded. The command ran once and printed `SHORT-done`."
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "Monitor is loaded, but it would start a new shell command that polls the file, and you asked me to run no other commands. I'll read the background job's output file directly instead."
+        },
+        "_meta": {
+          "claudeCode": {
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "messageId": "msg_011Cgeb9BibE3zJfm7cR8F4g"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolName": "Read",
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "toolCallId": "toolu-7",
+        "sessionUpdate": "tool_call",
+        "name": "Read",
+        "rawInput": {
+          "file_path": "/tmp/claude-0/-w/P/tasks/bdg8txzz7.output"
+        },
+        "status": "pending",
+        "title": "Read /tmp/claude-0/-w/P/tasks/bdg8txzz7.output",
+        "kind": "read",
+        "content": [],
+        "locations": [
+          {
+            "path": "/tmp/claude-0/-w/P/tasks/bdg8txzz7.output",
+            "line": 1
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolResponse": {
+              "type": "text",
+              "file": {
+                "filePath": "/tmp/claude-0/-w/P/tasks/bdg8txzz7.output",
+                "content": "",
+                "numLines": 1,
+                "startLine": 1,
+                "totalLines": 1
+              }
+            },
+            "toolName": "Read",
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "toolCallId": "toolu-7",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolName": "Read",
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "toolCallId": "toolu-7",
+        "sessionUpdate": "tool_call_update",
+        "status": "completed",
+        "rawOutput": "<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>",
+        "content": [
+          {
+            "type": "content",
+            "content": {
+              "type": "text",
+              "text": "```\n<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>\n```"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "awaitCancel",
+      "as": "c1"
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "usage_update",
+        "used": 27336,
+        "size": 1000000,
+        "_meta": {
+          "_claude/model": "claude-haiku-5-5"
+        }
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "SHORT: succeeded and printed `SHORT-done`. LONG: interrupted by a user tool-use stop before it finished, so it printed no `LONG-done`; I have not re-run it."
+        },
+        "messageId": "msg_011Cgeb9SA1NHzDfQSLpK5n3"
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "usage_update",
+        "used": 27556,
+        "size": 1000000,
+        "_meta": {
+          "_claude/model": "claude-haiku-5-5"
+        }
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "usage_update",
+        "used": 27556,
+        "size": 1000000,
+        "cost": {
+          "amount": 0.009196534999999999,
+          "currency": "USD"
+        },
+        "_meta": {
+          "_claude/origin": {
+            "kind": "human"
+          },
+          "_claude/model": "claude-haiku-5-5"
+        }
+      }
+    }
+  ]
+}

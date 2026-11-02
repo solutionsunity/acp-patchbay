@@ -591,8 +591,8 @@ describe("ClientHost — replies for a terminal id it never issued", () => {
   it("is the agent's bad params (-32602), never the client breaking (-32603)", async () => {
     const { host } = harness();
     for (const call of [
-      () => host.terminalOutput("s" as PatchbaySessionId, { sessionId: "s", terminalId: "term-404" }),
-      () => host.waitForTerminalExit("s" as PatchbaySessionId, { sessionId: "s", terminalId: "term-404" }),
+      () => host.terminalOutput({ patchbaySessionId: "s" as PatchbaySessionId }, { sessionId: "s", terminalId: "term-404" }),
+      () => host.waitForTerminalExit({ patchbaySessionId: "s" as PatchbaySessionId }, { sessionId: "s", terminalId: "term-404" }),
     ]) {
       await expect(call()).rejects.toMatchObject({ code: -32602, message: expect.stringContaining("term-404") });
     }
@@ -600,15 +600,15 @@ describe("ClientHost — replies for a terminal id it never issued", () => {
 });
 
 describe("ClientHost — a terminal answers only the session that made it (#76)", () => {
-  const A = "s-a" as PatchbaySessionId;
-  const B = "s-b" as PatchbaySessionId;
+  const A = { patchbaySessionId: "s-a" as PatchbaySessionId };
+  const B = { patchbaySessionId: "s-b" as PatchbaySessionId };
 
   it("another session — its agent's or another's — finds no such terminal: no output, no wait, no kill, no release", async () => {
     const h = harness();
     await h.rules.set({ commandRules: [{ kind: "command", pattern: `${NODE} *`, verdict: "allow" }], writeScope: [] });
     const { terminalId } = await h.host.createTerminal(
       { sessionId: "agent-a", command: process.execPath, args: ["-e", "setTimeout(() => {}, 30000)"], env: {} },
-      { id: A, cwd: workspaceRoot },
+      { requester: A, cwd: workspaceRoot },
     );
     const fromB = { sessionId: "agent-b", terminalId };
     await expect(h.host.terminalOutput(B, fromB)).rejects.toMatchObject({ code: -32602, message: expect.stringContaining(terminalId) });
@@ -654,7 +654,7 @@ describe("ClientHost — a terminal's session and cwd (issue #64)", () => {
     const { host, events, started } = harness();
     await started;
     const before = events().length;
-    const S = "s" as PatchbaySessionId;
+    const S = { patchbaySessionId: "s" as PatchbaySessionId };
     await expect(host.readTextFile(S, { sessionId: "s", path: "rel/x.txt" })).rejects.toMatchObject({ code: -32602, message: expect.stringContaining("rel/x.txt") });
     await expect(host.writeTextFile(S, { sessionId: "s", path: "rel/x.txt", content: "x" })).rejects.toMatchObject({ code: -32602 });
     expect(events().slice(before)).toEqual([]);
@@ -668,12 +668,12 @@ describe("ClientHost — a terminal's session and cwd (issue #64)", () => {
     const bin = join(dir, "bin");
     await mkdir(bin);
     const tool = await standIn(bin, "pb-tool", "console.log('tool ran with ' + process.argv.slice(2).join('|'));");
-    const S = "s" as PatchbaySessionId;
+    const S = { patchbaySessionId: "s" as PatchbaySessionId };
     for (const [command, env] of [
       [tool, {}],
       ["pb-tool", { PATH: bin }],
     ] as const) {
-      const { terminalId } = await h.host.createTerminal({ sessionId: "s", command, args: ["a", "b"], env }, { id: S, cwd: workspaceRoot });
+      const { terminalId } = await h.host.createTerminal({ sessionId: "s", command, args: ["a", "b"], env }, { requester: S, cwd: workspaceRoot });
       const ref = { sessionId: "s", terminalId };
       expect(await h.host.waitForTerminalExit(S, ref)).toEqual({ exitCode: 0, signal: null });
       expect((await h.host.terminalOutput(S, ref)).output).toContain("tool ran with a|b");
@@ -690,8 +690,8 @@ describe("ClientHost — a terminal's session and cwd (issue #64)", () => {
     await mkdir(bin);
     await standIn(bin, "pb-shadow", "console.log('the real one');");
     await standIn(workspaceRoot, "pb-shadow", "console.log('PLANTED');");
-    const S = "s" as PatchbaySessionId;
-    const { terminalId } = await h.host.createTerminal({ sessionId: "s", command: "pb-shadow", args: [], env: { PATH: bin } }, { id: S, cwd: workspaceRoot });
+    const S = { patchbaySessionId: "s" as PatchbaySessionId };
+    const { terminalId } = await h.host.createTerminal({ sessionId: "s", command: "pb-shadow", args: [], env: { PATH: bin } }, { requester: S, cwd: workspaceRoot });
     const ref = { sessionId: "s", terminalId };
     await h.host.waitForTerminalExit(S, ref);
     const { output } = await h.host.terminalOutput(S, ref);
@@ -703,8 +703,8 @@ describe("ClientHost — a terminal's session and cwd (issue #64)", () => {
     const h = harness();
     await h.rules.set({ commandRules: [{ kind: "command", pattern: "*", verdict: "allow" }], writeScope: [] });
     const tool = await standIn(dir, "pb-echo", "console.log('got ' + process.argv[2]);");
-    const S = "s" as PatchbaySessionId;
-    const { terminalId } = await h.host.createTerminal({ sessionId: "s", command: tool, args: ["x & del y"], env: {} }, { id: S, cwd: workspaceRoot });
+    const S = { patchbaySessionId: "s" as PatchbaySessionId };
+    const { terminalId } = await h.host.createTerminal({ sessionId: "s", command: tool, args: ["x & del y"], env: {} }, { requester: S, cwd: workspaceRoot });
     const ref = { sessionId: "s", terminalId };
     const expected =
       process.platform === "win32"
@@ -717,9 +717,9 @@ describe("ClientHost — a terminal's session and cwd (issue #64)", () => {
   it("a command the system won't even take says why in its own output — never an internal error", async () => {
     const h = harness();
     await h.rules.set({ commandRules: [{ kind: "command", pattern: "*", verdict: "allow" }], writeScope: [] });
-    const S = "s" as PatchbaySessionId;
+    const S = { patchbaySessionId: "s" as PatchbaySessionId };
     // A NUL in a program's name is refused before any process exists.
-    const { terminalId } = await h.host.createTerminal({ sessionId: "s", command: "bad\0name", args: [], env: {} }, { id: S, cwd: workspaceRoot });
+    const { terminalId } = await h.host.createTerminal({ sessionId: "s", command: "bad\0name", args: [], env: {} }, { requester: S, cwd: workspaceRoot });
     const ref = { sessionId: "s", terminalId };
     expect(await h.host.waitForTerminalExit(S, ref)).toEqual({ exitCode: null, signal: null });
     expect((await h.host.terminalOutput(S, ref)).output).not.toBe("");
@@ -728,9 +728,9 @@ describe("ClientHost — a terminal's session and cwd (issue #64)", () => {
   it("a command that never starts says why in its own output, and terminal ids never repeat (#80)", async () => {
     const h = harness();
     await h.rules.set({ commandRules: [{ kind: "command", pattern: "*", verdict: "allow" }], writeScope: [] });
-    const S = "s" as PatchbaySessionId;
+    const S = { patchbaySessionId: "s" as PatchbaySessionId };
     const create = () =>
-      h.host.createTerminal({ sessionId: "s", command: join(dir, "no-such-command"), args: [], env: {} }, { id: S, cwd: workspaceRoot });
+      h.host.createTerminal({ sessionId: "s", command: join(dir, "no-such-command"), args: [], env: {} }, { requester: S, cwd: workspaceRoot });
     const { terminalId } = await create();
     const ref = { sessionId: "s", terminalId };
     expect(await h.host.waitForTerminalExit(S, ref)).toEqual({ exitCode: null, signal: null });
@@ -746,7 +746,7 @@ describe("ClientHost — a terminal's session and cwd (issue #64)", () => {
     await started;
     const before = events().length;
     await expect(
-      host.createTerminal({ sessionId: "s", command: "true", args: [], env: {}, cwd: "sub/dir" }, { id: "s" as PatchbaySessionId, cwd: workspaceRoot }),
+      host.createTerminal({ sessionId: "s", command: "true", args: [], env: {}, cwd: "sub/dir" }, { requester: { patchbaySessionId: "s" as PatchbaySessionId }, cwd: workspaceRoot }),
     ).rejects.toMatchObject({ code: -32602, message: expect.stringContaining("sub/dir") });
     expect(events().slice(before)).toEqual([]);
   });

@@ -1,0 +1,377 @@
+{
+  "transcript": [
+    {
+      "kind": "user",
+      "id": "<id-1>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "go"
+        }
+      ]
+    },
+    {
+      "kind": "text",
+      "id": "<id-2>",
+      "text": "Launching both sub-agents in parallel."
+    },
+    {
+      "kind": "sessionMessage",
+      "id": "message:toolu-1",
+      "direction": "to",
+      "peer": "<subagent-3>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Use the Bash tool to run exactly this shell command: `sleep 45 && echo LONG-done`. Do not run any other commands. When it finishes, reply with only the command's output (and whether it succeeded or failed)."
+        }
+      ]
+    },
+    {
+      "kind": "sessionMessage",
+      "id": "message:toolu-2",
+      "direction": "to",
+      "peer": "<subagent-4>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Use the Bash tool to run exactly this shell command: `sleep 3 && echo SHORT-done`. Do not run any other commands. When it finishes, reply with only the command's output (and whether it succeeded or failed)."
+        }
+      ]
+    },
+    {
+      "kind": "sessionMessage",
+      "id": "message:toolu-2:reply",
+      "direction": "from",
+      "peer": "<subagent-4>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "<tools-used-before-summary>Bash</tools-used-before-summary>\n"
+        },
+        {
+          "kind": "text",
+          "text": "SHORT-done\n\nSucceeded. The command ran once and printed `SHORT-done`."
+        }
+      ]
+    },
+    {
+      "kind": "text",
+      "id": "<id-5>",
+      "text": "SHORT: succeeded and printed `SHORT-done`. LONG: interrupted by a user tool-use stop before it finished, so it printed no `LONG-done`; I have not re-run it."
+    },
+    {
+      "kind": "turnEnd",
+      "id": "<id-6>",
+      "startedAt": "<time>",
+      "endedAt": "<time>",
+      "stopReason": "end_turn",
+      "usage": null
+    }
+  ],
+  "subagents": [
+    {
+      "id": "<subagent-3>",
+      "parentId": "<session>",
+      "title": "Run LONG sleep command",
+      "description": "general-purpose",
+      "conversationTitle": null,
+      "state": {
+        "state": "idle",
+        "stopReason": "cancelled"
+      },
+      "lastKnown": {
+        "state": "idle",
+        "stopReason": "cancelled"
+      },
+      "cancel": true,
+      "cwd": null,
+      "additionalDirectories": null,
+      "config": [
+        {
+          "id": "mode",
+          "name": "Mode",
+          "description": "Session permission mode",
+          "category": "mode",
+          "type": "select",
+          "currentValue": "default",
+          "options": [
+            {
+              "value": "default",
+              "name": "Manual",
+              "description": "Always ask before making changes"
+            }
+          ]
+        },
+        {
+          "id": "model",
+          "name": "Model",
+          "category": "model",
+          "type": "select",
+          "currentValue": "haiku",
+          "options": [
+            {
+              "value": "haiku",
+              "name": "Haiku 5.5"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "description": "Current reasoning effort",
+          "category": "thought_level",
+          "type": "select",
+          "currentValue": "medium",
+          "options": [
+            {
+              "value": "medium",
+              "name": "Medium"
+            }
+          ]
+        },
+        {
+          "id": "agent",
+          "name": "Agent",
+          "description": "Subagent type",
+          "type": "select",
+          "currentValue": "general-purpose",
+          "options": [
+            {
+              "value": "general-purpose",
+              "name": "general-purpose"
+            }
+          ]
+        }
+      ],
+      "transcript": [
+        {
+          "kind": "sessionMessage",
+          "id": "message:toolu-1",
+          "direction": "from",
+          "peer": "<session>",
+          "parts": [
+            {
+              "kind": "text",
+              "text": "Use the Bash tool to run exactly this shell command: `sleep 45 && echo LONG-done`. Do not run any other commands. When it finishes, reply with only the command's output (and whether it succeeded or failed)."
+            }
+          ]
+        },
+        {
+          "kind": "toolCall",
+          "id": "<id-7>",
+          "title": "sleep 45 && echo LONG-done",
+          "name": "Bash",
+          "status": "failed",
+          "toolKind": "execute",
+          "input": "{\n  \"command\": \"sleep 45 && echo LONG-done\",\n  \"description\": \"Sleep 45 seconds then print LONG-done\"\n}",
+          "output": "<tool_use_error>Blocked: sleep 45 followed by: echo LONG-done. To wait for a condition, use Monitor with an until-loop (e.g. `until <check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain shorter sleeps to work around this block.</tool_use_error>",
+          "locations": [],
+          "content": [
+            {
+              "kind": "text",
+              "text": "```\n<tool_use_error>Blocked: sleep 45 followed by: echo LONG-done. To wait for a condition, use Monitor with an until-loop (e.g. `until <check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain shorter sleeps to work around this block.</tool_use_error>\n```"
+            }
+          ],
+          "diffs": {},
+          "denied": false,
+          "interrupted": false
+        },
+        {
+          "kind": "text",
+          "id": "<id-8>",
+          "text": "The harness blocked the foreground `sleep`, so I'll run the same command in the background, as its error message suggests."
+        },
+        {
+          "kind": "toolCall",
+          "id": "<id-9>",
+          "title": "sleep 45 && echo LONG-done",
+          "name": "Bash",
+          "status": "completed",
+          "toolKind": "execute",
+          "input": "{\n  \"command\": \"sleep 45 && echo LONG-done\",\n  \"description\": \"Sleep 45 seconds then print LONG-done\",\n  \"run_in_background\": true\n}",
+          "output": "Command running in background with ID: bdg8txzz7. Output is being written to: /tmp/claude-0/-w/P/tasks/bdg8txzz7.output. If it exits while you are still working you will be notified, but it is terminated when you give your final response and no notification can follow that — so do not end your turn to wait for it; if you need its result, wait for it before giving your final response. To check interim output, use Read on that file path.",
+          "locations": [],
+          "content": [
+            {
+              "kind": "text",
+              "text": "```console\nCommand running in background with ID: bdg8txzz7. Output is being written to: /tmp/claude-0/-w/P/tasks/bdg8txzz7.output. If it exits while you are still working you will be notified, but it is terminated when you give your final response and no notification can follow that — so do not end your turn to wait for it; if you need its result, wait for it before giving your final response. To check interim output, use Read on that file path.\n```"
+            }
+          ],
+          "diffs": {},
+          "denied": false,
+          "interrupted": false
+        },
+        {
+          "kind": "text",
+          "id": "<id-10>",
+          "text": "The command is running in the background, and I need its result before I answer. I'll load the Monitor tool so I can wait on the output file."
+        },
+        {
+          "kind": "toolCall",
+          "id": "<id-11>",
+          "title": "ToolSearch",
+          "name": "ToolSearch",
+          "status": "completed",
+          "toolKind": "other",
+          "input": "{\n  \"query\": \"select:Monitor\",\n  \"max_results\": 1\n}",
+          "output": "[\n  {\n    \"type\": \"tool_reference\",\n    \"tool_name\": \"Monitor\"\n  }\n]",
+          "locations": [],
+          "content": [
+            {
+              "kind": "text",
+              "text": "Tool: Monitor"
+            }
+          ],
+          "diffs": {},
+          "denied": false,
+          "interrupted": false
+        },
+        {
+          "kind": "text",
+          "id": "<id-12>",
+          "text": "Monitor is loaded, but it would start a new shell command that polls the file, and you asked me to run no other commands. I'll read the background job's output file directly instead."
+        },
+        {
+          "kind": "toolCall",
+          "id": "<id-13>",
+          "title": "Read /tmp/claude-0/-w/P/tasks/bdg8txzz7.output",
+          "name": "Read",
+          "status": "completed",
+          "toolKind": "read",
+          "input": "{\n  \"file_path\": \"/tmp/claude-0/-w/P/tasks/bdg8txzz7.output\"\n}",
+          "output": "<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>",
+          "locations": [
+            {
+              "path": "/tmp/claude-0/-w/P/tasks/bdg8txzz7.output",
+              "line": 1
+            }
+          ],
+          "content": [
+            {
+              "kind": "text",
+              "text": "```\n<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>\n```"
+            }
+          ],
+          "diffs": {},
+          "denied": false,
+          "interrupted": false
+        }
+      ]
+    },
+    {
+      "id": "<subagent-4>",
+      "parentId": "<session>",
+      "title": "Run SHORT sleep command",
+      "description": "general-purpose",
+      "conversationTitle": null,
+      "state": {
+        "state": "idle",
+        "stopReason": "end_turn"
+      },
+      "lastKnown": {
+        "state": "idle",
+        "stopReason": "end_turn"
+      },
+      "cancel": true,
+      "cwd": null,
+      "additionalDirectories": null,
+      "config": [
+        {
+          "id": "mode",
+          "name": "Mode",
+          "description": "Session permission mode",
+          "category": "mode",
+          "type": "select",
+          "currentValue": "default",
+          "options": [
+            {
+              "value": "default",
+              "name": "Manual",
+              "description": "Always ask before making changes"
+            }
+          ]
+        },
+        {
+          "id": "model",
+          "name": "Model",
+          "category": "model",
+          "type": "select",
+          "currentValue": "haiku",
+          "options": [
+            {
+              "value": "haiku",
+              "name": "Haiku 5.5"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "description": "Current reasoning effort",
+          "category": "thought_level",
+          "type": "select",
+          "currentValue": "medium",
+          "options": [
+            {
+              "value": "medium",
+              "name": "Medium"
+            }
+          ]
+        },
+        {
+          "id": "agent",
+          "name": "Agent",
+          "description": "Subagent type",
+          "type": "select",
+          "currentValue": "general-purpose",
+          "options": [
+            {
+              "value": "general-purpose",
+              "name": "general-purpose"
+            }
+          ]
+        }
+      ],
+      "transcript": [
+        {
+          "kind": "sessionMessage",
+          "id": "message:toolu-2",
+          "direction": "from",
+          "peer": "<session>",
+          "parts": [
+            {
+              "kind": "text",
+              "text": "Use the Bash tool to run exactly this shell command: `sleep 3 && echo SHORT-done`. Do not run any other commands. When it finishes, reply with only the command's output (and whether it succeeded or failed)."
+            }
+          ]
+        },
+        {
+          "kind": "toolCall",
+          "id": "<id-14>",
+          "title": "sleep 3 && echo SHORT-done",
+          "name": "Bash",
+          "status": "completed",
+          "toolKind": "execute",
+          "input": "{\n  \"command\": \"sleep 3 && echo SHORT-done\",\n  \"description\": \"Sleep 3 seconds then echo SHORT-done\"\n}",
+          "output": "SHORT-done",
+          "locations": [],
+          "content": [
+            {
+              "kind": "text",
+              "text": "```console\nSHORT-done\n```"
+            }
+          ],
+          "diffs": {},
+          "denied": false,
+          "interrupted": false
+        },
+        {
+          "kind": "text",
+          "id": "<id-15>",
+          "text": "SHORT-done\n\nSucceeded. The command ran once and printed `SHORT-done`."
+        }
+      ]
+    }
+  ]
+}

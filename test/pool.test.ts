@@ -26,7 +26,7 @@ interface Recorded {
   statuses: Array<{ status: AgentStatus; detail?: string }>;
   /** One entry per fresh `initialize` answer captured. */
   declared: string[];
-  updates: { sessionId: string; update: SessionUpdateFact }[];
+  updates: { sessionId: string; update: SessionUpdateFact; seq: number }[];
 }
 
 function agentText(update: SessionUpdateFact): string {
@@ -38,7 +38,7 @@ function makePool(): { pool: AgentPool; rec: Recorded } {
   const pool = new AgentPool({
     onStatusChanged: (_id, status, detail) => rec.statuses.push({ status, detail }),
     onDeclaredCaptured: (id) => rec.declared.push(id),
-    onSessionUpdate: (_id, sessionId, update) => rec.updates.push({ sessionId, update }),
+    onSessionUpdate: (_id, sessionId, update, seq) => rec.updates.push({ sessionId, update, seq }),
     ...stubFsTerminalHooks(),
   });
   stopsAtTestEnd(pool);
@@ -49,6 +49,18 @@ const spec = (script: FakeAgentScript, patchbayAgentId = "fake"): LaunchSpec => 
 
 
 describe("AgentPool", () => {
+  it("places every update against a load's answer by the order it was read — answer and fresh state in one chunk", async () => {
+    const { pool, rec } = makePool();
+    const sub = (state: string) => ({ update: { sessionUpdate: "subagent_update" as const, sessionId: "$a", state: { state } } });
+    await pool.connect(spec({ declare: { loadSession: true }, loadReplay: { replay: [sub("running"), sub("running")], after: [sub("idle")] } }));
+    await pool.loadSession("fake" as PatchbayAgentId, "s1", cwd);
+    await vi.waitFor(() => expect(rec.updates).toHaveLength(3), SETTLE);
+    const before = rec.updates.map((u) => pool.answeredBefore("fake" as PatchbayAgentId, "s1", u.seq));
+    expect(before).toEqual([false, false, true]);
+    // a fresh load asks again: nothing has its answer until it comes
+    expect(pool.answeredBefore("fake" as PatchbayAgentId, "other", rec.updates[2]!.seq)).toBe(false);
+  });
+
   it("connects and captures the declared table from initialize", async () => {
     const { pool, rec } = makePool();
     const declared = await pool.connect(

@@ -1,0 +1,172 @@
+{
+  "transcript": [
+    {
+      "kind": "user",
+      "id": "<id-1>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "go"
+        }
+      ]
+    },
+    {
+      "kind": "sessionMessage",
+      "id": "message:toolu-1",
+      "direction": "to",
+      "peer": "<subagent-2>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Use the Bash tool to run `pwd && ls` and report the exact output. Then, in one line, state which directory you ran in. Do nothing else."
+        }
+      ]
+    },
+    {
+      "kind": "sessionMessage",
+      "id": "message:toolu-1:reply",
+      "direction": "from",
+      "peer": "<subagent-2>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Async agent launched successfully. (This tool result is internal metadata — never quote or paste any part of it, including the agentId below, into a user-facing reply.)\nagentId: c1 (internal ID - do not mention to user. Use SendMessage with to: 'c1', summary: '<5-10 word recap>' to continue this agent.)\nThe agent is working in the background. You will be notified automatically when it completes. You know nothing about its results until that notification arrives — do not report, assume, or predict them; continue other work or respond to the user in the meantime.\nDo not duplicate this agent's work — avoid working with the same files or topics it is using.\noutput_file: /tmp/claude-0/-w/P/tasks/c1.output\nDo NOT Read or tail this file via the shell tool — it is the full subagent JSONL transcript and reading it will overflow your context. If the user asks for progress, say the agent is still running; you'll get a completion notification."
+        }
+      ]
+    },
+    {
+      "kind": "text",
+      "id": "<id-3>",
+      "text": "The sub-agent is running in a separate worktree. I'll report its output and the directory it ran in when the completion notification arrives."
+    },
+    {
+      "kind": "text",
+      "id": "<id-4>",
+      "text": "The sub-agent ran in its own worktree at `/w/.claude/worktrees/agent-c1`. Its `ls` listed `a.txt` and `b.txt`."
+    },
+    {
+      "kind": "turnEnd",
+      "id": "<id-5>",
+      "startedAt": "<time>",
+      "endedAt": "<time>",
+      "stopReason": "end_turn",
+      "usage": null
+    }
+  ],
+  "subagents": [
+    {
+      "id": "<subagent-2>",
+      "parentId": "<session>",
+      "title": "Run pwd and ls in worktree",
+      "description": "general-purpose",
+      "conversationTitle": null,
+      "state": {
+        "state": "idle",
+        "stopReason": "end_turn"
+      },
+      "lastKnown": {
+        "state": "idle",
+        "stopReason": "end_turn"
+      },
+      "cancel": true,
+      "cwd": "/w/.claude/worktrees/agent-c1",
+      "additionalDirectories": null,
+      "config": [
+        {
+          "id": "mode",
+          "name": "Mode",
+          "description": "Session permission mode",
+          "category": "mode",
+          "type": "select",
+          "currentValue": "default",
+          "options": [
+            {
+              "value": "default",
+              "name": "Manual",
+              "description": "Always ask before making changes"
+            }
+          ]
+        },
+        {
+          "id": "model",
+          "name": "Model",
+          "category": "model",
+          "type": "select",
+          "currentValue": "haiku",
+          "options": [
+            {
+              "value": "haiku",
+              "name": "Haiku 5.5"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "description": "Current reasoning effort",
+          "category": "thought_level",
+          "type": "select",
+          "currentValue": "medium",
+          "options": [
+            {
+              "value": "medium",
+              "name": "Medium"
+            }
+          ]
+        },
+        {
+          "id": "agent",
+          "name": "Agent",
+          "description": "Subagent type",
+          "type": "select",
+          "currentValue": "general-purpose",
+          "options": [
+            {
+              "value": "general-purpose",
+              "name": "general-purpose"
+            }
+          ]
+        }
+      ],
+      "transcript": [
+        {
+          "kind": "sessionMessage",
+          "id": "message:toolu-1",
+          "direction": "from",
+          "peer": "<session>",
+          "parts": [
+            {
+              "kind": "text",
+              "text": "Use the Bash tool to run `pwd && ls` and report the exact output. Then, in one line, state which directory you ran in. Do nothing else."
+            }
+          ]
+        },
+        {
+          "kind": "toolCall",
+          "id": "<id-6>",
+          "title": "pwd && ls",
+          "name": "Bash",
+          "status": "completed",
+          "toolKind": "execute",
+          "input": "{\n  \"command\": \"pwd && ls\",\n  \"description\": \"Print working directory and list its contents\"\n}",
+          "output": "/w/.claude/worktrees/agent-c1\na.txt\nb.txt",
+          "locations": [],
+          "content": [
+            {
+              "kind": "text",
+              "text": "```console\n/w/.claude/worktrees/agent-c1\na.txt\nb.txt\n```"
+            }
+          ],
+          "diffs": {},
+          "denied": false,
+          "interrupted": false
+        },
+        {
+          "kind": "text",
+          "id": "<id-7>",
+          "text": "Output of `pwd && ls`:\n\n```\n/w/.claude/worktrees/agent-c1\na.txt\nb.txt\n```\n\nI ran in `/w/.claude/worktrees/agent-c1`."
+        }
+      ]
+    }
+  ]
+}

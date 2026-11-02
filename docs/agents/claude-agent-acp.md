@@ -130,6 +130,49 @@ github.com/agentclientprotocol/claude-agent-acp (public issues).
   counts each entry only against its own counterpart (issue #48, where a
   region taken for a whole file inflated every count).
 
+### Sub-agents in the RFD form (v0.100.0)
+
+Observed 2026-11-02 (published package read, and seven recorded stress runs
+on model haiku — parallel, nested, a permission ask, a cancel, a worktree, a
+background launch, a reload; the scrubbed recordings are patchbay's
+sub-agent goldens). With a client declaring `subagents: {}` the bridge
+sends the subagents RFD's form, and holds the delegating Agent/Task tool
+call back until it is final (no Agent tool call shows on the parent):
+
+- Each child is announced before its traffic: title = its task, description
+  = the agent type (`general-purpose`), `state: running`,
+  `capabilities.cancel: {}`; then a linked `session_message` pair (the
+  parent's "To" and the child's incoming view), a child-addressed
+  `config_option_update`, the child's tool calls under its own id, an
+  `idle`/`end_turn` snapshot, and the reply as a "From" message on the
+  parent (`messageId` ending `:reply`).
+- Nested children are announced on their parent child's stream. A worktree
+  child's `cwd` comes in its own `subagent_update` right after the
+  announcement, before its traffic.
+- `session/cancel` with a child's id answers `idle`/`cancelled` at once; the
+  sibling and the parent's turn carry on.
+- The only client requests a child makes are permission asks — no `fs/*`
+  or `terminal/*`, even with `terminal` declared.
+- On `session/load` the whole child history replays before the answer —
+  announcements first, historical `running` → `idle` states, no
+  capabilities — and the current `idle` snapshots come right after it, again
+  without capabilities: a child running at a reload is not cancellable from
+  patchbay until the bridge grants it again.
+
+Two things in the replies look internal, not meant for display. Patchbay
+shows them **as sent** — no vendor filter in core:
+
+- Every reply's text starts with
+  `<tools-used-before-summary>Read</tools-used-before-summary>` before the
+  sub-agent's answer (rendered as markdown renders any agent text).
+- An async launch (`isolation: "worktree"`, `run_in_background`) gets an
+  immediate reply that is the tool result "Async agent launched
+  successfully. (This tool result is internal metadata — never quote or
+  paste any part of it, …)"; the background run then sends no reply — its
+  answer is only in the child's own transcript.
+
+- **Status:** report drafted, not yet posted upstream.
+
 ## Communication log
 
 - *(empty)*

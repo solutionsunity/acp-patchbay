@@ -57,12 +57,14 @@ never split panels.
 One row between chat and composer — live-turn read-outs at the eye's resting
 point, deliberately **outside** the composer: its binding rule ("above the input =
 what the agent will see") stays intact because nothing here is context. The strip
-holds what this session has been through — the agent's plan, what you asked it,
-and the files it edited; it is absent while none exists — no placeholder.
+holds what this session has been through — the agent's plan, its sub-agents,
+what you asked it, and the files it edited; it is absent while none exists — no
+placeholder.
 
 | Chip | Where | Behavior |
 |---|---|---|
 | Plan | left | `▸ Plan n/m — current step`, truncating; present only while the agent maintains a plan with >1 tasks; a task completing mid-turn pulses the chip — expand is manual, never forced |
+| Sub-agents | left, after Plan | `⑂ n sub-agents · k running · j waiting on you`, truncating, with the most urgent mark of them — the session marks' dots (amber waits on you, green runs), or a hollow ring in the color it was last seen with once a sub-agent's work is no longer confirmed (the agent lost sight of it, or the connection went); present once the agent announces one, and it stays once all are idle — not the turn's: one still working after the turn ended keeps it running; a way in, not a read-out, so no preference hides it |
 | Prompts | right | `💬 n prompts` — present once you have asked something; counts your prompts, never a message the agent's harness injected; a way in, not a read-out, so no preference hides it |
 | Files | right, after Prompts | `✎ n files edited` — present once the agent has touched a file; a way in, not a read-out, so no preference hides it |
 
@@ -70,7 +72,13 @@ A chip opens its panel overlaying the chat, growing up from the strip at the
 strip's full width (the drawers' mechanic, mirrored) — X, Escape, re-click, or a
 click elsewhere closes; one panel is open at a time, so opening the other chip's
 panel closes this one. Plan panel: the full checklist (✓ done, ▸ active, ○
-pending, ⊘ cancelled; any other status word shows beside its task). Prompts
+pending, ⊘ cancelled; any other status word shows beside its task).
+Sub-agents panel: each sub-agent in tree order (nested ones indented under
+their parent) — its mark, its name, what it is doing or why it stopped, and
+where it works when its agent placed it apart (a worktree); **Cancel** only
+where its agent granted it and it has work to cancel; a row opens its
+transcript inside the chat, read-only, under a bar naming it — its state,
+its settings — with the way back to the session. Prompts
 panel: the session's prompts newest first, each numbered in the order asked
 and shown at most three lines long; its words take the chat to that prompt
 (the prompt lands at the top, the view unpinned, the bubble flashing once);

@@ -103,8 +103,10 @@ export interface PoolHooks {
   /** A fresh connection's `initialize` answer is in — readable from `get`. */
   onDeclaredCaptured(patchbayAgentId: PatchbayAgentId): void;
   /** A `session/update`, read: what the agent said, as patchbay takes it,
-   * for the session it named its own way. */
-  onSessionUpdate(patchbayAgentId: PatchbayAgentId, sessionId: string, update: SessionUpdateFact): void;
+   * for the session it named its own way. `seq` is its place among the
+   * connection's updates, in the order they were read — what
+   * `answeredBefore` places it by. */
+  onSessionUpdate(patchbayAgentId: PatchbayAgentId, sessionId: string, update: SessionUpdateFact, seq: number): void;
   /** The permission broker replaces this; absent → reject-by-cancel.
    * `signal` aborts when the agent withdraws the request. */
   onPermissionRequest?(
@@ -213,6 +215,16 @@ interface Entry {
   stderrTail: string[];
   /** The readers' notes for this connection — each said once. */
   notes: NoteLog;
+  /** Where this connection's attaches stand against its updates: the
+   * updates read so far, and per session whose `session/load` or
+   * `session/resume` was answered, how many had been read before the
+   * answer — absent while one is asked and not yet answered. The SDK hands
+   * the updates on in the order they were read, so the n-th one handed on
+   * is the n-th read: one came before an answer exactly when its place is
+   * below the count. An update the SDK's own schema refuses is read and
+   * never handed on; each such one makes one update right after a later
+   * answer read as before it — the side that grants nothing. */
+  order: { read: number; handed: number; asked: Map<string | number, string>; answeredAt: Map<string, number> };
 }
 
 export interface PooledAgentView {
@@ -230,6 +242,51 @@ export interface PooledAgentView {
 }
 
 const STDERR_TAIL_LINES = 40;
+
+/** The connection's messages, counted as they cross: each `session/update`
+ * as the SDK reads it, and — for every `session/load` and `session/resume`
+ * asked — how many had been read when its answer was. The read side is
+ * pulled one message at a time, so a count is taken exactly when the SDK
+ * takes that message, never ahead of it. */
+function ordered(stream: acp.Stream, order: Entry["order"]): acp.Stream {
+  const reader = stream.readable.getReader();
+  const writer = stream.writable.getWriter();
+  return {
+    readable: new ReadableStream(
+      {
+        async pull(controller) {
+          const { value, done } = await reader.read();
+          if (done) {
+            controller.close();
+            return;
+          }
+          const message = value as { id?: string | number; method?: string };
+          if (message.method === acp.methods.client.session.update) order.read++;
+          else if (message.method === undefined && message.id !== undefined && order.asked.has(message.id)) {
+            order.answeredAt.set(order.asked.get(message.id)!, order.read);
+            order.asked.delete(message.id);
+          }
+          controller.enqueue(value);
+        },
+        cancel: (reason) => reader.cancel(reason),
+      },
+      { highWaterMark: 0 },
+    ),
+    writable: new WritableStream({
+      write(value) {
+        const message = value as { id?: string | number; method?: string; params?: { sessionId?: string } };
+        const opens = message.method === acp.methods.agent.session.load || message.method === acp.methods.agent.session.resume;
+        if (opens && message.id !== undefined && message.params?.sessionId !== undefined) {
+          order.asked.set(message.id, message.params.sessionId);
+          order.answeredAt.delete(message.params.sessionId);
+        }
+        return writer.write(value);
+      },
+      close: () => writer.close(),
+      abort: (reason) => writer.abort(reason),
+    }),
+  };
+}
 
 /** Grace budgets for `stop`'s ladder: EOF → SIGTERM →
  * SIGKILL, each rung waited on only as long as the budget allows. */
@@ -329,6 +386,7 @@ export class AgentPool {
       stopped: null,
       stderrTail: [],
       notes: new NoteLog(this.log),
+      order: { read: 0, handed: 0, asked: new Map(), answeredAt: new Map() },
     };
     this.entries.set(patchbayAgentId, entry);
     this.setStatus(entry, "reconnecting");
@@ -464,9 +522,12 @@ export class AgentPool {
         );
       }
     });
-    const stream = acp.ndJsonStream(
-      Writable.toWeb(toAgent),
-      Readable.toWeb(fromAgent) as ReadableStream<Uint8Array>,
+    const stream = ordered(
+      acp.ndJsonStream(
+        Writable.toWeb(toAgent),
+        Readable.toWeb(fromAgent) as ReadableStream<Uint8Array>,
+      ),
+      entry.order,
     );
 
     // Chokepoint: every incoming request registers through `proven`, so a
@@ -536,11 +597,14 @@ export class AgentPool {
             patchbayAgentId,
             ctx.params.sessionId,
             readSessionUpdate(ctx.params.update, entry.notes.at(patchbayAgentId, "session/update")),
+            entry.order.handed,
           );
         } catch (err) {
           this.log.info(
             `${patchbayAgentId}: session/update (${ctx.params.update.sessionUpdate}) handling failed — update dropped: ${agentErrorText(err)}`,
           );
+        } finally {
+          entry.order.handed++;
         }
       })
       .onRequest(
@@ -789,6 +853,14 @@ export class AgentPool {
     return this.request(entry, acp.methods.agent.session.prompt, { sessionId, prompt }, readTurnEnd, {
       authBearing: (turn) => turn.stopReason !== "cancelled",
     });
+  }
+
+  /** Whether the agent's answer to the latest `session/load` or
+   * `session/resume` of a session had been read before the update at
+   * `seq` — what arrived earlier on a load is its history. */
+  answeredBefore(patchbayAgentId: PatchbayAgentId, sessionId: string, seq: number): boolean {
+    const at = this.entries.get(patchbayAgentId)?.order.answeredAt.get(sessionId);
+    return at !== undefined && at <= seq;
   }
 
   async cancel(patchbayAgentId: PatchbayAgentId, sessionId: string): Promise<void> {

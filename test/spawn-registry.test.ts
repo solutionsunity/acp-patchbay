@@ -124,7 +124,7 @@ describe("what a window spawns", () => {
     await o.permissionRules.set({ commandRules: [{ kind: "command", pattern: `${formatCommandLine(process.execPath, [])} *`, verdict: "allow" }], writeScope: [] });
     await o.clientHost.createTerminal(
       { sessionId: "s", command: process.execPath, args: ["-e", IDLE], env: {} },
-      { id: "s" as PatchbaySessionId, cwd },
+      { requester: { patchbaySessionId: "s" as PatchbaySessionId }, cwd },
     );
     await vi.waitFor(() => expect(o.spawnRegistry.list().map((r) => r.kind).sort()).toEqual(["agent", "terminal"]), SETTLE);
     await o.pool.stop("tracked" as PatchbayAgentId);

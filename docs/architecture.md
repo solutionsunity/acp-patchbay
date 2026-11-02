@@ -644,7 +644,8 @@ or true), and an agent's malformed name never costs its version.
   place and note: the one way a user sees it without the wire log.
 
 Every message is read this way: `session/update` (content, tool calls,
-plans, commands, usage, title, knobs); the agent's own requests
+plans, commands, usage, title, knobs, sub-agents and the messages between
+sessions); the agent's own requests
 (`session/request_permission`, files, terminals, elicitation); and the
 answers to every request patchbay sends (`initialize`, the session
 lifecycle, `session/list`, `session/prompt`, `session/set_config_option`) —
@@ -980,6 +981,66 @@ presented as a conversation. `session/fork` takes no point to fork at, so
 forking at an earlier turn, and editing a sent prompt to fork from there,
 wait for ACP to name points in a session (the session-cursor and rewind
 proposals).
+
+## Sub-agents
+
+**A child of its session, never a session of the list** (#60, decided
+2026-11-02, against the merged subagents RFD and claude-agent-acp 0.100.0).
+An agent that delegates may announce the sessions it starts with
+`subagent_update`; patchbay declares `subagents` and takes each as the RFD
+frames it — a restricted session the user watches, and may cancel only where
+the agent grants it.
+
+- **Where a child lives.** On its root session's attachment
+  (`sessions-store.ts`, `LiveSession.children`), keyed by the agent's id for
+  it, with its parent — the session, or another child for a nested one. It
+  is no row: not in the list, not prompted, loaded, closed or set. Patchbay's
+  id for it is the root's id with the agent's appended, so a child
+  re-announced after a resume lands on the row it had.
+- **Attribution.** Every update and request naming a child's id is read
+  against the attached sessions' children (`session-owner.ts`): its updates
+  feed its own transcript (keyed by its id, sharing its root's replay
+  window), its configuration is shown and never set, its commands are never
+  offered. Its requests are its session's — one `Requester`
+  (`asks-store.ts`) carries the session and the child to the broker and the
+  client host: cards in the session's chat, labelled with the child's title;
+  the session's rules and write scope; the child's own root set
+  (`subagentRoots` — its reported `cwd` and `additionalDirectories`, each
+  inherited from its parent while unreported), classed by the write scope as
+  the workspace's where it lies inside a workspace folder; an omitted
+  terminal `cwd` is the child's.
+- **History and live.** What was read before a `session/load` answered is
+  history: a child's titles and places stand, but no work is confirmed and
+  no grant holds. The boundary is the wire's order, not the moment a handler
+  runs — the SDK resolves a response the instant it reads it while the
+  updates read before it may still be on their way to their handler, so the
+  pool counts the updates read when each load or resume answer is read
+  (`pool.ts:answeredBefore`), and an update is history exactly when its
+  place is below the count. Before a resume answers, reports are current but
+  Cancel waits for the answer.
+- **The one mutation.** `cancelSubagent` sends `session/cancel` with the
+  child's id where its current grant allows, and answers its pending
+  permissions cancelled; anything else is refused at the writer. A child's
+  asks belong to it, never to its session's turn: the parent's Stop leaves
+  them; the child reporting itself cancelled answers them.
+- **Teardown.** A child rides the attachment and goes with it, through the
+  shared drop helper: a dropped attachment leaves the roster as history
+  (`subagentsUnconfirmed` — nothing confirmed, nothing cancellable); a
+  closed session takes its roster and the children's transcripts with it
+  (the reducer's `sessionClosed`); a load's reset rebuilds them from the
+  replay. A child at work keeps its session from the idle reaper, counts as
+  work a stop would cut off, and refuses a release.
+- **The view.** The roster is the orchestrator's (`subagentUpserted`, each
+  row whole); the webview renders the sub-agents chip in the read-out strip,
+  the roster in its Radix panel, and a child's transcript inside its
+  session's chat — a view of that pane only. Marks are the session marks
+  (waiting on you, running), plus a hollowed last-known look for work no
+  longer confirmed; the gates are pure functions (`subagent-controls.ts`).
+  Messages between sessions are one block per message
+  (`SessionMessageBlock`), "To …" or "From …" where they arrived.
+- **Results stay with the session.** The agent replays its children's
+  history through the session's own load, so patchbay stores nothing of
+  theirs.
 
 ## Session model, mode, effort
 

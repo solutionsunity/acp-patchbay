@@ -55,11 +55,15 @@ export type TurnStep =
   | { type: "crash" }
   /** Says who the client said it was at initialize. */
   | { type: "echoClientInfo" }
-  | { type: "writeFile"; path: string; content: string }
-  | { type: "readFile"; path: string }
-  | { type: "runCommand"; command: string; args?: string[]; env?: Record<string, string>; cwd?: string }
+  /** `as` on a client request: asked by that sub-agent (names as in
+   * `update` steps), its answer said on the sub-agent's stream. */
+  | { type: "writeFile"; path: string; content: string; as?: string }
+  | { type: "readFile"; path: string; as?: string }
+  | { type: "runCommand"; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; as?: string }
   | {
       type: "askPermission";
+      /** Asked by this sub-agent (`$name`, see below), not the session. */
+      as?: string;
       title: string;
       kind: "execute" | "edit";
       subject: string | string[];
@@ -72,6 +76,9 @@ export type TurnStep =
       /** Asks and moves on: the turn ends with the request still open, and
        * the answer, whenever it comes, is said in an update of its own. */
       leaveOpen?: boolean;
+      /** The answer goes unsaid — a recorded agent's turn, replayed as it
+       * went. */
+      silent?: boolean;
     }
   | { type: "echoBlocks" }
   | { type: "echoBlockKinds" }
@@ -97,8 +104,19 @@ export type TurnStep =
   | { type: "callMcpTool"; tool: string; args?: Record<string, unknown>; server?: string }
   | { type: "infoUpdate"; title: string }
   /** Any session/update, sent as-is and recorded like the rest — the
-   * whole update surface, every field and variant, for corpus tests. */
-  | { type: "update"; update: acp.SessionUpdate };
+   * whole update surface, every field and variant, for corpus tests.
+   * Sub-agents, in the form the spec gives them: `as` sends it on a
+   * sub-agent's own stream rather than the session's, and inside `update`
+   * a string that is exactly `$P` names the session, `$<name>` the
+   * sub-agent of that name — each sub-agent's id is the session's with its
+   * name appended, so it is unique on the connection. */
+  | { type: "update"; update: acp.SessionUpdate; as?: string }
+  /** Waits for the client's `session/cancel` of this sub-agent, then
+   * reports it idle, cancelled, on its parent's stream. */
+  | { type: "awaitCancel"; as: string }
+  /** The turn answers `end_turn` here; the steps after it go on running
+   * — a sub-agent working in the background past its parent's turn. */
+  | { type: "endTurn" };
 
 export interface FakeAgentScript {
   name?: string;
@@ -115,6 +133,10 @@ export interface FakeAgentScript {
   authMethods?: acp.AuthMethod[];
   /** Steps streamed per prompt turn (default: two text chunks). */
   turn?: TurnStep[];
+  /** What session/load replays, instead of the session's record — a
+   * recorded agent's replay as it sent it — and what it sends right after
+   * its answer (the sub-agents' fresh state). Names as in `update` steps. */
+  loadReplay?: { replay: { update: acp.SessionUpdate; as?: string }[]; after: { update: acp.SessionUpdate; as?: string }[] };
   stepDelayMs?: number;
   /** After session/cancel, the turn takes this long to wind down before it
    * answers `cancelled` — slow, still the spec's answer. */
@@ -217,19 +239,29 @@ let sessionCounter = 0;
 
 // ── durable per-session record, so session/load survives this process dying ─
 
-function recordUpdate(cwd: string, sessionId: string, update: acp.SessionUpdate): void {
-  const file = storeFile(cwd, sessionId);
-  mkdirSync(join(file, ".."), { recursive: true });
-  appendFileSync(file, JSON.stringify(update) + "\n", "utf8");
+/** A session's record line: an update on its own stream, or — `as` set —
+ * on one of its sub-agents' streams, by the sub-agent's id. */
+interface Recorded {
+  update: acp.SessionUpdate;
+  as?: string;
 }
 
-function readRecordedUpdates(cwd: string, sessionId: string): acp.SessionUpdate[] {
+function recordUpdate(cwd: string, sessionId: string, update: acp.SessionUpdate, as?: string): void {
+  const file = storeFile(cwd, sessionId);
+  mkdirSync(join(file, ".."), { recursive: true });
+  appendFileSync(file, JSON.stringify(as === undefined ? update : { as, update }) + "\n", "utf8");
+}
+
+function readRecordedUpdates(cwd: string, sessionId: string): Recorded[] {
   const file = storeFile(cwd, sessionId);
   if (!existsSync(file)) return [];
   return readFileSync(file, "utf8")
     .split("\n")
     .filter((line) => line.trim() !== "")
-    .map((line) => JSON.parse(line) as acp.SessionUpdate);
+    .map((line) => {
+      const read = JSON.parse(line) as acp.SessionUpdate | Required<Recorded>;
+      return "sessionUpdate" in read ? { update: read } : read;
+    });
 }
 
 async function emitUpdate(
@@ -237,10 +269,43 @@ async function emitUpdate(
   sessionId: string,
   cwd: string,
   update: acp.SessionUpdate,
+  /** The sub-agent whose stream it rides, by its id — absent: the
+   * session's own. */
+  as?: string,
 ): Promise<void> {
   // A notice is a live event, not history: the spec has it never replayed.
-  if (update.sessionUpdate !== "notice") recordUpdate(cwd, sessionId, update);
-  await cx.notify(acp.methods.client.session.update, { sessionId, update });
+  if (update.sessionUpdate !== "notice") recordUpdate(cwd, sessionId, update, as);
+  if (update.sessionUpdate === "subagent_update") parents.set(update.sessionId, as ?? sessionId);
+  await cx.notify(acp.methods.client.session.update, { sessionId: as ?? sessionId, update });
+}
+
+// ── sub-agents: named in a script, given ids unique on the connection ─
+
+/** Each sub-agent's parent, by the ids the wire carries — set where its
+ * announcement went out. */
+const parents = new Map<string, string>();
+/** The sub-agents the client cancelled, each with what a step waits on. */
+const cancels = new Map<string, { cancelled: boolean; wake: () => void }>();
+
+/** The updates only a client declaring `subagents` may be sent. */
+const SUBAGENT_KINDS = new Set(["subagent_update", "session_message", "session_message_chunk"]);
+
+function subagentId(sessionId: string, name: string): string {
+  return `${sessionId}.${name}`;
+}
+
+/** A script's names, resolved: `$P` is the session, `$<name>` its
+ * sub-agent — only where a string is exactly the name. */
+function resolved<T>(value: T, sessionId: string): T {
+  return JSON.parse(JSON.stringify(value), (_key, v: unknown) =>
+    typeof v !== "string" || !v.startsWith("$") ? v : v === "$P" ? sessionId : subagentId(sessionId, v.slice(1)),
+  ) as T;
+}
+
+function cancelOf(id: string): { cancelled: boolean; wake: () => void } {
+  let entry = cancels.get(id);
+  if (entry === undefined) cancels.set(id, (entry = { cancelled: false, wake: () => {} }));
+  return entry;
 }
 
 /** A client request's error reply as the agent received it — code first,
@@ -263,16 +328,30 @@ async function runTurn(
   cx: acp.AgentContext,
 ): Promise<acp.StopReason> {
   if (promptText.includes("__crash__")) process.exit(1);
+  return runTurnSteps(script.turn ?? defaultTurn, sessionId, cwd, promptText, rawPrompt, signal, cx);
+}
 
-  const steps = script.turn ?? defaultTurn;
+async function runTurnSteps(
+  steps: readonly TurnStep[],
+  sessionId: string,
+  cwd: string,
+  promptText: string,
+  rawPrompt: acp.ContentBlock[],
+  signal: AbortSignal,
+  cx: acp.AgentContext,
+): Promise<acp.StopReason> {
   const windDown = async (): Promise<acp.StopReason> => {
     await sleep(script.cancelDelayMs ?? 0);
     return "cancelled";
   };
-  for (const step of steps) {
+  for (const [index, step] of steps.entries()) {
     if (signal.aborted) return windDown();
     await sleep(stepDelay);
     if (signal.aborted) return windDown();
+    const asker = "as" in step && step.as !== undefined ? subagentId(sessionId, step.as) : undefined;
+    // The spec's rule for an agent: sub-agents are shown only to a client
+    // that declared it understands them.
+    if ((asker !== undefined || (step.type === "update" && SUBAGENT_KINDS.has(step.update.sessionUpdate))) && clientCapabilities?.subagents == null) continue;
 
     switch (step.type) {
       case "crash":
@@ -368,7 +447,7 @@ async function runTurn(
         let result: string;
         try {
           await cx.request(acp.methods.client.fs.writeTextFile, {
-            sessionId,
+            sessionId: asker ?? sessionId,
             path: step.path,
             content: step.content,
           });
@@ -379,14 +458,14 @@ async function runTurn(
         await emitUpdate(cx, sessionId, cwd, {
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: result },
-        });
+        }, asker);
         break;
       }
       case "readFile": {
         let result: string;
         try {
           const response = await cx.request(acp.methods.client.fs.readTextFile, {
-            sessionId,
+            sessionId: asker ?? sessionId,
             path: step.path,
           });
           result = `read: ${response.content}`;
@@ -396,14 +475,14 @@ async function runTurn(
         await emitUpdate(cx, sessionId, cwd, {
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: result },
-        });
+        }, asker);
         break;
       }
       case "runCommand": {
         let result: string;
         try {
           const request: acp.CreateTerminalRequest = {
-            sessionId,
+            sessionId: asker ?? sessionId,
             command: step.command,
             args: step.args ?? [],
             ...(step.env !== undefined
@@ -413,15 +492,15 @@ async function runTurn(
           };
           const created = await cx.request(acp.methods.client.terminal.create, request);
           const exit = await cx.request(acp.methods.client.terminal.waitForExit, {
-            sessionId,
+            sessionId: asker ?? sessionId,
             terminalId: created.terminalId,
           });
           const out = await cx.request(acp.methods.client.terminal.output, {
-            sessionId,
+            sessionId: asker ?? sessionId,
             terminalId: created.terminalId,
           });
           await cx.request(acp.methods.client.terminal.release, {
-            sessionId,
+            sessionId: asker ?? sessionId,
             terminalId: created.terminalId,
           });
           result = `command: exit=${exit.exitCode} output=${out.output.trim()}`;
@@ -431,7 +510,7 @@ async function runTurn(
         await emitUpdate(cx, sessionId, cwd, {
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: result },
-        });
+        }, asker);
         break;
       }
       case "askPermission": {
@@ -448,7 +527,7 @@ async function runTurn(
           .request(
             acp.methods.client.session.requestPermission,
             {
-              sessionId,
+              sessionId: asker ?? sessionId,
               toolCall: {
                 toolCallId: `ask-${sessionId}`,
                 title: step.title,
@@ -469,8 +548,9 @@ async function runTurn(
             (err: unknown) => `withdrawn ${(err as { code?: number }).code ?? "?"}`,
           );
         const say = (outcome: string) =>
-          emitUpdate(cx, sessionId, cwd, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `permission: ${outcome}` } });
-        if (step.leaveOpen === true) void asked.then(say);
+          emitUpdate(cx, sessionId, cwd, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `permission: ${outcome}` } }, asker);
+        if (step.silent === true) await asked;
+        else if (step.leaveOpen === true) void asked.then(say);
         else await say(await asked);
         break;
       }
@@ -604,8 +684,20 @@ async function runTurn(
         });
         break;
       case "update":
-        await emitUpdate(cx, sessionId, cwd, step.update);
+        await emitUpdate(cx, sessionId, cwd, resolved(step.update, sessionId), step.as && subagentId(sessionId, step.as));
         break;
+      case "awaitCancel": {
+        const id = subagentId(sessionId, step.as);
+        const entry = cancelOf(id);
+        if (!entry.cancelled) await new Promise<void>((wake) => (entry.wake = wake));
+        await emitUpdate(cx, sessionId, cwd, { sessionUpdate: "subagent_update", sessionId: id, state: { state: "idle", stopReason: "cancelled" } }, parents.get(id) === sessionId ? undefined : parents.get(id));
+        break;
+      }
+      case "endTurn": {
+        const rest = steps.slice(index + 1);
+        void runTurnSteps(rest, sessionId, cwd, promptText, rawPrompt, new AbortController().signal, cx);
+        return "end_turn";
+      }
       case "callMcpTool": {
         let result: string;
         try {
@@ -779,8 +871,25 @@ const app = acp
       mcpServers: ctx.params.mcpServers,
       additionalDirectories: ctx.params.additionalDirectories ?? [],
     });
-    for (const update of readRecordedUpdates(cwd, sessionId)) {
-      await ctx.client.notify(acp.methods.client.session.update, { sessionId, update });
+    const replay = script.loadReplay?.replay.map((r) => ({ update: resolved(r.update, sessionId), as: r.as && subagentId(sessionId, r.as) }));
+    for (const { update, as } of replay ?? readRecordedUpdates(cwd, sessionId)) {
+      if ((as !== undefined || SUBAGENT_KINDS.has(update.sessionUpdate)) && clientCapabilities?.subagents == null) continue;
+      if (update.sessionUpdate === "subagent_update") parents.set(update.sessionId, as ?? sessionId);
+      await ctx.client.notify(acp.methods.client.session.update, { sessionId: as ?? sessionId, update });
+    }
+    // After the answer: the sub-agents' fresh state, which history can't
+    // carry — written with the answer in one write, so they arrive in one
+    // chunk, as an agent sending them at once does.
+    const after = clientCapabilities?.subagents == null ? [] : (script.loadReplay?.after ?? []);
+    if (after.length > 0) {
+      glued.set(
+        ctx.requestId ?? "",
+        after.map((r) => ({
+          jsonrpc: "2.0",
+          method: acp.methods.client.session.update,
+          params: { sessionId: r.as === undefined ? sessionId : subagentId(sessionId, r.as), update: resolved(r.update, sessionId) },
+        })),
+      );
     }
     const response: acp.LoadSessionResponse = {};
     if (script.modes) response.modes = script.modes;
@@ -962,12 +1071,42 @@ const app = acp
   })
   .onNotification("session/cancel", (ctx) => {
     sessions.get(ctx.params.sessionId)?.pending?.abort();
+    if (parents.has(ctx.params.sessionId)) {
+      const entry = cancelOf(ctx.params.sessionId);
+      entry.cancelled = true;
+      entry.wake();
+    }
   });
 
 for (const line of script.stdoutNoise ?? []) process.stdout.write(`${line}\n`);
 
+/** Messages written in the same write as the answer to a request, by its
+ * id. */
+const glued = new Map<string | number, unknown[]>();
+
+/** stdout, where an answer goes out with whatever is glued to it. */
+const out = new Writable({
+  write(chunk: Buffer, _encoding, done) {
+    const text = chunk.toString("utf8");
+    const id = (() => {
+      try {
+        return (JSON.parse(text) as { id?: string | number; method?: string }).id;
+      } catch {
+        return undefined;
+      }
+    })();
+    const rest = id === undefined ? undefined : glued.get(id);
+    if (rest === undefined) {
+      process.stdout.write(chunk, done);
+      return;
+    }
+    glued.delete(id!);
+    process.stdout.write(text + rest.map((m) => JSON.stringify(m) + "\n").join(""), done);
+  },
+});
+
 const stream = acp.ndJsonStream(
-  Writable.toWeb(process.stdout),
+  Writable.toWeb(out),
   Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>,
 );
 app.connect(stream);

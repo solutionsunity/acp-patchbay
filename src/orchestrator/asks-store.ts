@@ -26,6 +26,7 @@
 // action runs ahead of its record.
 import type {
   AgentViewEvent,
+  AskedBy,
   DiffRow,
   ElicitationAnswer,
   ElicitationAsk,
@@ -41,10 +42,25 @@ import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../share
 
 export type AskKind = "permission" | "command" | "write" | "question";
 
+/** Who asks on a session: the session itself, or a sub-agent hanging in
+ * it — its card shows in the session's transcript either way, naming the
+ * sub-agent; a sub-agent's ask belongs to the sub-agent, never to the
+ * session's turn. */
+export interface Requester {
+  patchbaySessionId: PatchbaySessionId;
+  subagent?: AskedBy;
+}
+
+/** Where a requester's own work shows: its transcript — a sub-agent's, or
+ * the session's. */
+export function transcriptOf(requester: Requester): PatchbaySessionId {
+  return requester.subagent?.id ?? requester.patchbaySessionId;
+}
+
 /** Where an ask is asked, and its card shows: a session, in its
  * transcript; or, for a question no session owns, its agent — on the
  * agent's card in Settings. */
-export type AskPlace = { patchbaySessionId: PatchbaySessionId } | { patchbayAgentId: PatchbayAgentId };
+export type AskPlace = Requester | { patchbayAgentId: PatchbayAgentId };
 
 /** Where an ask stands. `waiting`: a page the user opened, still in play.
  * `withdrawn`, `answered`: a question the agent withdrew, or a page the
@@ -208,7 +224,7 @@ export class AsksStore {
    * there now, if any; only a question is asked on no session — its agent
    * holds it. `ending` settles once the ask has ended. */
   open(
-    at: { patchbaySessionId: PatchbaySessionId },
+    at: Requester,
     kind: AskKind,
     subject: Readonly<Record<string, unknown>> | null,
     link?: { href: string; completion: LinkCompletion | null } | null,
@@ -226,7 +242,7 @@ export class AsksStore {
     link: { href: string; completion: LinkCompletion | null } | null = null,
   ): { id: PatchbayAskId; ending: Promise<AskEnding> } {
     const id = newBlockId(PREFIX[kind]) as PatchbayAskId;
-    const turn = "patchbaySessionId" in at ? this.hooks.turnOf(at.patchbaySessionId) : null;
+    const turn = "patchbaySessionId" in at && at.subagent === undefined ? this.hooks.turnOf(at.patchbaySessionId) : null;
     const ending = new Promise<AskEnding>((reply, fail) => {
       this.rows.set(id, { id, at, turn, kind, subject, link, state: "open", shown: false, options: [], proposals: [], reply, fail });
     });
@@ -252,7 +268,7 @@ export class AsksStore {
   /** The line a card goes out on, the ask holding what an answer to it may
    * pick and what it would change. */
   private cardLine(ask: Ask, card: AskCard): CardEvent {
-    const at = { patchbayAskId: ask.id };
+    const at = { patchbayAskId: ask.id, ...("subagent" in ask.at && ask.at.subagent !== undefined ? { subagent: ask.at.subagent } : {}) };
     switch (card.kind) {
       case "options":
         ask.options = card.options;
@@ -304,11 +320,21 @@ export class AsksStore {
    * the agent is never left hanging on a turn that is over — and a page it
    * was waiting on is no longer offered. A stop the user asked for
    * (`session/cancel`) also cancels every permission the session still
-   * asks, whenever it was asked: the spec owes each the cancelled outcome. */
+   * asks, whenever it was asked: the spec owes each the cancelled outcome.
+   * Never a sub-agent's: its work may go on past the turn, and it stands
+   * until it reports itself cancelled. */
   endTurn(patchbaySessionId: PatchbaySessionId, turn: string, stopped: boolean): void {
     for (const ask of [...this.rows.values()]) {
-      if (!asksOn(ask, patchbaySessionId)) continue;
+      if (!asksOn(ask, patchbaySessionId) || subagentOf(ask) !== undefined) continue;
       if (ask.turn === turn || (stopped && ask.kind === "permission")) this.settle(ask, { end: "stop" });
+    }
+  }
+
+  /** A sub-agent's work was cancelled: every permission it still asks is
+   * answered cancelled, as the spec owes. */
+  cancelSubagent(patchbaySessionId: PatchbaySessionId, subagent: PatchbaySessionId): void {
+    for (const ask of [...this.rows.values()]) {
+      if (asksOn(ask, patchbaySessionId) && subagentOf(ask) === subagent && ask.kind === "permission") this.settle(ask, { end: "stop" });
     }
   }
 
@@ -470,9 +496,14 @@ function isQuestionEvent(event: CardEvent): event is QuestionEvent {
   return QUESTION_LINE[event.kind];
 }
 
-/** Whether the ask was asked on this session. */
+/** Whether the ask was asked on this session — by it, or a sub-agent of it. */
 function asksOn(ask: Ask, patchbaySessionId: PatchbaySessionId): boolean {
   return "patchbaySessionId" in ask.at && ask.at.patchbaySessionId === patchbaySessionId;
+}
+
+/** The sub-agent that asked, when one did. */
+function subagentOf(ask: Ask): PatchbaySessionId | undefined {
+  return "subagent" in ask.at ? ask.at.subagent?.id : undefined;
 }
 
 /** Whether any end can still move the ask — one none can leaves the

@@ -13,6 +13,14 @@ import type { AvailableCommand, PlanEntry, PlanUsageInfo, SessionKnobView } from
 import { planUsageOf } from "../meta";
 import { present, readContent, type ContentFact } from "./content";
 import type { Note } from "./notes";
+import {
+  readSessionMessage,
+  readSessionMessageChunk,
+  readSubagentUpdate,
+  type SessionMessageChunkFact,
+  type SessionMessageFact,
+  type SubagentFact,
+} from "./subagent";
 import { readToolCall, readToolCallAnnounced, type ToolCallFact } from "./tool-call";
 
 /** The prose channels: a user's message, an agent's message, its thought. */
@@ -40,6 +48,11 @@ export type SessionUpdateFact =
   /** A notice: the agent telling the user something outside its answer.
    * Plain text; a missing or null description is none. */
   | { kind: "notice"; severity: string; title: string; description?: string }
+  /** A sub-agent's association, patched — the outer session is its parent. */
+  | SubagentFact
+  /** A message one session sent another, as one transcript sees it. */
+  | SessionMessageFact
+  | SessionMessageChunkFact
   /** A kind no surface renders yet: its name and payload, shown raw. */
   | { kind: "carried"; updateKind: string; payload: unknown };
 
@@ -97,13 +110,16 @@ export function readSessionUpdate(update: SessionUpdate, note: Note): SessionUpd
       return { kind: "compactionChunk", compactionId: update.compactionId, content: readContent(update.content) };
     case "notice":
       return { kind: "notice", severity: update.severity, title: update.title, ...present("description", update.description) };
+    case "subagent_update":
+      return readSubagentUpdate(update, note);
+    case "session_message":
+      return readSessionMessage(update);
+    case "session_message_chunk":
+      return readSessionMessageChunk(update);
     // Each of these sits behind a client capability patchbay doesn't
     // declare — an agent that sends one anyway is shown, not silenced.
     case "plan_update":
-    case "plan_removed":
-    case "subagent_update":
-    case "session_message":
-    case "session_message_chunk": {
+    case "plan_removed": {
       const { sessionUpdate, ...payload } = update;
       note(`${sessionUpdate} has no surface yet — shown as the agent sent it`);
       return { kind: "carried", updateKind: sessionUpdate, payload };

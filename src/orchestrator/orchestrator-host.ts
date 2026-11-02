@@ -821,6 +821,13 @@ export class OrchestratorHost {
       case "stopTurn":
         void this.orchestrator.sessionGates.stop(action.patchbaySessionId).catch(this.orchestrator.logCatch(`stop turn ${action.patchbaySessionId}`));
         break;
+      case "cancelSubagent":
+        try {
+          this.orchestrator.sessions.cancelSubagent(action.patchbaySessionId, action.subagentId);
+        } catch (err) {
+          void vscode.window.showWarningMessage(`Cancel failed — ${agentErrorText(err)}`);
+        }
+        break;
       case "editAgentDefaults":
         void (action.open ? this.orchestrator.defaultsEditor.open(action.patchbayAgentId) : this.orchestrator.defaultsEditor.close(action.patchbayAgentId));
         break;

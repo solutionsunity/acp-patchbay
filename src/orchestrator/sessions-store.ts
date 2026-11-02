@@ -23,6 +23,7 @@ import type { ContentBlock, McpServer } from "./acp";
 import {
   type AgentStatus,
   type AgentViewEvent,
+  type AskedBy,
   type CapabilityMatrix,
   type ChatBlock,
   type ContextChip,
@@ -30,7 +31,10 @@ import {
   type PersistedChip,
   type QueuedPrompt,
   type SessionContinuity,
+  type SessionKnobView,
   type SessionSummary,
+  type SubagentView,
+  subagentWork,
   type ToolCallBlock,
   type TurnUsage,
   type UserBlock,
@@ -53,11 +57,13 @@ import { nullLogger, type Logger } from "./logger";
 import { unlessAborted } from "./abort";
 import type { AttachedServer } from "./mcp-servers-store";
 import { type AgentPool, ConnectionLost } from "./pool";
+import { isUnder } from "./broker";
 import { newBlockId } from "./block-ids";
-import { SessionStream, type StreamState } from "./session-stream";
+import { SessionStream, type Peers, type StreamState } from "./session-stream";
 import { agentErrorText } from "./readers/agent-error";
 import { NoteLog } from "./readers/notes";
 import { sessionMetaOf, type SessionUpdateFact } from "./readers/session-update";
+import type { SubagentFact, SubagentStateFact } from "./readers/subagent";
 import type { ToolCallFact } from "./readers/tool-call";
 import type { ListedSessionFact } from "./readers/responses";
 import type { SessionContinuityStore } from "./stores/session-continuity";
@@ -143,6 +149,10 @@ export interface SessionsStoreHooks {
    * that is over (and a stop owes every pending permission that answer —
    * an ACP MUST). */
   endTurnAsks?(patchbaySessionId: PatchbaySessionId, turn: string, stopped: boolean): void;
+  /** A sub-agent's work was cancelled — by the user, or as its agent
+   * reports it: the permissions it still asks are answered cancelled, as
+   * the spec owes them. Its other asks, and its descendants', stand. */
+  cancelSubagentAsks?(patchbaySessionId: PatchbaySessionId, subagent: PatchbaySessionId): void;
   /** Standing auth lock on this agent (the orchestrator's persisted,
    * evidence-gated auth state). While it holds, no turn may start: the
    * turn-start door queues the words instead of firing them into a wire
@@ -261,21 +271,83 @@ interface LiveSession extends StreamState {
    * honest confirmation). The config surface records straight off the
    * set_config_option response and never sets this. */
   userModeSetPending: boolean;
+  /** The attach still waiting on its answer: what arrives before a
+   * `session/load` answers is history — no sub-agent's work is confirmed
+   * by it, nothing it grants holds; before a `session/resume` answers it
+   * is current, but nothing can be cancelled until the answer lands. */
+  opening: "load" | "resume" | null;
+  /** The session's sub-agents, nested ones included, by the agent's id
+   * for each — they ride the attachment and go with it. */
+  children: Map<string, Child>;
 }
 
-function liveSession(): LiveSession {
+/** A sub-agent: a session the agent's session started and owns. Not a row
+ * — never in the list, never prompted, loaded, closed or set — but a
+ * transcript of its own, and requests the agent makes on its behalf,
+ * judged as its root session's. */
+interface Child extends StreamState {
+  /** Patchbay's id for it — its transcript's key. */
+  id: PatchbaySessionId;
+  /** The agent's id for it. */
+  sessionId: string;
+  /** Who owns it: the session, or another sub-agent of it. */
+  parent: PatchbaySessionId;
+  title: string | null;
+  description: string | null;
+  conversationTitle: string | null;
+  /** Its work as confirmed now; null when nothing current is known. */
+  state: SubagentStateFact | null;
+  lastKnown: SubagentStateFact | null;
+  /** The agent's live grant to cancel it — history grants nothing. */
+  cancel: boolean;
+  /** Where the agent placed it — null: where its parent works. */
+  cwd: string | null;
+  additionalDirectories: readonly string[] | null;
+  config: readonly SessionKnobView[];
+}
+
+function liveSession(opening: LiveSession["opening"] = null): LiveSession {
+  return {
+    ...freshStream(),
+    opening,
+    children: new Map(),
+    knobs: NO_KNOBS,
+    lastActivityAt: Date.now(),
+    userModeSetPending: false,
+  };
+}
+
+/** A transcript's stream state before anything arrived — a session's
+ * attachment's, a sub-agent's. */
+function freshStream(): StreamState {
   return {
     openRun: null,
-    knobs: NO_KNOBS,
     turn: null,
-    lastActivityAt: Date.now(),
     openToolCalls: new Set(),
     toolCalls: new Map(),
     agentTerminals: new Map(),
     compactions: new Map(),
     replayTurnDirty: false,
-    userModeSetPending: false,
+    messages: new Map(),
   };
+}
+
+/** Patchbay's id for a sub-agent — its root session's, with the agent's
+ * id for the child: one per child, the same each time the agent names it,
+ * so a re-announcement after a reattach lands on the row it had. */
+function subagentId(root: PatchbaySessionId, sessionId: string): PatchbaySessionId {
+  return `${root}/${sessionId}` as PatchbaySessionId;
+}
+
+/** A sub-agent at work right now, as last confirmed. */
+function working(child: Child): boolean {
+  return subagentWork(child.state) !== null;
+}
+
+/** Work on the session a close or a stop would cut off: its turn, or a
+ * sub-agent working on past it. */
+function busy(session: LiveSession): boolean {
+  return session.turn !== null || [...session.children.values()].some(working);
 }
 
 /** An agent's id for a session, with its agent — ids are only unique per
@@ -493,15 +565,16 @@ export class SessionsStore {
 
   /** What stopping this agent's connection would disconnect: the
    * conversations on it, and the turns among them still running (those are
-   * cut off). A never-prompted session doesn't count — it has nothing to
-   * lose and is minted again from its row on next use. */
+   * cut off) — a session whose sub-agents work on past its turn counts as
+   * one. A never-prompted session doesn't count — it has nothing to lose
+   * and is minted again from its row on next use. */
   openWork(patchbayAgentId: PatchbayAgentId): OpenWork {
     let conversations = 0;
     let turns = 0;
     for (const [patchbaySessionId, session] of this.sessions) {
       if (this.agentOfLive(patchbaySessionId) !== patchbayAgentId) continue;
-      if (session.turn !== null) turns++;
-      if (session.turn !== null || this.hasTurns(patchbaySessionId)) conversations++;
+      if (busy(session)) turns++;
+      if (busy(session) || this.hasTurns(patchbaySessionId)) conversations++;
     }
     return { conversations, turns };
   }
@@ -521,7 +594,8 @@ export class SessionsStore {
    * "no saved history" safe — do not relax it to `load || resume`. */
   async release(patchbaySessionId: PatchbaySessionId, reason: string): Promise<void> {
     const session = this.sessions.get(patchbaySessionId);
-    if (session === undefined || session.turn !== null) return;
+    // Its sub-agents' work too: a close would end it.
+    if (session === undefined || busy(session)) return;
     const patchbayAgentId = this.agentOfLive(patchbaySessionId);
     const agent = this.pool.get(patchbayAgentId);
     if (agent?.status !== "running") return; // nothing attached to free
@@ -559,6 +633,8 @@ export class SessionsStore {
    * 7. no held prompts — words queued at the turn-start door (mid-turn or
    *    auth-held) are unfinished user work, the same class as an unseen
    *    result.
+   * 8. no sub-agent at work — one running past its parent's turn would end
+   *    with the close.
    *
    * The active-in-view session is always exempt: visible chat state never
    * changes under the user. */
@@ -569,6 +645,7 @@ export class SessionsStore {
         ([patchbaySessionId, session]) =>
           this.hasTurns(patchbaySessionId) &&
           session.lastActivityAt <= cutoff &&
+          ![...session.children.values()].some(working) &&
           !(this.hooks.isActiveSession?.(patchbaySessionId) ?? false) &&
           !(this.hooks.isUnseen?.(patchbaySessionId) ?? false) &&
           !this.hasHeld(patchbaySessionId),
@@ -764,7 +841,10 @@ export class SessionsStore {
     try {
       const { knobs } = await this.attachSession({ via: "load", patchbaySessionId }, patchbayAgentId, {}, signal);
       const session = this.sessions.get(patchbaySessionId);
-      if (session !== undefined) this.stream.finishReplay(patchbaySessionId, session);
+      if (session !== undefined) {
+        this.settleAttach(patchbaySessionId, session);
+        this.stream.finishReplay(patchbaySessionId, session);
+      }
       this.sayCutTurn(patchbaySessionId);
       return knobs;
     } finally {
@@ -1006,7 +1086,7 @@ export class SessionsStore {
    * caller's — a delete forgets it, a close and a prune leave it, and a
    * removed agent's go together. */
   private forget(patchbaySessionId: PatchbaySessionId): void {
-    this.sessions.delete(patchbaySessionId);
+    this.dropLiveSession(patchbaySessionId);
     this.stream.forget(patchbaySessionId);
     this.unbind(patchbaySessionId);
     this.hooks.emit({ kind: "sessionClosed", patchbaySessionId });
@@ -1083,7 +1163,9 @@ export class SessionsStore {
    * place the turn-end block. What the user staged stays on the session's
    * continuity row, untouched: held words (only the user discards words —
    * Stop, the row's ×, a delete or close; the drain's running-agent gate
-   * holds them until a reattach can send), chips, draft, roots, knobs. */
+   * holds them until a reattach can send), chips, draft, roots, knobs.
+   * Its sub-agents ride the attachment and go with it: what the view shows
+   * of them stays, as history — none at work, none to cancel. */
   private dropLiveSession(patchbaySessionId: PatchbaySessionId): void {
     const session = this.sessions.get(patchbaySessionId);
     if (session === undefined) return;
@@ -1091,6 +1173,7 @@ export class SessionsStore {
       this.stream.sweep(patchbaySessionId, session);
       this.stream.seal(patchbaySessionId, session);
     }
+    if (session.children.size > 0) this.hooks.emit({ kind: "subagentsUnconfirmed", patchbaySessionId });
     this.sessions.delete(patchbaySessionId);
   }
 
@@ -1333,7 +1416,7 @@ export class SessionsStore {
         `session ${patchbaySessionId} is no longer live and ${patchbayAgentId} does not support session/load`,
       );
     }
-    this.sessions.set(patchbaySessionId, liveSession());
+    this.sessions.set(patchbaySessionId, liveSession("load"));
     let knobs: NormalizedKnobs | undefined;
     try {
       knobs = await this.loadSilently(patchbaySessionId, patchbayAgentId, signal);
@@ -1444,8 +1527,10 @@ export class SessionsStore {
    * where it ends and the agent's unreplayed memory continues. Never merged
    * with replay — there is none. */
   private async resumeReattach(patchbaySessionId: PatchbaySessionId, patchbayAgentId: PatchbayAgentId, signal: AbortSignal): Promise<void> {
-    this.sessions.set(patchbaySessionId, liveSession());
+    this.sessions.set(patchbaySessionId, liveSession("resume"));
     const { knobs } = await this.attachSession({ via: "resume", patchbaySessionId }, patchbayAgentId, {}, signal);
+    const session = this.sessions.get(patchbaySessionId);
+    if (session !== undefined) this.settleAttach(patchbaySessionId, session);
     const blocks = this.hooks.currentTranscript?.(patchbaySessionId) ?? [];
     const marker: ChatBlock = {
       kind: "patchbayNotice",
@@ -1811,12 +1896,32 @@ export class SessionsStore {
    * roots it started with and any added since. Its root list, minus a cwd
    * no workspace folder backs — with no folder open the session still runs
    * somewhere, but nobody handed the agent that place. What the write
-   * scope's workspace and session roots mean. */
-  grantedRoots(patchbaySessionId: PatchbaySessionId): { workspace: string[]; added: string[] } {
-    const [cwd = "", ...rest] = this.rootsOf(patchbaySessionId);
+   * scope's workspace and session roots mean. A sub-agent's are its own
+   * root set's — never its session's whole list. */
+  grantedRoots(patchbaySessionId: PatchbaySessionId, subagent?: PatchbaySessionId): { workspace: string[]; added: string[] } {
     const folders = this.hooks.workspaceRoots?.() ?? [];
+    if (subagent !== undefined) {
+      // A sub-agent's root set, by where each lies: a place its agent made
+      // inside the workspace (a worktree in the project) is the
+      // workspace's, anywhere else is a root of its own.
+      const roots = this.subagentRoots(patchbaySessionId, subagent);
+      const inWorkspace = (p: string) => folders.some((f) => isUnder(p, f));
+      return { workspace: roots.filter(inWorkspace), added: roots.filter((p) => !inWorkspace(p)) };
+    }
+    const [cwd = "", ...rest] = this.rootsOf(patchbaySessionId);
     const isFolder = (p: string) => folders.includes(p);
     return { workspace: [cwd, ...rest].filter(isFolder), added: rest.filter((p) => !isFolder(p)) };
+  }
+
+  /** A sub-agent's root set: the directory its agent reported for it, then
+   * the additional ones — each, where unreported, its parent's, so one
+   * placed in a worktree of its own reaches only what it was given there.
+   * A sub-agent no attached session holds has none. */
+  subagentRoots(patchbaySessionId: PatchbaySessionId, subagent: PatchbaySessionId): string[] {
+    const child = this.childOf(patchbaySessionId, subagent);
+    if (child === undefined) return [];
+    const [cwd = "", ...more] = child.parent === patchbaySessionId ? this.rootsOf(patchbaySessionId) : this.subagentRoots(patchbaySessionId, child.parent);
+    return [child.cwd ?? cwd, ...(child.additionalDirectories ?? more)];
   }
 
   /** The sessions attached right now — what a workspace folder change
@@ -2443,15 +2548,19 @@ export class SessionsStore {
   }
 
   /** Routed from AgentPool's onSessionUpdate hook, live and replayed alike:
-   * the session's own facts — its title, its knobs — are kept here; the
-   * rest is its transcript's, through the stream. */
-  handleUpdate(patchbayAgentId: PatchbayAgentId, sessionId: string, update: SessionUpdateFact): void {
+   * the session's own facts — its title, its knobs, its sub-agents — are
+   * kept here; the rest is its transcript's, through the stream. `seq` is
+   * the update's place on its connection (the pool's), what tells a load's
+   * history from what came after its answer; absent, nothing is history. */
+  handleUpdate(patchbayAgentId: PatchbayAgentId, sessionId: string, update: SessionUpdateFact, seq = Number.POSITIVE_INFINITY): void {
     // The one door every inbound update rides through names the session the
     // agent's way; with its agent, that id finds the one row it means — two
     // agents minting one id are two rows, and nothing deeper re-checks.
     const patchbaySessionId = this.rowFor(patchbayAgentId, sessionId);
     if (patchbaySessionId === undefined) {
-      this.notes.at(patchbayAgentId, "session/update")("an update for a session patchbay doesn't know — dropped");
+      const at = this.childAt(patchbayAgentId, sessionId);
+      if (at !== undefined) this.handleChildUpdate(at.root, at.session, at.child, update, seq);
+      else this.notes.at(patchbayAgentId, "session/update")("an update for a session patchbay doesn't know — dropped");
       return;
     }
     // Session metadata, not transcript — handled before the live guard: the
@@ -2497,9 +2606,175 @@ export class SessionsStore {
           applyConfigUpdate(update.options, session.knobs),
         );
         break;
+      case "subagent":
+        this.noteSubagent(patchbaySessionId, session, patchbaySessionId, update, seq);
+        break;
       default:
-        this.stream.apply(patchbaySessionId, session, update);
+        this.stream.apply(patchbaySessionId, session, update, this.peersOf(patchbaySessionId, session, sessionId));
     }
+  }
+
+  /** An update the agent addressed to a sub-agent: its own facts kept on
+   * it, the rest its transcript's. Nothing of it is the session's to set —
+   * a sub-agent's commands are never offered, its configuration is shown
+   * and never set. */
+  private handleChildUpdate(root: PatchbaySessionId, session: LiveSession, child: Child, update: SessionUpdateFact, seq: number): void {
+    session.lastActivityAt = Date.now();
+    const note = this.notes.at(this.agentOfLive(root), "session/update");
+    switch (update.kind) {
+      case "info":
+        if (update.title === undefined) return;
+        child.conversationTitle = update.title;
+        this.publishSubagent(root, session, child);
+        return;
+      case "configOptions":
+        child.config = update.options;
+        this.publishSubagent(root, session, child);
+        return;
+      case "mode":
+        note("a sub-agent's mode has no surface — dropped");
+        return;
+      case "commands":
+        note("a sub-agent's commands are never offered — dropped");
+        return;
+      case "subagent":
+        this.noteSubagent(root, session, child.id, update, seq);
+        return;
+      default:
+        this.stream.apply(child.id, child, update, this.peersOf(root, session, child.sessionId));
+    }
+  }
+
+  /** A sub-agent announced or patched, under the patch rules — by the
+   * session, or by a sub-agent of it (`parent`). What was read before a
+   * load's answer is history — by its place on the connection, not by when
+   * it is handled here: titles and places stand, but no work is confirmed
+   * and no grant holds. A sub-agent that goes idle ends what it left
+   * running, as a turn's end does; one cancelled is no longer asking. */
+  private noteSubagent(root: PatchbaySessionId, session: LiveSession, parent: PatchbaySessionId, fact: SubagentFact, seq: number): void {
+    const patchbayAgentId = this.agentOfLive(root);
+    if (this.rowFor(patchbayAgentId, fact.childSessionId) !== undefined) {
+      this.notes.at(patchbayAgentId, "session/update")("a session of the list can't be a sub-agent — the update is ignored");
+      return;
+    }
+    let child = session.children.get(fact.childSessionId);
+    if (child === undefined) {
+      child = {
+        ...freshStream(),
+        id: subagentId(root, fact.childSessionId),
+        sessionId: fact.childSessionId,
+        parent,
+        title: null,
+        description: null,
+        conversationTitle: null,
+        state: null,
+        lastKnown: null,
+        cancel: false,
+        cwd: null,
+        additionalDirectories: null,
+        config: [],
+      };
+      session.children.set(fact.childSessionId, child);
+      this.stream.adopt(child.id, root);
+    } else if (child.parent !== parent) {
+      this.notes.at(patchbayAgentId, "session/update")("a sub-agent can't move to another parent — the update is ignored");
+      return;
+    }
+    const history = session.opening === "load" && !this.pool.answeredBefore(patchbayAgentId, this.known.get(root)!.sessionId, seq);
+    const { patch } = fact;
+    if (patch.title !== undefined) child.title = patch.title;
+    if (patch.description !== undefined) child.description = patch.description;
+    if (patch.cwd !== undefined) child.cwd = patch.cwd;
+    if (patch.additionalDirectories !== undefined) child.additionalDirectories = patch.additionalDirectories;
+    if (patch.capabilities !== undefined && !history) child.cancel = patch.capabilities?.cancel === true;
+    if (patch.state !== undefined) {
+      if (patch.state !== null && patch.state.state !== "unknown") child.lastKnown = patch.state;
+      if (!history) child.state = patch.state;
+      if (patch.state?.state === "idle") {
+        this.stream.sweep(child.id, child);
+        this.stream.seal(child.id, child);
+        if (!history && patch.state.stopReason === "cancelled") this.hooks.cancelSubagentAsks?.(root, child.id);
+      }
+    }
+    this.publishSubagent(root, session, child);
+  }
+
+  /** The sub-agent's row, whole, as the view shows it. */
+  private publishSubagent(root: PatchbaySessionId, session: LiveSession, child: Child): void {
+    const subagent: SubagentView = {
+      id: child.id,
+      parentId: child.parent,
+      title: child.title,
+      description: child.description,
+      conversationTitle: child.conversationTitle,
+      state: child.state,
+      lastKnown: child.lastKnown,
+      cancel: child.cancel && session.opening === null,
+      cwd: child.cwd,
+      additionalDirectories: child.additionalDirectories,
+      config: child.config,
+    };
+    this.stream.emitter(root)({ kind: "subagentUpserted", patchbaySessionId: root, subagent });
+  }
+
+  /** The attach answered: from here on what arrives is current, and what
+   * the agent grants holds. What a replay left of each sub-agent's
+   * transcript ends here too, as the session's own does. */
+  private settleAttach(root: PatchbaySessionId, session: LiveSession): void {
+    session.opening = null;
+    for (const child of session.children.values()) {
+      this.stream.sweep(child.id, child);
+      this.stream.seal(child.id, child);
+      this.publishSubagent(root, session, child);
+    }
+  }
+
+  /** Who a session message's sides are: the session itself, or one of its
+   * sub-agents — what the message's transcript (`self`) knows them by. */
+  private peersOf(root: PatchbaySessionId, session: LiveSession, self: string): Peers {
+    const rootId = this.known.get(root)?.sessionId;
+    return { self, idOf: (sessionId) => (sessionId === rootId ? root : (session.children.get(sessionId)?.id ?? null)) };
+  }
+
+  /** The sub-agent an agent names by its own id, in whichever attached
+   * session of the agent's it hangs. */
+  private childAt(patchbayAgentId: PatchbayAgentId, sessionId: string): { root: PatchbaySessionId; session: LiveSession; child: Child } | undefined {
+    for (const [root, session] of this.sessions) {
+      if (this.agentOfLive(root) !== patchbayAgentId) continue;
+      const child = session.children.get(sessionId);
+      if (child !== undefined) return { root, session, child };
+    }
+    return undefined;
+  }
+
+  /** The sub-agent of a session by patchbay's id for it. */
+  private childOf(root: PatchbaySessionId, subagent: PatchbaySessionId): Child | undefined {
+    return [...(this.sessions.get(root)?.children.values() ?? [])].find((c) => c.id === subagent);
+  }
+
+  /** The sub-agent an agent's request names, as the session it hangs in
+   * and the card names it — undefined for an id no attached session holds
+   * as a sub-agent. */
+  subagentFor(patchbayAgentId: PatchbayAgentId, sessionId: string): { patchbaySessionId: PatchbaySessionId; subagent: AskedBy } | undefined {
+    const at = this.childAt(patchbayAgentId, sessionId);
+    return at === undefined ? undefined : { patchbaySessionId: at.root, subagent: { id: at.child.id, title: at.child.title } };
+  }
+
+  /** The one thing the user may do to a sub-agent: cancel its current
+   * work, where its agent granted it and only once the session's attach
+   * has answered. Refused otherwise — a sub-agent is never prompted,
+   * loaded, closed or set from here. Its own permissions are answered
+   * cancelled; its descendants' stand until they report cancelled. */
+  cancelSubagent(patchbaySessionId: PatchbaySessionId, subagent: PatchbaySessionId): void {
+    const session = this.sessions.get(patchbaySessionId);
+    const child = this.childOf(patchbaySessionId, subagent);
+    if (session === undefined || child === undefined || !child.cancel || session.opening !== null) {
+      throw new Error("the agent doesn't offer to cancel this sub-agent now");
+    }
+    void this.pool.cancel(this.agentOfLive(patchbaySessionId), child.sessionId).catch((err: Error) => {
+      this.log.info(`session ${patchbaySessionId}: cancelling a sub-agent failed — ${agentErrorText(err)}`);
+    });
+    this.hooks.cancelSubagentAsks?.(patchbaySessionId, child.id);
   }
 
   /** `session_info_update`: the agent pushed new title/updatedAt. The

@@ -14,7 +14,10 @@ const A2 = "a2" as PatchbayAgentId;
 const holders: SessionHolders = {
   probe: { isProbeSession: (agent, id) => agent === A1 && id === "p" },
   defaultsEditor: { owns: (agent, id) => agent === A1 && id === "d" },
-  sessions: { rowFor: (agent, id) => (agent === A1 && id === "u" ? ("row-u" as PatchbaySessionId) : undefined) },
+  sessions: {
+    rowFor: (agent, id) => (agent === A1 && id === "u" ? ("row-u" as PatchbaySessionId) : undefined),
+    subagentFor: (agent, id) => (agent === A1 && id === "c" ? { patchbaySessionId: "row-u" as PatchbaySessionId, subagent: { id: "row-u/c" as PatchbaySessionId, title: "Explore" } } : undefined),
+  },
 };
 
 describe("sessionOwner — whose session an agent names", () => {
@@ -25,13 +28,18 @@ describe("sessionOwner — whose session an agent names", () => {
     expect(sessionOwner(holders, A1, "gone")).toEqual({ kind: "none" });
   });
 
+  it("a sub-agent's id is the user's session it hangs in, naming the sub-agent", () => {
+    expect(sessionOwner(holders, A1, "c")).toEqual({ kind: "user", patchbaySessionId: "row-u", subagent: { id: "row-u/c", title: "Explore" } });
+    expect(sessionOwner(holders, A2, "c")).toEqual({ kind: "none" });
+  });
+
   it("is agent-scoped: another agent's same id is not this agent's session", () => {
     expect(sessionOwner(holders, A2, "p")).toEqual({ kind: "none" });
     expect(sessionOwner(holders, A2, "u")).toEqual({ kind: "none" });
   });
 
   it("a throwaway session is never the user's, even if a row claims the id", () => {
-    const claimed: SessionHolders = { ...holders, sessions: { rowFor: () => "row-x" as PatchbaySessionId } };
+    const claimed: SessionHolders = { ...holders, sessions: { ...holders.sessions, rowFor: () => "row-x" as PatchbaySessionId } };
     expect(sessionOwner(claimed, A1, "p")).toEqual({ kind: "probe" });
     expect(sessionOwner(claimed, A1, "d")).toEqual({ kind: "defaultsEditor" });
   });

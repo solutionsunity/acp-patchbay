@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// One read-out chip and its panel — the shell both of the read-out strip's
-// chips share. A Radix Popover (dismissal, Escape, focus and placement are
+// One read-out chip and its panel — the shell the read-out strip's chips
+// share. A Radix Popover (dismissal, Escape, focus and placement are
 // Radix's), anchored to the whole strip rather than to its chip, so every
 // panel grows up from the strip over the chat at the strip's full width: one
 // panel shape, whichever chip opened it. Open-state is the strip's — the

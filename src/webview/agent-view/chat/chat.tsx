@@ -13,6 +13,7 @@ import {
   type AgentViewState,
   type ChatBlock,
   type SessionSummary,
+  type SubagentView,
   type TurnUsage,
 } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
@@ -23,12 +24,14 @@ import { formatDuration, itemId, type TranscriptView, type TurnRollup } from "./
 import { readingPosition, windowHolding, type ReadingPosition } from "./reading-position";
 import { Disclosure } from "../../shared/disclosure";
 import {
+  AskedByLine,
   CarriedUpdate,
   CompactionDivider,
   ContentPartView,
   InjectedUser,
   NoticeLine,
   PromptNav,
+  SessionMessage,
   TerminalBlocks,
   Thought,
   ToolCallCard,
@@ -40,6 +43,8 @@ import { AgentMarkdown } from "./markdown";
 import { DiffCard, PermissionCard, TerminalCard } from "./cards";
 import { ElicitationCard } from "../../shared/question-card";
 import { StatePage } from "./state-page";
+import { knobText, subagentLook, subagentName, subagentStateText } from "../subagent-controls";
+import { SubagentDot } from "../subagents-chip";
 import { Button } from "@/components/ui/button";
 import type { PatchbaySessionId } from "../../../shared/ids";
 
@@ -175,18 +180,35 @@ function Block({
       );
     case "carried":
       return <CarriedUpdate updateKind={block.updateKind} payload={block.payload} />;
+    case "sessionMessage":
+      return <SessionMessage block={block} live={live} />;
     case "toolCall":
       return <ToolCallCard block={block} patchbaySessionId={patchbaySessionId} roots={roots} />;
     case "turnEnd":
       return null; // rendered by Chat as TurnLine, with its rollup
     case "permission":
-      return <PermissionCard block={block} patchbaySessionId={patchbaySessionId} roots={roots} />;
+      return (
+        <>
+          {block.subagent !== undefined && <AskedByLine asked={block.subagent} />}
+          <PermissionCard block={block} patchbaySessionId={patchbaySessionId} roots={roots} />
+        </>
+      );
     case "diff":
-      return <DiffCard block={block} />;
+      return (
+        <>
+          {block.subagent !== undefined && <AskedByLine asked={block.subagent} />}
+          <DiffCard block={block} />
+        </>
+      );
     case "terminal":
       return <TerminalCard block={block} />;
     case "elicitation":
-      return <ElicitationCard block={block} agentName={agentName} />;
+      return (
+        <>
+          {block.subagent !== undefined && <AskedByLine asked={block.subagent} />}
+          <ElicitationCard block={block} agentName={agentName} />
+        </>
+      );
     case "compaction":
       return <CompactionDivider block={block} />;
     case "notice":
@@ -271,13 +293,19 @@ export function Chat(props: {
   /** A request from outside the transcript (the prompts chip) to bring a
    * prompt into view — a new `seq` is the request. */
   goTo: { seq: number; id: string } | null;
+  /** A sub-agent of the session shown instead of the session's own
+   * transcript — `blocks` and `derived` are then its own: read-only, no
+   * turn of its own, and a way back. */
+  subagent?: { view: SubagentView; onBack(): void };
 }) {
   const send = useActions();
   const { agents } = props.state;
   const active = props.activeSession;
   const agentName =
     props.state.agents.find((a) => a.id === active?.patchbayAgentId)?.name ?? active?.patchbayAgentId ?? "The agent";
-  const activePatchbaySessionId = active?.id;
+  // The transcript on view — a sub-agent's, or the session's: where its
+  // blocks' actions go, and what its reading position is kept under.
+  const activePatchbaySessionId = props.subagent?.view.id ?? active?.id;
   const chatRef = useRef<HTMLDivElement>(null);
   const { blocks, derived } = props;
   const terminalBlocks = useMemo(
@@ -556,16 +584,32 @@ export function Chat(props: {
   // content doesn't stay up while reality is re-read). One route, one
   // loading page. Only the involuntary reopen after a connection death
   // keeps its transcript standing through the replay's wholesale swap.
-  if (attaching(active) && items.length === 0) {
+  if (attaching(active) && items.length === 0 && props.subagent === undefined) {
     return pane(<StatePage icon="loading" spin tag="Loading session history…" />);
   }
   const visible = hidden > 0 ? items.slice(hidden) : items;
-  const activeTurnStartedAt = props.state.activeTurn[active.id];
+  const activeTurnStartedAt = props.subagent === undefined ? props.state.activeTurn[active.id] : undefined;
+  const transcriptId = activePatchbaySessionId ?? active.id;
 
   return pane(
     <TerminalBlocks.Provider value={terminalBlocks}>
     <ToolDisplayPrefs.Provider value={props.state.preferences}>
     <PromptNav.Provider value={promptNav}>
+    {props.subagent !== undefined && (
+      <div className="subagent-bar">
+        <button type="button" className="back" title={`Back to ${active.title}`} onClick={props.subagent.onBack}>
+          <Icon name="arrow-left" /> {active.title}
+        </button>
+        <span className="sep">/</span>
+        <SubagentDot look={subagentLook(props.subagent.view)} />
+        <span className="name">{subagentName(props.subagent.view)}</span>
+        <span className="state">
+          {subagentStateText(props.subagent.view)}
+          {props.subagent.view.config.length > 0 && ` · ${props.subagent.view.config.map((k) => knobText(k)).join(" · ")}`}
+        </span>
+        <span className="note">read-only</span>
+      </div>
+    )}
     <div
       className="chat"
       ref={chatRef}
@@ -596,7 +640,7 @@ export function Chat(props: {
       {visible.map((item) => (
         <div key={itemId(item)} className="chat-row" data-item={itemId(item)}>
           {item.kind === "toolRun" ? (
-            <MemoToolRun calls={item.calls} patchbaySessionId={active.id} roots={props.state.workspaceRoots} />
+            <MemoToolRun calls={item.calls} patchbaySessionId={transcriptId} roots={props.state.workspaceRoots} />
           ) : item.block.kind === "turnEnd" ? (
             <TurnLine
               live={false}
@@ -612,7 +656,7 @@ export function Chat(props: {
               block={item.block}
               live={item.block.id === liveBlockId}
               openThinking={props.state.preferences.openThinking}
-              patchbaySessionId={active.id}
+              patchbaySessionId={transcriptId}
               agentName={agentName}
               roots={props.state.workspaceRoots}
             />

@@ -4,24 +4,31 @@
 // The read-out strip between chat and composer: what the agent has done this
 // session, at the eye's resting point, deliberately OUTSIDE the composer — its
 // binding rule ("above the input = what the agent will see") stays intact
-// because nothing here is context. Three chips: the plan (left), then the
-// prompts (prompts-chip.tsx) and the edited files (files-chip.tsx) on the
-// right. Absent when none has anything to show. Each opens a panel growing
+// because nothing here is context. Four chips: the plan and the sub-agents
+// (subagents-chip.tsx) on the left, then the prompts (prompts-chip.tsx) and
+// the edited files (files-chip.tsx) on the right. Absent when none has anything to show. Each opens a panel growing
 // up from the strip over the chat (readout-panel.tsx); they are sibling
 // overlays, so they share one open-state here. Expand is manual, never forced — a task completing
 // mid-turn pulses the collapsed plan chip as a peripheral signal instead of
 // yanking the view open.
 import { useEffect, useRef, useState, type RefObject } from "react";
-import type { OpenEditorView, PlanEntry, UserBlock } from "../../shared/protocol";
+import type { PatchbaySessionId } from "../../shared/ids";
+import type { OpenEditorView, PlanEntry, SubagentView, UserBlock } from "../../shared/protocol";
 import { Icon } from "../shared/icon";
 import { FilesChip } from "./files-chip";
 import { PromptsChip } from "./prompts-chip";
 import { ReadoutPanel } from "./readout-panel";
+import { SubagentsChip } from "./subagents-chip";
 
-type PanelId = "plan" | "prompts" | "files";
+type PanelId = "plan" | "subagents" | "prompts" | "files";
 
 export function ReadoutStrip(props: {
+  patchbaySessionId: PatchbaySessionId;
   plan: readonly PlanEntry[] | null;
+  /** The session's sub-agents, nested ones included. */
+  subagents: readonly SubagentView[];
+  /** Opens a sub-agent's transcript in the chat. */
+  onOpenSubagent(subagent: PatchbaySessionId): void;
   /** The session's prompts, in order (view-model totals). */
   prompts: readonly UserBlock[];
   /** The durable draft is empty — the only state a reuse lands in. */
@@ -50,13 +57,23 @@ export function ReadoutStrip(props: {
   useEffect(() => {
     if (!hasPlan) setOpenId((current) => (current === "plan" ? null : current));
   }, [hasPlan]);
-  if (!hasPlan && props.prompts.length === 0 && props.files.length === 0) return null;
+  if (!hasPlan && props.subagents.length === 0 && props.prompts.length === 0 && props.files.length === 0) return null;
 
   return (
     <div className="readout-strip" ref={stripRef}>
       <div className="chips">
         {hasPlan && (
           <PlanChip plan={props.plan!} open={openId === "plan"} onOpenChange={openChange("plan")} anchor={stripRef} />
+        )}
+        {props.subagents.length > 0 && (
+          <SubagentsChip
+            patchbaySessionId={props.patchbaySessionId}
+            roster={props.subagents}
+            onOpen={props.onOpenSubagent}
+            open={openId === "subagents"}
+            onOpenChange={openChange("subagents")}
+            anchor={stripRef}
+          />
         )}
         {props.prompts.length > 0 && (
           <PromptsChip

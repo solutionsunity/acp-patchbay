@@ -1,0 +1,236 @@
+{
+  "transcript": [
+    {
+      "kind": "user",
+      "id": "<id-1>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Launch two sub-agents in parallel with the Agent tool (subagent_type general-purpose): the first counts the lines of a.txt, the second counts the lines of b.txt. Each must read its file with the Read tool. Then report both counts in one line."
+        }
+      ]
+    },
+    {
+      "kind": "text",
+      "id": "<id-2>",
+      "text": "Launching both counters in parallel now."
+    },
+    {
+      "kind": "sessionMessage",
+      "id": "message:toolu-1",
+      "direction": "to",
+      "peer": "<subagent-3>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Count the lines in the file /w/a.txt. You must read the file with the Read tool (not Bash, not wc). Read the full file, count its lines, and reply with only the number of lines, plus the file path. If the file does not exist or cannot be read, say so plainly and do not guess a count."
+        }
+      ]
+    },
+    {
+      "kind": "sessionMessage",
+      "id": "message:toolu-2",
+      "direction": "to",
+      "peer": "<subagent-4>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Count the lines in the file /w/b.txt. You must read the file with the Read tool (not Bash, not wc). Read the full file, count its lines, and reply with only the number of lines, plus the file path. If the file does not exist or cannot be read, say so plainly and do not guess a count."
+        }
+      ]
+    },
+    {
+      "kind": "sessionMessage",
+      "id": "message:toolu-1:reply",
+      "direction": "from",
+      "peer": "<subagent-3>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "<tools-used-before-summary>Read</tools-used-before-summary>\n\n4\n\n/w/a.txt"
+        }
+      ]
+    },
+    {
+      "kind": "sessionMessage",
+      "id": "message:toolu-2:reply",
+      "direction": "from",
+      "peer": "<subagent-4>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "<tools-used-before-summary>Read</tools-used-before-summary>\n\n8\n\n/w/b.txt\n\nLine 8 is empty. The seven lines with content are \"beta 1\" through \"beta 7\"."
+        }
+      ]
+    },
+    {
+      "kind": "text",
+      "id": "<id-5>",
+      "text": "a.txt: 4 lines; b.txt: 8 lines."
+    },
+    {
+      "kind": "turnEnd",
+      "id": "<id-6>",
+      "startedAt": null,
+      "endedAt": null,
+      "stopReason": null,
+      "usage": null
+    }
+  ],
+  "subagents": [
+    {
+      "id": "<subagent-3>",
+      "parentId": "<session>",
+      "title": "Count lines in a.txt",
+      "description": "general-purpose",
+      "conversationTitle": null,
+      "state": {
+        "state": "idle",
+        "stopReason": "end_turn"
+      },
+      "lastKnown": {
+        "state": "idle",
+        "stopReason": "end_turn"
+      },
+      "cancel": false,
+      "cwd": null,
+      "additionalDirectories": null,
+      "config": [
+        {
+          "id": "model",
+          "name": "Model",
+          "category": "model",
+          "type": "select",
+          "currentValue": "haiku",
+          "options": [
+            {
+              "value": "haiku",
+              "name": "Haiku 5.5"
+            }
+          ]
+        }
+      ],
+      "transcript": [
+        {
+          "kind": "sessionMessage",
+          "id": "message:toolu-1",
+          "direction": "from",
+          "peer": "<session>",
+          "parts": [
+            {
+              "kind": "text",
+              "text": "Count the lines in the file /w/a.txt. You must read the file with the Read tool (not Bash, not wc). Read the full file, count its lines, and reply with only the number of lines, plus the file path. If the file does not exist or cannot be read, say so plainly and do not guess a count."
+            }
+          ]
+        },
+        {
+          "kind": "toolCall",
+          "id": "<id-7>",
+          "title": "Read a.txt",
+          "name": "Read",
+          "status": "completed",
+          "toolKind": "read",
+          "input": "{\n  \"file_path\": \"/w/a.txt\"\n}",
+          "output": "1\talpha line one\n2\talpha two\n3\talpha three\n4\t",
+          "locations": [
+            {
+              "path": "/w/a.txt",
+              "line": 1
+            }
+          ],
+          "content": [
+            {
+              "kind": "text",
+              "text": "```\n1\talpha line one\n2\talpha two\n3\talpha three\n4\t\n```"
+            }
+          ],
+          "diffs": {},
+          "denied": false,
+          "interrupted": false
+        },
+        {
+          "kind": "text",
+          "id": "<id-8>",
+          "text": "4\n\n/w/a.txt"
+        }
+      ]
+    },
+    {
+      "id": "<subagent-4>",
+      "parentId": "<session>",
+      "title": "Count lines in b.txt",
+      "description": "general-purpose",
+      "conversationTitle": null,
+      "state": {
+        "state": "idle",
+        "stopReason": "end_turn"
+      },
+      "lastKnown": {
+        "state": "idle",
+        "stopReason": "end_turn"
+      },
+      "cancel": false,
+      "cwd": null,
+      "additionalDirectories": null,
+      "config": [
+        {
+          "id": "model",
+          "name": "Model",
+          "category": "model",
+          "type": "select",
+          "currentValue": "haiku",
+          "options": [
+            {
+              "value": "haiku",
+              "name": "Haiku 5.5"
+            }
+          ]
+        }
+      ],
+      "transcript": [
+        {
+          "kind": "sessionMessage",
+          "id": "message:toolu-2",
+          "direction": "from",
+          "peer": "<session>",
+          "parts": [
+            {
+              "kind": "text",
+              "text": "Count the lines in the file /w/b.txt. You must read the file with the Read tool (not Bash, not wc). Read the full file, count its lines, and reply with only the number of lines, plus the file path. If the file does not exist or cannot be read, say so plainly and do not guess a count."
+            }
+          ]
+        },
+        {
+          "kind": "toolCall",
+          "id": "<id-9>",
+          "title": "Read b.txt",
+          "name": "Read",
+          "status": "completed",
+          "toolKind": "read",
+          "input": "{\n  \"file_path\": \"/w/b.txt\"\n}",
+          "output": "1\tbeta 1\n2\tbeta 2\n3\tbeta 3\n4\tbeta 4\n5\tbeta 5\n6\tbeta 6\n7\tbeta 7\n8\t",
+          "locations": [
+            {
+              "path": "/w/b.txt",
+              "line": 1
+            }
+          ],
+          "content": [
+            {
+              "kind": "text",
+              "text": "```\n1\tbeta 1\n2\tbeta 2\n3\tbeta 3\n4\tbeta 4\n5\tbeta 5\n6\tbeta 6\n7\tbeta 7\n8\t\n```"
+            }
+          ],
+          "diffs": {},
+          "denied": false,
+          "interrupted": false
+        },
+        {
+          "kind": "text",
+          "id": "<id-10>",
+          "text": "8\n\n/w/b.txt\n\nLine 8 is empty. The seven lines with content are \"beta 1\" through \"beta 7\"."
+        }
+      ]
+    }
+  ]
+}

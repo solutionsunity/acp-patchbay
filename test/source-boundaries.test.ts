@@ -88,11 +88,12 @@ describe("source boundaries", () => {
   });
 
   // A session's attachment leaves through one of two doors — dropped while
-  // the session stays known (its open turn swept and sealed first), or
-  // forgotten for good — so no rollback or teardown path deletes it bare
-  // and leaves a turn's open blocks behind.
-  it("a live attachment is deleted only by its two teardown helpers", () => {
-    expect(hits([join(SRC, "orchestrator", "sessions-store.ts")], /this\.sessions\.delete\(/)).toHaveLength(2);
+  // the session stays known, or forgotten for good — and both delete it in
+  // the one drop helper: its open turn swept and sealed first, its
+  // sub-agents gone with it. No rollback or teardown path deletes it bare
+  // and leaves a turn's open blocks, or a sub-agent, behind.
+  it("a live attachment is deleted only by the shared drop helper", () => {
+    expect(hits([join(SRC, "orchestrator", "sessions-store.ts")], /this\.sessions\.delete\(/)).toHaveLength(1);
   });
 
   // A page opens through one door, which hands VS Code the address as

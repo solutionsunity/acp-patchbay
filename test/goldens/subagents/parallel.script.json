@@ -1,0 +1,692 @@
+{
+  "turn": [
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "title": "Counting lines in a.txt and b.txt",
+        "updatedAt": "2026-11-02T18:38:36.155Z"
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "usage_update",
+        "used": 24243,
+        "size": 1000000,
+        "_meta": {
+          "_claude/model": "claude-haiku-5-5"
+        }
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "Launching both counters in parallel now."
+        },
+        "messageId": "msg_011Cgeb4rAjwvemg42DnnfQz"
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "subagent_update",
+        "sessionId": "$c1",
+        "title": "Count lines in a.txt",
+        "description": "general-purpose",
+        "capabilities": {
+          "cancel": {}
+        },
+        "state": {
+          "state": "running"
+        }
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "session_message",
+        "messageId": "toolu-1",
+        "senderSessionId": "$P",
+        "recipientSessionId": "$c1",
+        "content": [
+          {
+            "type": "text",
+            "text": "Count the lines in the file /w/a.txt. You must read the file with the Read tool (not Bash, not wc). Read the full file, count its lines, and reply with only the number of lines, plus the file path. If the file does not exist or cannot be read, say so plainly and do not guess a count."
+          }
+        ],
+        "recipientMessageId": "toolu-1"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "sessionUpdate": "session_message",
+        "messageId": "toolu-1",
+        "senderSessionId": "$P",
+        "recipientSessionId": "$c1",
+        "content": [
+          {
+            "type": "text",
+            "text": "Count the lines in the file /w/a.txt. You must read the file with the Read tool (not Bash, not wc). Read the full file, count its lines, and reply with only the number of lines, plus the file path. If the file does not exist or cannot be read, say so plainly and do not guess a count."
+          }
+        ],
+        "senderMessageId": "toolu-1"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "sessionUpdate": "config_option_update",
+        "configOptions": [
+          {
+            "id": "agent",
+            "name": "Agent",
+            "description": "Subagent type",
+            "type": "select",
+            "currentValue": "general-purpose",
+            "options": [
+              {
+                "value": "general-purpose",
+                "name": "general-purpose"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "subagent_update",
+        "sessionId": "$c2",
+        "title": "Count lines in b.txt",
+        "description": "general-purpose",
+        "capabilities": {
+          "cancel": {}
+        },
+        "state": {
+          "state": "running"
+        }
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "session_message",
+        "messageId": "toolu-2",
+        "senderSessionId": "$P",
+        "recipientSessionId": "$c2",
+        "content": [
+          {
+            "type": "text",
+            "text": "Count the lines in the file /w/b.txt. You must read the file with the Read tool (not Bash, not wc). Read the full file, count its lines, and reply with only the number of lines, plus the file path. If the file does not exist or cannot be read, say so plainly and do not guess a count."
+          }
+        ],
+        "recipientMessageId": "toolu-2"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "sessionUpdate": "session_message",
+        "messageId": "toolu-2",
+        "senderSessionId": "$P",
+        "recipientSessionId": "$c2",
+        "content": [
+          {
+            "type": "text",
+            "text": "Count the lines in the file /w/b.txt. You must read the file with the Read tool (not Bash, not wc). Read the full file, count its lines, and reply with only the number of lines, plus the file path. If the file does not exist or cannot be read, say so plainly and do not guess a count."
+          }
+        ],
+        "senderMessageId": "toolu-2"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "sessionUpdate": "config_option_update",
+        "configOptions": [
+          {
+            "id": "agent",
+            "name": "Agent",
+            "description": "Subagent type",
+            "type": "select",
+            "currentValue": "general-purpose",
+            "options": [
+              {
+                "value": "general-purpose",
+                "name": "general-purpose"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "usage_update",
+        "used": 24949,
+        "size": 1000000,
+        "_meta": {
+          "_claude/model": "claude-haiku-5-5"
+        }
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "sessionUpdate": "config_option_update",
+        "configOptions": [
+          {
+            "id": "model",
+            "name": "Model",
+            "category": "model",
+            "type": "select",
+            "currentValue": "haiku",
+            "options": [
+              {
+                "value": "haiku",
+                "name": "Haiku 5.5"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "name": "Agent",
+            "description": "Subagent type",
+            "type": "select",
+            "currentValue": "general-purpose",
+            "options": [
+              {
+                "value": "general-purpose",
+                "name": "general-purpose"
+              }
+            ]
+          }
+        ],
+        "_meta": {
+          "claudeCode": {
+            "parentToolUseId": "toolu-1"
+          }
+        }
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "sessionUpdate": "config_option_update",
+        "configOptions": [
+          {
+            "id": "mode",
+            "name": "Mode",
+            "description": "Session permission mode",
+            "category": "mode",
+            "type": "select",
+            "currentValue": "default",
+            "options": [
+              {
+                "value": "default",
+                "name": "Manual",
+                "description": "Always ask before making changes"
+              }
+            ]
+          },
+          {
+            "id": "model",
+            "name": "Model",
+            "category": "model",
+            "type": "select",
+            "currentValue": "haiku",
+            "options": [
+              {
+                "value": "haiku",
+                "name": "Haiku 5.5"
+              }
+            ]
+          },
+          {
+            "id": "effort",
+            "name": "Effort",
+            "description": "Current reasoning effort",
+            "category": "thought_level",
+            "type": "select",
+            "currentValue": "medium",
+            "options": [
+              {
+                "value": "medium",
+                "name": "Medium"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "name": "Agent",
+            "description": "Subagent type",
+            "type": "select",
+            "currentValue": "general-purpose",
+            "options": [
+              {
+                "value": "general-purpose",
+                "name": "general-purpose"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolName": "Read",
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "toolCallId": "toolu-3",
+        "sessionUpdate": "tool_call",
+        "name": "Read",
+        "rawInput": {
+          "file_path": "/w/a.txt"
+        },
+        "status": "pending",
+        "title": "Read a.txt",
+        "kind": "read",
+        "content": [],
+        "locations": [
+          {
+            "path": "/w/a.txt",
+            "line": 1
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolResponse": {
+              "type": "text",
+              "file": {
+                "filePath": "/w/a.txt",
+                "content": "alpha line one\nalpha two\nalpha three\n",
+                "numLines": 4,
+                "startLine": 1,
+                "totalLines": 4
+              }
+            },
+            "toolName": "Read",
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "toolCallId": "toolu-3",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolName": "Read",
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "toolCallId": "toolu-3",
+        "sessionUpdate": "tool_call_update",
+        "status": "completed",
+        "rawOutput": "1\talpha line one\n2\talpha two\n3\talpha three\n4\t",
+        "content": [
+          {
+            "type": "content",
+            "content": {
+              "type": "text",
+              "text": "```\n1\talpha line one\n2\talpha two\n3\talpha three\n4\t\n```"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "sessionUpdate": "config_option_update",
+        "configOptions": [
+          {
+            "id": "model",
+            "name": "Model",
+            "category": "model",
+            "type": "select",
+            "currentValue": "haiku",
+            "options": [
+              {
+                "value": "haiku",
+                "name": "Haiku 5.5"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "name": "Agent",
+            "description": "Subagent type",
+            "type": "select",
+            "currentValue": "general-purpose",
+            "options": [
+              {
+                "value": "general-purpose",
+                "name": "general-purpose"
+              }
+            ]
+          }
+        ],
+        "_meta": {
+          "claudeCode": {
+            "parentToolUseId": "toolu-2"
+          }
+        }
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "sessionUpdate": "config_option_update",
+        "configOptions": [
+          {
+            "id": "mode",
+            "name": "Mode",
+            "description": "Session permission mode",
+            "category": "mode",
+            "type": "select",
+            "currentValue": "default",
+            "options": [
+              {
+                "value": "default",
+                "name": "Manual",
+                "description": "Always ask before making changes"
+              }
+            ]
+          },
+          {
+            "id": "model",
+            "name": "Model",
+            "category": "model",
+            "type": "select",
+            "currentValue": "haiku",
+            "options": [
+              {
+                "value": "haiku",
+                "name": "Haiku 5.5"
+              }
+            ]
+          },
+          {
+            "id": "effort",
+            "name": "Effort",
+            "description": "Current reasoning effort",
+            "category": "thought_level",
+            "type": "select",
+            "currentValue": "medium",
+            "options": [
+              {
+                "value": "medium",
+                "name": "Medium"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "name": "Agent",
+            "description": "Subagent type",
+            "type": "select",
+            "currentValue": "general-purpose",
+            "options": [
+              {
+                "value": "general-purpose",
+                "name": "general-purpose"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolName": "Read",
+            "parentToolUseId": "toolu-2"
+          }
+        },
+        "toolCallId": "toolu-4",
+        "sessionUpdate": "tool_call",
+        "name": "Read",
+        "rawInput": {
+          "file_path": "/w/b.txt"
+        },
+        "status": "pending",
+        "title": "Read b.txt",
+        "kind": "read",
+        "content": [],
+        "locations": [
+          {
+            "path": "/w/b.txt",
+            "line": 1
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolResponse": {
+              "type": "text",
+              "file": {
+                "filePath": "/w/b.txt",
+                "content": "beta 1\nbeta 2\nbeta 3\nbeta 4\nbeta 5\nbeta 6\nbeta 7\n",
+                "numLines": 8,
+                "startLine": 1,
+                "totalLines": 8
+              }
+            },
+            "toolName": "Read",
+            "parentToolUseId": "toolu-2"
+          }
+        },
+        "toolCallId": "toolu-4",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "_meta": {
+          "claudeCode": {
+            "toolName": "Read",
+            "parentToolUseId": "toolu-2"
+          }
+        },
+        "toolCallId": "toolu-4",
+        "sessionUpdate": "tool_call_update",
+        "status": "completed",
+        "rawOutput": "1\tbeta 1\n2\tbeta 2\n3\tbeta 3\n4\tbeta 4\n5\tbeta 5\n6\tbeta 6\n7\tbeta 7\n8\t",
+        "content": [
+          {
+            "type": "content",
+            "content": {
+              "type": "text",
+              "text": "```\n1\tbeta 1\n2\tbeta 2\n3\tbeta 3\n4\tbeta 4\n5\tbeta 5\n6\tbeta 6\n7\tbeta 7\n8\t\n```"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c1",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "4\n\n/w/a.txt"
+        },
+        "_meta": {
+          "claudeCode": {
+            "parentToolUseId": "toolu-1"
+          }
+        },
+        "messageId": "msg_011Cgeb5D3bZAfJYDL8xrxs2"
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "subagent_update",
+        "sessionId": "$c1",
+        "state": {
+          "state": "idle",
+          "stopReason": "end_turn"
+        }
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "session_message",
+        "messageId": "toolu-1:reply",
+        "senderSessionId": "$c1",
+        "recipientSessionId": "$P",
+        "content": [
+          {
+            "type": "text",
+            "text": "<tools-used-before-summary>Read</tools-used-before-summary>\n"
+          },
+          {
+            "type": "text",
+            "text": "4\n\n/w/a.txt"
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "as": "c2",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "8\n\n/w/b.txt\n\nLine 8 is empty. The seven lines with content are \"beta 1\" through \"beta 7\"."
+        },
+        "_meta": {
+          "claudeCode": {
+            "parentToolUseId": "toolu-2"
+          }
+        },
+        "messageId": "msg_011Cgeb5JoNa2kUpx4xEByx1"
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "subagent_update",
+        "sessionId": "$c2",
+        "state": {
+          "state": "idle",
+          "stopReason": "end_turn"
+        }
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "session_message",
+        "messageId": "toolu-2:reply",
+        "senderSessionId": "$c2",
+        "recipientSessionId": "$P",
+        "content": [
+          {
+            "type": "text",
+            "text": "<tools-used-before-summary>Read</tools-used-before-summary>\n"
+          },
+          {
+            "type": "text",
+            "text": "8\n\n/w/b.txt\n\nLine 8 is empty. The seven lines with content are \"beta 1\" through \"beta 7\"."
+          }
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "usage_update",
+        "used": 27774,
+        "size": 1000000,
+        "_meta": {
+          "_claude/model": "claude-haiku-5-5"
+        }
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "a.txt: 4 lines; b.txt: 8 lines."
+        },
+        "messageId": "msg_011Cgeb5b4fho49f3M2ndfmD"
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "usage_update",
+        "used": 28080,
+        "size": 1000000,
+        "_meta": {
+          "_claude/model": "claude-haiku-5-5"
+        }
+      }
+    },
+    {
+      "type": "update",
+      "update": {
+        "sessionUpdate": "usage_update",
+        "used": 28080,
+        "size": 1000000,
+        "cost": {
+          "amount": 0.010712435000000001,
+          "currency": "USD"
+        },
+        "_meta": {
+          "_claude/origin": {
+            "kind": "human"
+          },
+          "_claude/model": "claude-haiku-5-5"
+        }
+      }
+    }
+  ]
+}

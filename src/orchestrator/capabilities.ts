@@ -33,6 +33,11 @@ const CLIENT_DECLARES: {
   /** The agent tells the user things outside its answer as notices —
    * shown as a line in the transcript, never folded into the reply. */
   sessionNotices: boolean;
+  /** The agent may show the sub-agents its sessions start: each one's
+   * updates and requests are attributed to it inside its session, it is
+   * judged by the session's rules over its own root set, and only a
+   * granted cancel reaches it. */
+  subagents: boolean;
   authTerminal: boolean;
 } = {
   fs: true,
@@ -56,6 +61,12 @@ const CLIENT_DECLARES: {
   sessionCompaction: true,
   // Nor here: the transcript's notice line is the proof.
   sessionNotices: true,
+  // Nor here: no agent-side claim exists to set it against — the first
+  // sub-agent an agent announces is the proof, and the sub-agents chip
+  // shows it. Declared only because every request and update a sub-agent
+  // makes routes to it: without that, declaring would turn the agent's
+  // delegated work into requests refused for an unknown session.
+  subagents: true,
 };
 
 /** CLIENT_DECLARES in its wire form. Elicitation is object-shaped, one key
@@ -69,6 +80,7 @@ export function clientCapabilitiesWire(): ClientCapabilities {
     ...(Object.keys(elicitationWire()).length > 0 ? { elicitation: elicitationWire() } : {}),
     ...(Object.keys(sessionWire()).length > 0 ? { session: sessionWire() } : {}),
     ...(CLIENT_DECLARES.authTerminal ? { auth: { terminal: true } } : {}),
+    ...(CLIENT_DECLARES.subagents ? { subagents: {} } : {}),
     // Adopted _meta extensions (meta.ts — the declare flags there are the
     // single source; nothing here names a key).
     ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),

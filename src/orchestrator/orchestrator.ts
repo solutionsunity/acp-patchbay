@@ -42,7 +42,7 @@ import { AgentGates, endQuestion, type AgentOperation } from "./agent-gates";
 import { AgentsStore, type ConnectionOperations } from "./agents-store";
 import { ATTACHMENTS_DIR } from "./attachments";
 import { DIFFS_DIR } from "./diff-files";
-import { AsksStore, type AskPlace } from "./asks-store";
+import { AsksStore, transcriptOf, type AskPlace, type Requester } from "./asks-store";
 import { sessionOwner, type SessionOwner } from "./session-owner";
 import { PermissionBroker } from "./broker";
 import { ClientHost, clientRequestHooks } from "./client-host";
@@ -463,7 +463,7 @@ export class Orchestrator {
         // above, and an expanded card reopens one once running.
       },
       onDeclaredCaptured: (patchbayAgentId) => this.agents.noteDeclared(patchbayAgentId),
-      onSessionUpdate: (patchbayAgentId, sessionId, update) => {
+      onSessionUpdate: (patchbayAgentId, sessionId, update, seq) => {
         // Throwaway sessions never reach a transcript: the probe's traffic
         // is dropped, the defaults editor's feeds its own surface.
         switch (this.ownerOf(patchbayAgentId, sessionId).kind) {
@@ -473,7 +473,7 @@ export class Orchestrator {
             this.defaultsEditor.handleUpdate(patchbayAgentId, sessionId, update);
             return;
           default:
-            this.sessions.handleUpdate(patchbayAgentId, sessionId, update);
+            this.sessions.handleUpdate(patchbayAgentId, sessionId, update, seq);
         }
       },
       onCapabilityEvidence: (patchbayAgentId, row, evidence) => this.agents.noteEvidence(patchbayAgentId, row, evidence),
@@ -522,10 +522,13 @@ export class Orchestrator {
           this.log.info(`${patchbayAgentId}: cancelled a permission request on session ${sessionId}, which patchbay doesn't hold`);
           return { cancelled: true };
         }
-        const { patchbaySessionId } = owner;
-        const { title, view, proposals } = this.sessions.permissionCall(patchbaySessionId, call);
+        const requester = this.requesterOf(owner);
+        // The call it asks about is in its asker's transcript — a
+        // sub-agent's own, or the session's.
+        const transcript = transcriptOf(requester);
+        const { title, view, proposals } = this.sessions.permissionCall(transcript, call);
         const result = await this.broker.resolveAgentPermissionRequest(
-          patchbaySessionId,
+          requester,
           { title: title ?? PERMISSION_UNTITLED, call: view, options, proposals },
           signal,
         );
@@ -536,17 +539,19 @@ export class Orchestrator {
         // own permission/diff cards inline.
         const chosen = "cancelled" in result ? undefined : options.find((o) => o.optionId === result.optionId);
         if (chosen !== undefined && chosen.kind.startsWith("reject")) {
-          this.agentView.emit({ kind: "toolCallDenied", patchbaySessionId, blockId: call.toolCallId });
+          this.agentView.emit({ kind: "toolCallDenied", patchbaySessionId: transcript, blockId: call.toolCallId });
         }
         return result;
       },
       ...clientRequestHooks(
         () => this.clientHost,
-        // only the user's session reads, writes or runs anything
+        // only the user's session reads, writes or runs anything — or a
+        // sub-agent of it, judged as the session's
         (patchbayAgentId, sessionId) => {
           const owner = this.ownerOf(patchbayAgentId, sessionId);
-          return owner.kind === "user" ? owner.patchbaySessionId : undefined;
+          return owner.kind === "user" ? this.requesterOf(owner) : undefined;
         },
+        ({ patchbaySessionId, subagent }) => this.sessions.subagentRoots(patchbaySessionId, subagent.id)[0] ?? this.sessions.rootsOf(patchbaySessionId)[0]!,
       ),
     }, log, {
       // Launch prerequisites (runtime-resolver.ts), as phases of the
@@ -617,6 +622,7 @@ export class Orchestrator {
           this.agentView.current.sessions.find((s) => s.id === patchbaySessionId)?.unseen === true,
         cancelAsks: (patchbaySessionId) => this.asks.stopSession(patchbaySessionId),
         endTurnAsks: (patchbaySessionId, turn, stopped) => this.asks.endTurn(patchbaySessionId, turn, stopped),
+        cancelSubagentAsks: (patchbaySessionId, subagent) => this.asks.cancelSubagent(patchbaySessionId, subagent),
         authLocked: (patchbayAgentId) => this.agents.authLocked(patchbayAgentId),
         // the pointer names the session the agent's way, which a re-mint moves
         sessionIdChanged: (patchbaySessionId) => {
@@ -779,7 +785,7 @@ export class Orchestrator {
     this.broker = new PermissionBroker(
       this.permissionRules,
       this.asks,
-      (patchbaySessionId) => this.sessions.grantedRoots(patchbaySessionId),
+      ({ patchbaySessionId, subagent }) => this.sessions.grantedRoots(patchbaySessionId, subagent?.id),
       (text) => this.wireLog.redact(text),
       new ShellReader(place.shellGrammar),
       this.machinePermissionRules,
@@ -1205,7 +1211,7 @@ export class Orchestrator {
     const owner = this.ownerOf(patchbayAgentId, scope.sessionId);
     switch (owner.kind) {
       case "user":
-        return { patchbaySessionId: owner.patchbaySessionId };
+        return this.requesterOf(owner);
       case "none":
         this.log.info(`${patchbayAgentId}: cancelled an elicitation on session ${scope.sessionId}, which patchbay doesn't hold`);
         return null;
@@ -1213,6 +1219,12 @@ export class Orchestrator {
         this.log.info(`${patchbayAgentId}: cancelled an elicitation on a throwaway session`);
         return null;
     }
+  }
+
+  /** Who asks, as the asks store and the broker take it: the user's
+   * session, or the sub-agent of it the agent named. */
+  private requesterOf(owner: Extract<SessionOwner, { kind: "user" }>): Requester {
+    return { patchbaySessionId: owner.patchbaySessionId, ...(owner.subagent !== undefined ? { subagent: owner.subagent } : {}) };
   }
 
   /** Whose session the agent names by this id. */

@@ -193,6 +193,15 @@ deliverable.
   for one — it shows the full address first and opens it in the browser
   only when the user says so; nothing the user does on that page passes
   through patchbay or the agent.
+- When the agent hands work to sub-agents, a chip above the composer shows
+  them — running, waiting on the user, done — and keeps showing them after
+  the turn ends: one still working says so. Each opens its own conversation
+  inside the chat, read-only, with a way back; what the session and its
+  sub-agents tell each other shows in the chat where it happened, and a
+  sub-agent's request for permission is a card in the session's chat that
+  names it. One the agent lets the user stop can be cancelled from the
+  list; nothing else is done to a sub-agent. Their results stay with the
+  session: reopened, it shows them again as the agent kept them.
 - Context/token usage is shown when the agent reports it and cleanly absent when it
   doesn't — never a fake number.
 - User can stop a running turn at any time.

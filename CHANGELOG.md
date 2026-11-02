@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Sub-agents show up.** When an agent hands work to sub-agents (Claude
+  does, from claude-agent-acp 0.100.0), a chip above the composer lists
+  them: running, waiting on you, done. It stays after the turn ends, and
+  one still working keeps saying so. Each opens its own conversation
+  inside the chat, read-only, with a way back. The messages between the
+  session and its sub-agents show in the chat where they happened. A
+  sub-agent's permission request is a card in the session's chat that
+  names it, and the session shows it is waiting on you. A sub-agent the
+  agent lets you stop can be cancelled from the list. Reopen the session
+  and its sub-agents' results are there again. (#60)
 - **A session comes back where you left it.** Switching away and back
   used to land a session at its end, wherever you were reading. Now one
   left scrolled back comes back with the same message at the top and the

@@ -228,10 +228,22 @@ body {
   overflow: hidden;
 }
 
-/* the right-hand group starts at whichever of its chips shows first */
+.readout-strip .chip.subagents {
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+
+.readout-strip .chip.subagents .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* the right-hand group starts at whichever of its chips shows first; its
+   chips are short and keep their size — the left-hand ones give way */
 .readout-strip .chip.prompts,
 .readout-strip .chip.files {
   margin-left: auto;
+  flex: none;
 }
 
 .readout-strip .chip.prompts ~ .chip.files {
@@ -331,6 +343,64 @@ body {
   border-radius: 4px;
   cursor: pointer;
   min-width: 0;
+}
+
+/* a sub-agent in the roster: its mark, name, what it is doing, where it
+   works — the row opens its transcript; Cancel sits apart, flush right */
+.overlay-panel .subagent-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 4px;
+  min-width: 0;
+}
+
+.overlay-panel .subagent-row:hover {
+  background: var(--pb-bg);
+}
+
+.overlay-panel .subagent-row .open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 0;
+  font-size: 11.5px;
+  color: var(--pb-text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+.overlay-panel .subagent-row .name {
+  color: var(--pb-text);
+  flex: none;
+}
+
+.overlay-panel .subagent-row .state,
+.overlay-panel .subagent-row .where {
+  color: var(--pb-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overlay-panel .subagent-row .cancel {
+  flex: none;
+  margin-right: 8px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--pb-text-dim);
+  background: none;
+  border: 1px solid var(--pb-accent-dim);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.overlay-panel .subagent-row .cancel:hover {
+  color: var(--pb-text);
 }
 
 /* the root a run of file rows lives under — workspace folder, added root,
@@ -1440,6 +1510,101 @@ body {
   border-radius: 50%;
   background: var(--pb-accent);
   flex: none;
+}
+
+/* a sub-agent's work no longer confirmed — the agent lost sight of it, or
+   nothing current is known: the mark it was last seen with, hollowed, never
+   pulsing (nothing is confirmed live); a bare ring when it never was */
+.unknown-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--pb-text-faint);
+  flex: none;
+}
+
+.unknown-dot.running {
+  border-color: var(--pb-ok);
+}
+
+.unknown-dot.waiting {
+  border-color: var(--pb-warn);
+}
+
+/* a sub-agent's transcript on view in its session's chat: the way back, and
+   whose it is */
+.subagent-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  font-size: 11.5px;
+  color: var(--pb-text-dim);
+  border-bottom: 1px solid var(--pb-panel);
+  min-width: 0;
+}
+
+.subagent-bar .back {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pb-text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.subagent-bar .back:hover,
+.subagent-bar .name {
+  color: var(--pb-text);
+}
+
+.subagent-bar .state {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pb-text-faint);
+}
+
+.subagent-bar .note {
+  margin-left: auto;
+  flex: none;
+  color: var(--pb-text-faint);
+  font-style: italic;
+}
+
+/* a message between sessions — neither the user's words nor an answer to
+   the user: a side rule, its direction and other side above */
+.session-message {
+  margin: 4px 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--pb-accent-dim);
+}
+
+.session-message .head,
+.asked-by {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--pb-text-faint);
+}
+
+.session-link {
+  padding: 0;
+  color: var(--pb-accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.session-link:hover {
+  text-decoration: underline;
 }
 
 /* toast — transient confirmation; never the only record */

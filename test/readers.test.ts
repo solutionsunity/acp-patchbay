@@ -113,9 +113,100 @@ describe("readSessionUpdate", () => {
 
   it("a kind with no surface is carried — its name and payload — and noted", () => {
     const said = vi.fn();
-    const fact = readSessionUpdate({ sessionUpdate: "subagent_update", sessionId: "child" }, said);
-    expect(fact).toEqual({ kind: "carried", updateKind: "subagent_update", payload: { sessionId: "child" } });
-    expect(said).toHaveBeenCalledWith("subagent_update has no surface yet — shown as the agent sent it");
+    const fact = readSessionUpdate({ sessionUpdate: "plan_removed", planId: "p-1" } as SessionUpdate, said);
+    expect(fact).toEqual({ kind: "carried", updateKind: "plan_removed", payload: { planId: "p-1" } });
+    expect(said).toHaveBeenCalledWith("plan_removed has no surface yet — shown as the agent sent it");
+  });
+
+  it("a sub-agent's association keeps the patch rules: absent is unchanged, null clears, a value replaces", () => {
+    // the announcement, as claude-agent-acp 0.100.0 sends it
+    expect(
+      readSessionUpdate(
+        { sessionUpdate: "subagent_update", sessionId: "c1", title: "Count lines", description: "general-purpose", state: { state: "running" }, capabilities: { cancel: {} } },
+        note,
+      ),
+    ).toEqual({
+      kind: "subagent",
+      childSessionId: "c1",
+      patch: { title: "Count lines", description: "general-purpose", state: { state: "running" }, capabilities: { cancel: true } },
+    });
+    // only the child named: nothing else moves
+    expect(readSessionUpdate({ sessionUpdate: "subagent_update", sessionId: "c1" }, note)).toEqual({ kind: "subagent", childSessionId: "c1", patch: {} });
+    // every field cleared
+    expect(
+      readSessionUpdate(
+        { sessionUpdate: "subagent_update", sessionId: "c1", title: null, description: null, state: null, capabilities: null, cwd: null, additionalDirectories: null },
+        note,
+      ),
+    ).toEqual({
+      kind: "subagent",
+      childSessionId: "c1",
+      patch: { title: null, description: null, state: null, capabilities: null, cwd: null, additionalDirectories: null },
+    });
+  });
+
+  it("a sub-agent's capabilities are replaced whole: an absent or null cancel grants nothing", () => {
+    for (const capabilities of [{}, { cancel: null }]) {
+      expect(readSessionUpdate({ sessionUpdate: "subagent_update", sessionId: "c1", capabilities }, note)).toMatchObject({ patch: { capabilities: { cancel: false } } });
+    }
+  });
+
+  it("a sub-agent's state is kept as sent — a stop reason and its error only on idle, an open value as it came", () => {
+    const state = (s: unknown) => (readSessionUpdate({ sessionUpdate: "subagent_update", sessionId: "c1", state: s } as SessionUpdate, note) as { patch: { state?: unknown } }).patch.state;
+    expect(state({ state: "idle", stopReason: "cancelled" })).toEqual({ state: "idle", stopReason: "cancelled" });
+    expect(state({ state: "idle", stopReason: null })).toEqual({ state: "idle" });
+    expect(state({ state: "idle", stopReason: "error", error: { code: -32000, message: "Authentication required" } })).toEqual({
+      state: "idle",
+      stopReason: "error",
+      error: "Authentication required",
+    });
+    expect(state({ state: "requires_action" })).toEqual({ state: "requires_action" });
+    expect(state({ state: "unknown" })).toEqual({ state: "unknown" });
+    expect(state({ state: "_vendor_paused", reason: "x" })).toEqual({ state: "_vendor_paused" });
+  });
+
+  it("a sub-agent's directories must be absolute — a relative one is noted and left out", () => {
+    const said = vi.fn();
+    expect(
+      readSessionUpdate({ sessionUpdate: "subagent_update", sessionId: "c1", cwd: "/w/.worktrees/a", additionalDirectories: [] }, said),
+    ).toMatchObject({ patch: { cwd: "/w/.worktrees/a", additionalDirectories: [] } });
+    expect(readSessionUpdate({ sessionUpdate: "subagent_update", sessionId: "c1", cwd: "rel", additionalDirectories: ["/a", "b"] }, said)).toMatchObject({
+      patch: { cwd: null, additionalDirectories: ["/a"] },
+    });
+    expect(said).toHaveBeenCalledTimes(2);
+  });
+
+  it("a session message keeps the patch rules: absent is unchanged, null clears, an empty content clears too", () => {
+    expect(
+      readSessionUpdate(
+        { sessionUpdate: "session_message", messageId: "m1", senderSessionId: "p", recipientSessionId: "c1", recipientMessageId: "m9", content: [{ type: "text", text: "go" }] },
+        note,
+      ),
+    ).toEqual({
+      kind: "sessionMessage",
+      messageId: "m1",
+      patch: { senderSessionId: "p", recipientSessionId: "c1", recipientMessageId: "m9", content: [{ type: "text", text: "go" }] },
+    });
+    // a metadata-only upsert leaves the content where it was
+    expect(readSessionUpdate({ sessionUpdate: "session_message", messageId: "m1", senderMessageId: "m0" }, note)).toEqual({
+      kind: "sessionMessage",
+      messageId: "m1",
+      patch: { senderMessageId: "m0" },
+    });
+    expect(readSessionUpdate({ sessionUpdate: "session_message", messageId: "m1", senderSessionId: null, content: [] }, note)).toEqual({
+      kind: "sessionMessage",
+      messageId: "m1",
+      patch: { senderSessionId: null, content: null },
+    });
+    expect(readSessionUpdate({ sessionUpdate: "session_message", messageId: "m1", content: null }, note)).toMatchObject({ patch: { content: null } });
+  });
+
+  it("a session message chunk is one content block for its message", () => {
+    expect(readSessionUpdate({ sessionUpdate: "session_message_chunk", messageId: "m1", content: { type: "text", text: "more" } }, note)).toEqual({
+      kind: "sessionMessageChunk",
+      messageId: "m1",
+      content: { type: "text", text: "more" },
+    });
   });
 
   it("a notice is its severity hint, title and description — a null description is none", () => {

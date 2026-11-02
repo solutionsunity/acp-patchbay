@@ -11,9 +11,11 @@ import {
   userPartsText,
   terminalBlockId,
   unrenderedLabel,
+  type AskedBy,
   type CompactionBlock,
   type ContentPart,
   type NoticeBlock,
+  type SessionMessageBlock,
   type DiffStat,
   type PreferencesView,
   type TerminalBlock,
@@ -233,6 +235,69 @@ export function Thought({ text, live, openThinking }: { text: string; live: bool
 export function InjectedUser({ text }: { text: string }) {
   const tag = /^<([a-z][a-z0-9-]*)/.exec(text.trim())?.[1] ?? "envelope";
   return <DimLine kind="injected" icon="gear" label={`${tag} — injected by the agent harness`} what="the message" body={text} />;
+}
+
+/** Where a session's sessions are reached from inside its transcript: the
+ * session itself and each of its sub-agents, by patchbay's id — a name to
+ * show, and a way to open its transcript. A name is null for a session
+ * this window doesn't hold. */
+export const SessionLinks = createContext<{ name(id: PatchbaySessionId): string | null; open(id: PatchbaySessionId): void }>({
+  name: () => null,
+  open: () => {},
+});
+
+/** The other side of a message, or of an ask: its name, opening its
+ * transcript — plain words when this window doesn't hold it. */
+function SessionLink({ id, fallback }: { id: PatchbaySessionId | null; fallback: string }) {
+  const links = useContext(SessionLinks);
+  const name = id === null ? null : links.name(id);
+  if (id === null || name === null) return <span>{fallback}</span>;
+  return (
+    <button type="button" className="session-link" onClick={() => links.open(id)}>
+      {name}
+    </button>
+  );
+}
+
+/** A message one session sent another (SessionMessageBlock): "To …" or
+ * "From …", the other side a link — kept apart from the user's words and
+ * from answers to the user, its content rendered as an agent's is. */
+export function SessionMessage({ block, live }: { block: SessionMessageBlock; live: boolean }) {
+  const head =
+    block.direction === "to" ? (
+      <>
+        <Icon name="arrow-right" /> To <SessionLink id={block.peer} fallback="another session" />
+      </>
+    ) : block.direction === "from" ? (
+      <>
+        <Icon name="arrow-left" /> From <SessionLink id={block.peer} fallback="another session" />
+      </>
+    ) : (
+      <>
+        <Icon name="mail" /> A message between sessions
+      </>
+    );
+  return (
+    <div className="session-message">
+      <div className="head">{head}</div>
+      {block.parts.map((part, i) =>
+        part.kind === "text" && part.forModel !== true ? (
+          <AgentMarkdown key={i} text={part.text} live={live && i === block.parts.length - 1} />
+        ) : (
+          <ContentPartView key={i} part={part} />
+        ),
+      )}
+    </div>
+  );
+}
+
+/** The sub-agent an ask came from, above its card. */
+export function AskedByLine({ asked }: { asked: AskedBy }) {
+  return (
+    <div className="asked-by">
+      <Icon name="type-hierarchy-sub" /> Asked by sub-agent <SessionLink id={asked.id} fallback={asked.title ?? "Sub-agent"} />
+    </div>
+  );
 }
 
 /** Something the agent sent that no surface renders yet (CarriedBlock):

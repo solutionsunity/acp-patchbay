@@ -34,14 +34,14 @@ import type {
   PermissionOptionView,
   RuleMatchView,
 } from "../shared/protocol";
-import type { AskPlace, AsksStore, LinkCompletion, Proposal } from "./asks-store";
+import type { AskPlace, AsksStore, LinkCompletion, Proposal, Requester } from "./asks-store";
 import { judgeCommands, type RuleLayers } from "./command-judge";
 import { computeLineDiff, previewOf } from "./diff";
 import type { ShellReader } from "./shell-reading";
 import { type CommandRule, type MachineRulesStore, type PermissionRulesStore, type RuleVerdict, withRule } from "./stores/permission-rules";
 import { type MachineWriteScopeStore, writeScopeRows } from "./stores/write-scope";
 import type { CreateTerminalParams } from "./terminal-runner";
-import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../shared/ids";
+import type { PatchbayAgentId, PatchbayAskId } from "../shared/ids";
 
 /** How one of patchbay's own gates settled. `cancelled` is the turn
  * stopping under an open card — the user never decided, which is not the
@@ -76,7 +76,7 @@ function judgementFacts(judgement: CommandJudgementView): PermissionFact[] {
   return [...deciding, ...unseen];
 }
 
-function isUnder(path: string, root: string): boolean {
+export function isUnder(path: string, root: string): boolean {
   const normalizedRoot = root.endsWith(sep) ? root : root + sep;
   return path === root || path.startsWith(normalizedRoot);
 }
@@ -108,8 +108,9 @@ export class PermissionBroker {
     private readonly asks: AsksStore,
     /** The roots a session was given, the workspace's folders apart from
      * the ones added to the session — where its writes may land without
-     * asking while each is in the write scope. */
-    private readonly grantedRoots: (patchbaySessionId: PatchbaySessionId) => { workspace: readonly string[]; added: readonly string[] },
+     * asking while each is in the write scope. A sub-agent's are its own
+     * root set's, read the same way. */
+    private readonly grantedRoots: (requester: Requester) => { workspace: readonly string[]; added: readonly string[] },
     /** `text` with every value patchbay handed an agent masked — for agent
      * text a card shows, which such a value can ride back in. */
     private readonly redact: (text: string) => string,
@@ -146,12 +147,12 @@ export class PermissionBroker {
    * folder the user added —
    * judged where the write lands, never by the text the agent sent. The
    * mute, or no path named, asks. */
-  async evaluateFileWrites(patchbaySessionId: PatchbaySessionId, paths: readonly string[]): Promise<RuleVerdict> {
+  async evaluateFileWrites(requester: Requester, paths: readonly string[]): Promise<RuleVerdict> {
     const on = writeScopeRows(this.machineWriteScope?.get() ?? [], this.rules.get().writeScope)
       .filter((row) => row.on)
       .map((row) => row.location);
     if (on.some((l) => l.kind === "alwaysAsk") || paths.length === 0) return "ask";
-    const granted = this.grantedRoots(patchbaySessionId);
+    const granted = this.grantedRoots(requester);
     const scope = on.flatMap((l) => {
       switch (l.kind) {
         case "workspace":
@@ -228,7 +229,7 @@ export class PermissionBroker {
    * aborted `signal` (the agent withdrew the request) settles the card as
    * withdrawn. */
   async resolveAgentPermissionRequest(
-    patchbaySessionId: PatchbaySessionId,
+    requester: Requester,
     request: { title: string; call: PermissionCallView; options: readonly PermissionOptionView[]; proposals: readonly Proposal[] },
     signal?: AbortSignal,
   ): Promise<{ optionId: string } | { cancelled: true }> {
@@ -236,9 +237,9 @@ export class PermissionBroker {
     const files = call.toolKind === "edit" ? [...new Set([...call.locations.map((l) => l.path), ...Object.keys(call.diffs)])] : [];
     // The place is held before the judge reads the disk: a turn stopped
     // meanwhile answers this request too, before any card was shown.
-    const { id, ending } = this.asks.open({ patchbaySessionId }, "permission", { tool: title, files });
+    const { id, ending } = this.asks.open(requester, "permission", { tool: title, files });
     this.withdrawOn(id, signal);
-    const verdict = await this.evaluateFileWrites(patchbaySessionId, files);
+    const verdict = await this.evaluateFileWrites(requester, files);
     const auto = verdict === "allow" ? options.find((o) => o.kind === "allow_once") : undefined;
     // The card shows either way — a rule changes who answers, never what is
     // visible — and a rule's answer settles it at once.
@@ -276,17 +277,17 @@ export class PermissionBroker {
   /** Patchbay's own mandatory gate on fs/write_text_file. Always produces a
    * diff card — auto-accept changes who clicks, never what is visible. */
   async gateFileWrite(
-    patchbaySessionId: PatchbaySessionId,
+    requester: Requester,
     path: string,
     newContent: string,
   ): Promise<GateOutcome> {
     // The place is held before the gate reads the disk: a turn stopped
     // meanwhile answers this write too, before any card was shown.
-    const { id, ending } = this.asks.open({ patchbaySessionId }, "write", { file: path });
+    const { id, ending } = this.asks.open(requester, "write", { file: path });
     // What the write replaces — the buffer the user may have edited, not
     // only the disk; a new file diffs against empty, all additions.
     const oldContent = await this.currentText(path).catch(() => "");
-    const allowed = (await this.evaluateFileWrites(patchbaySessionId, [path])) === "allow";
+    const allowed = (await this.evaluateFileWrites(requester, [path])) === "allow";
     const { additions, deletions, lines } = computeLineDiff(oldContent, newContent);
     const proposals = allowed ? [] : [{ path, oldText: oldContent, newText: newContent }];
     this.asks.show(id, { kind: "write", file: path, additions, deletions, preview: previewOf(lines), proposals }, allowed ? "allow" : undefined);
@@ -305,11 +306,11 @@ export class PermissionBroker {
    * speaks for the command alone — trusting a command trusts it under
    * whatever directory and environment the agent runs it with. The record
    * names the variables, never their values. */
-  async gateCommand(patchbaySessionId: PatchbaySessionId, run: CreateTerminalParams): Promise<GateOutcome> {
+  async gateCommand(requester: Requester, run: CreateTerminalParams): Promise<GateOutcome> {
     const command = formatCommandLine(run.command, run.args);
     // The place is held before the line is read: a turn stopped meanwhile
     // answers this command too, before any card was shown.
-    const { id, ending } = this.asks.open({ patchbaySessionId }, "command", { command, cwd: run.cwd, env: Object.keys(run.env) });
+    const { id, ending } = this.asks.open(requester, "command", { command, cwd: run.cwd, env: Object.keys(run.env) });
     const judgement = await this.judgeRun(run);
     const always = judgement.verdict === "ask" ? alwaysRules(judgement) : null;
     // The card shows either way — a rule changes who answers, never what is

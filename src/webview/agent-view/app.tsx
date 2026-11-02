@@ -13,6 +13,8 @@ import { elsewhere, sessionMark, waitingOn } from "../../shared/attention";
 import { useActions } from "../shared/actions";
 import { Icon } from "../shared/icon";
 import { Chat } from "./chat/chat";
+import { SessionLinks } from "./chat/blocks";
+import { subagentName } from "./subagent-controls";
 import { deriveTranscript, EMPTY_TRANSCRIPT, turnLive } from "./chat/view-model";
 import { Composer } from "./composer/composer";
 import { newChatInFlight } from "./composer/composer-controls";
@@ -46,6 +48,9 @@ export function App({
   // transcript, or put back in the composer. A new `seq` is the request.
   const [goTo, setGoTo] = useState<{ seq: number; id: string } | null>(null);
   const [reuse, setReuse] = useState<{ seq: number; prompt: UserBlock } | null>(null);
+  // A sub-agent's transcript shown in its session's chat instead of the
+  // session's own — a view of this pane only, gone with a session switch.
+  const [viewing, setViewing] = useState<{ session: PatchbaySessionId; subagent: PatchbaySessionId } | null>(null);
 
   const pinned = pinnedPatchbaySessionId !== undefined;
   // A new chat in flight leaves no session active: the pane is the connect
@@ -70,6 +75,28 @@ export function App({
   const derived = useMemo(
     () => (blocks.length > 0 ? deriveTranscript(blocks, activeLive, state.preferences) : EMPTY_TRANSCRIPT),
     [blocks, activeLive, state.preferences],
+  );
+  // `?? {}` guards snapshots minted before the field existed.
+  const roster = active !== null ? ((state.subagents ?? {})[active.id] ?? []) : [];
+  const viewed = viewing !== null && viewing.session === active?.id ? (roster.find((s) => s.id === viewing.subagent) ?? null) : null;
+  const viewedBlocks = viewed !== null ? (state.transcripts[viewed.id] ?? []) : [];
+  const viewedLive = viewed?.state?.state === "running";
+  const viewedDerived = useMemo(
+    () => (viewedBlocks.length > 0 ? deriveTranscript(viewedBlocks, viewedLive, state.preferences) : EMPTY_TRANSCRIPT),
+    [viewedBlocks, viewedLive, state.preferences],
+  );
+  // Inside the transcript, the session and its sub-agents are links: each
+  // opens its own transcript here, the session's its own again.
+  const links = useMemo(
+    () => ({
+      name: (id: PatchbaySessionId) => {
+        if (id === active?.id) return active.title;
+        const subagent = roster.find((s) => s.id === id);
+        return subagent === undefined ? null : subagentName(subagent);
+      },
+      open: (id: PatchbaySessionId) => setViewing(active === null || id === active.id ? null : { session: active.id, subagent: id }),
+    }),
+    [active, roster],
   );
   const detach = state.preferences?.detachWindows ?? true;
   // The durable draft is empty — the only state a held prompt is taken back
@@ -159,13 +186,26 @@ export function App({
           )}
         </div>
       )}
-      <Chat state={state} activeSession={active} blocks={blocks} derived={derived} onNewChat={newChat} goTo={goTo} />
+      <SessionLinks.Provider value={links}>
+        <Chat
+          state={state}
+          activeSession={active}
+          blocks={viewed !== null ? viewedBlocks : blocks}
+          derived={viewed !== null ? viewedDerived : derived}
+          onNewChat={newChat}
+          goTo={goTo}
+          {...(viewed !== null ? { subagent: { view: viewed, onBack: () => setViewing(null) } } : {})}
+        />
+      </SessionLinks.Provider>
       {active !== null && (
         // keyed by session: which panel is open is per-session render state,
         // not something a session switch should inherit
         <ReadoutStrip
           key={active.id}
+          patchbaySessionId={active.id}
           plan={state.activePlan[active.id] ?? null}
+          subagents={roster}
+          onOpenSubagent={(subagent) => setViewing({ session: active.id, subagent })}
           prompts={derived.totals.prompts}
           composerEmpty={composerEmpty}
           onGoTo={(prompt) => setGoTo((g) => ({ seq: (g?.seq ?? 0) + 1, id: prompt.id }))}

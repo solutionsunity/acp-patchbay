@@ -14,6 +14,7 @@ import type * as acp from "./acp";
 import { randomUUID } from "node:crypto";
 import { formatCommandLine } from "../shared/command-line";
 import { terminalBlockId, type AgentViewEvent } from "../shared/protocol";
+import { transcriptOf, type Requester } from "./asks-store";
 import type { PermissionBroker } from "./broker";
 import { gateRefusal, readFailure, relativeCwd, relativePath, unknownSession, unknownTerminal } from "./client-replies";
 import type { PoolHooks } from "./pool";
@@ -39,16 +40,16 @@ export interface ClientHostDeps {
 export class ClientHost {
   /** Each terminal with the session that made it — the one session it
    * answers: another session's request, or another agent's, finds no such
-   * terminal. */
+   * terminal. A sub-agent's terminal is its own, not its session's. */
   private readonly terminals = new Map<string, { handle: TerminalHandle; owner: PatchbaySessionId }>();
   private readonly runner: TerminalRunner = new NodeTerminalRunner();
 
   constructor(private readonly deps: ClientHostDeps) {}
 
-  /** `patchbaySessionId` is patchbay's id for the session the agent named —
+  /** `requester` is the session the agent named, as patchbay holds it —
    * undefined when patchbay holds no such session, which reads nothing. */
-  async readTextFile(patchbaySessionId: PatchbaySessionId | undefined, request: FileReadFact): Promise<acp.ReadTextFileResponse> {
-    if (patchbaySessionId === undefined) throw unknownSession(request.sessionId);
+  async readTextFile(requester: Requester | undefined, request: FileReadFact): Promise<acp.ReadTextFileResponse> {
+    if (requester === undefined) throw unknownSession(request.sessionId);
     if (!isAbsolute(request.path)) throw relativePath(request.path);
     const content = await this.deps.readLive(request.path).catch((err: unknown) => {
       throw readFailure(err, request.path);
@@ -56,24 +57,25 @@ export class ClientHost {
     return { content: sliceTextFileRead(content, request.line, request.limit) };
   }
 
-  /** `patchbaySessionId` is patchbay's id for the session the agent named —
+  /** `requester` is the session the agent named, as patchbay holds it —
    * undefined when patchbay holds no such session, which asks no one. */
-  async writeTextFile(patchbaySessionId: PatchbaySessionId | undefined, request: FileWriteFact): Promise<acp.WriteTextFileResponse> {
-    if (patchbaySessionId === undefined) throw unknownSession(request.sessionId);
+  async writeTextFile(requester: Requester | undefined, request: FileWriteFact): Promise<acp.WriteTextFileResponse> {
+    if (requester === undefined) throw unknownSession(request.sessionId);
     if (!isAbsolute(request.path)) throw relativePath(request.path);
-    const outcome = await this.deps.broker.gateFileWrite(patchbaySessionId, request.path, request.content);
+    const outcome = await this.deps.broker.gateFileWrite(requester, request.path, request.content);
     if (outcome !== "accepted") throw gateRefusal(outcome, `write to ${request.path}`);
     await this.deps.writeLive(request.path, request.content);
     return {};
   }
 
-  /** `session` is the session the agent named, as patchbay holds it — its
-   * id, and the cwd it was opened with: where a command that names no cwd
-   * runs, since that is the directory the agent was told it works in. Null
-   * when the connection never opened it. */
+  /** `session` is the session the agent named, as patchbay holds it — who
+   * asks, and the cwd it works in: where a command that names no cwd runs,
+   * since that is the directory the agent was told it works in (a
+   * sub-agent's, the one its agent reported for it). Null when the
+   * connection never opened it. */
   async createTerminal(
     request: TerminalCreateFact,
-    session: { id: PatchbaySessionId; cwd: string } | null,
+    session: { requester: Requester; cwd: string } | null,
   ): Promise<acp.CreateTerminalResponse> {
     if (session === null) throw unknownSession(request.sessionId);
     if (request.cwd !== undefined && !isAbsolute(request.cwd)) throw relativeCwd(request.cwd);
@@ -87,7 +89,7 @@ export class ClientHost {
       outputByteLimit: request.outputByteLimit ?? null,
     };
     const command = formatCommandLine(run.command, run.args);
-    const outcome = await this.deps.broker.gateCommand(session.id, run);
+    const outcome = await this.deps.broker.gateCommand(session.requester, run);
     if (outcome !== "accepted") throw gateRefusal(outcome, `command \`${command}\``);
 
     const handle = await this.runner.create(run);
@@ -95,10 +97,10 @@ export class ClientHost {
     // earlier window must never bind to a new one that happens to share
     // its number.
     const terminalId = `term-${randomUUID()}`;
-    this.terminals.set(terminalId, { handle, owner: session.id });
+    const patchbaySessionId = transcriptOf(session.requester);
+    this.terminals.set(terminalId, { handle, owner: patchbaySessionId });
     if (handle.process !== null) this.deps.trackProcess(handle.process);
     const blockId = terminalBlockId(terminalId);
-    const patchbaySessionId = session.id;
     this.deps.emit({ kind: "terminalStarted", patchbaySessionId, blockId, command });
     handle.onData((chunk) => this.deps.emit({ kind: "terminalOutputAppended", patchbaySessionId, blockId, chunk }));
     handle.onExit((status) =>
@@ -113,8 +115,8 @@ export class ClientHost {
     return { terminalId };
   }
 
-  async terminalOutput(patchbaySessionId: PatchbaySessionId | undefined, request: TerminalRefFact): Promise<acp.TerminalOutputResponse> {
-    const handle = this.terminal(patchbaySessionId, request);
+  async terminalOutput(requester: Requester | undefined, request: TerminalRefFact): Promise<acp.TerminalOutputResponse> {
+    const handle = this.terminal(requester, request);
     const { output, truncated } = handle.currentOutput();
     const exit = handle.exitStatus();
     return {
@@ -125,26 +127,26 @@ export class ClientHost {
   }
 
   async waitForTerminalExit(
-    patchbaySessionId: PatchbaySessionId | undefined,
+    requester: Requester | undefined,
     request: TerminalRefFact,
   ): Promise<acp.WaitForTerminalExitResponse> {
-    const { exitCode, signal } = await this.terminal(patchbaySessionId, request).waitForExit();
+    const { exitCode, signal } = await this.terminal(requester, request).waitForExit();
     return { exitCode, signal };
   }
 
   /** A terminal the session never got — or already released — is the
    * agent's mistake, answered like output and wait: never an untrue
    * "killed". */
-  async killTerminal(patchbaySessionId: PatchbaySessionId | undefined, request: TerminalRefFact): Promise<acp.KillTerminalResponse> {
-    this.terminal(patchbaySessionId, request).kill();
+  async killTerminal(requester: Requester | undefined, request: TerminalRefFact): Promise<acp.KillTerminalResponse> {
+    this.terminal(requester, request).kill();
     return {};
   }
 
-  async releaseTerminal(patchbaySessionId: PatchbaySessionId | undefined, request: TerminalRefFact): Promise<acp.ReleaseTerminalResponse> {
+  async releaseTerminal(requester: Requester | undefined, request: TerminalRefFact): Promise<acp.ReleaseTerminalResponse> {
     // ACP release semantics: a still-running command is killed — before
     // this, releasing dropped the handle and left the process running
     // with nothing pointing at it.
-    const handle = this.terminal(patchbaySessionId, request);
+    const handle = this.terminal(requester, request);
     if (handle.exitStatus() === null) handle.kill();
     this.terminals.delete(request.terminalId);
     return {};
@@ -165,19 +167,19 @@ export class ClientHost {
    * session patchbay doesn't hold is refused; another session's terminal
    * reads as none, so its existence isn't told either. */
   private owned(
-    patchbaySessionId: PatchbaySessionId | undefined,
+    requester: Requester | undefined,
     params: { sessionId: string; terminalId: string },
   ): TerminalHandle | undefined {
-    if (patchbaySessionId === undefined) throw unknownSession(params.sessionId);
+    if (requester === undefined) throw unknownSession(params.sessionId);
     const terminal = this.terminals.get(params.terminalId);
-    return terminal?.owner === patchbaySessionId ? terminal.handle : undefined;
+    return terminal?.owner === transcriptOf(requester) ? terminal.handle : undefined;
   }
 
   private terminal(
-    patchbaySessionId: PatchbaySessionId | undefined,
+    requester: Requester | undefined,
     params: { sessionId: string; terminalId: string },
   ): TerminalHandle {
-    const handle = this.owned(patchbaySessionId, params);
+    const handle = this.owned(requester, params);
     if (handle === undefined) throw unknownTerminal(params.terminalId);
     return handle;
   }
@@ -208,10 +210,12 @@ export function sliceTextFileRead(
 /** The pool's fs/terminal hooks, bound to a host. A getter because the host
  * is built after the pool it serves (its gate needs the sessions store,
  * which needs the pool). `sessionFor` is how a request that names a
- * session the agent's way finds patchbay's. */
+ * session the agent's way finds patchbay's; `cwdOf` where a sub-agent
+ * works — the session's own is the one its connection opened it with. */
 export function clientRequestHooks(
   host: () => ClientHost,
-  sessionFor: (patchbayAgentId: PatchbayAgentId, sessionId: string) => PatchbaySessionId | undefined,
+  sessionFor: (patchbayAgentId: PatchbayAgentId, sessionId: string) => Requester | undefined,
+  cwdOf: (requester: Requester & { subagent: object }) => string,
 ): Pick<
   PoolHooks,
   | "onReadTextFile"
@@ -226,8 +230,9 @@ export function clientRequestHooks(
     onReadTextFile: (patchbayAgentId, request) => host().readTextFile(sessionFor(patchbayAgentId, request.sessionId), request),
     onWriteTextFile: (patchbayAgentId, request) => host().writeTextFile(sessionFor(patchbayAgentId, request.sessionId), request),
     onCreateTerminal: (patchbayAgentId, request, sessionCwd) => {
-      const patchbaySessionId = sessionFor(patchbayAgentId, request.sessionId);
-      return host().createTerminal(request, patchbaySessionId === undefined || sessionCwd === null ? null : { id: patchbaySessionId, cwd: sessionCwd });
+      const requester = sessionFor(patchbayAgentId, request.sessionId);
+      const cwd = requester?.subagent !== undefined ? cwdOf({ ...requester, subagent: requester.subagent }) : sessionCwd;
+      return host().createTerminal(request, requester === undefined || cwd === null ? null : { requester, cwd });
     },
     onTerminalOutput: (patchbayAgentId, request) => host().terminalOutput(sessionFor(patchbayAgentId, request.sessionId), request),
     onWaitForTerminalExit: (patchbayAgentId, request) =>

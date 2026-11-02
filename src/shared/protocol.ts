@@ -186,6 +186,8 @@ export type Action =
    * door, or back among the held ones after a turn that never started. */
   | { kind: "sendPrompt"; patchbaySessionId: PatchbaySessionId; text: string; parts?: readonly PromptPart[]; draft?: string }
   | { kind: "stopTurn"; patchbaySessionId: PatchbaySessionId }
+  /** Cancel a sub-agent's current work — where its agent granted it. */
+  | { kind: "cancelSubagent"; patchbaySessionId: PatchbaySessionId; subagentId: PatchbaySessionId }
   /** Remove one still-queued prompt (see QueuedPrompt) before it fires. */
   | { kind: "removeQueuedPrompt"; patchbaySessionId: PatchbaySessionId; promptId: string }
   /** Send a held prompt that waits on the user (QueuedPrompt.cut). */
@@ -1348,9 +1350,18 @@ export interface PermissionCallView {
   input: string | null;
 }
 
+/** The sub-agent an ask came from, as its card names it — by the title it
+ * had when it asked: a later retitle rewrites nothing already asked. */
+export interface AskedBy {
+  id: PatchbaySessionId;
+  title: string | null;
+}
+
 export interface PermissionBlock {
   kind: "permission";
   id: PatchbayAskId;
+  /** Asked by a sub-agent of the session, not the session itself. */
+  subagent?: AskedBy;
   title: string;
   /** The subject on one line — patchbay's own gates' command; empty when
    * the card shows a call instead. */
@@ -1380,6 +1391,8 @@ export interface ChangePreview extends DiffStat {
 export interface DiffBlock extends ChangePreview {
   kind: "diff";
   id: PatchbayAskId;
+  /** Asked by a sub-agent of the session, not the session itself. */
+  subagent?: AskedBy;
   file: string;
   /** null while awaiting the user; auto-accept still shows the diff. */
   resolution: { accepted: boolean; auto: boolean } | null;
@@ -1468,6 +1481,8 @@ export type ElicitationAnswer =
 export type ElicitationBlock = {
   kind: "elicitation";
   id: PatchbayAskId;
+  /** Asked by a sub-agent of the session, not the session itself. */
+  subagent?: AskedBy;
   message: string;
   resolution: { outcome: ElicitationOutcome } | null;
   /** A url ask's follow-up — absent until the user opens the page. */
@@ -1494,7 +1509,7 @@ export function linkCardPhase(block: Pick<ElicitationBlock, "resolution" | "link
 /** A question card's events, wherever the card shows — a session's
  * transcript, or an agent's card in Settings. */
 export type QuestionEvent =
-  | ({ kind: "elicitationRequested"; patchbayAskId: PatchbayAskId; message: string } & ElicitationAsk)
+  | ({ kind: "elicitationRequested"; patchbayAskId: PatchbayAskId; message: string; subagent?: AskedBy } & ElicitationAsk)
   | { kind: "elicitationResolved"; patchbayAskId: PatchbayAskId; outcome: ElicitationOutcome }
   /** An opened link's follow-up moved: the agent reported the page done,
    * or its asker stopped waiting on it. */
@@ -1513,7 +1528,14 @@ function questionAsked(event: Extract<QuestionEvent, { kind: "elicitationRequest
           ...(event.title !== undefined ? { title: event.title } : {}),
           ...(event.description !== undefined ? { description: event.description } : {}),
         };
-  return { kind: "elicitation", id: event.patchbayAskId, message: event.message, ...ask, resolution: null };
+  return {
+    kind: "elicitation",
+    id: event.patchbayAskId,
+    ...(event.subagent !== undefined ? { subagent: event.subagent } : {}),
+    message: event.message,
+    ...ask,
+    resolution: null,
+  };
 }
 
 /** A question's card once it settled, or once its opened link's follow-up
@@ -1532,6 +1554,28 @@ function questionMoved(
     ...(card.mode === "url" && event.outcome === "accepted" ? { linkState: "waiting" as const } : {}),
     ...(card.mode === "url" && event.outcome === "completed" ? { linkState: "completed" as const } : {}),
   };
+}
+
+/** A message one session sent another — a session and its sub-agent, two
+ * sub-agents — as this transcript saw it: outgoing ("To …") or incoming
+ * ("From …"), the other side named when the agent said who it is. Neither
+ * the user's words nor an answer to the user. One block per message, by
+ * the agent's id for it in this transcript, updated in place. */
+export interface SessionMessageBlock {
+  kind: "sessionMessage";
+  id: string;
+  /** `to`: this transcript's session sent it; `from`: it received it;
+   * null while the agent hasn't said which. */
+  direction: "to" | "from" | null;
+  /** The other side — the session, or one of its sub-agents; null when the
+   * agent didn't name it, or named one this window doesn't hold. */
+  peer: PatchbaySessionId | null;
+  parts: readonly ContentPart[];
+}
+
+/** A session message's block, by the agent's id for the message. */
+export function sessionMessageBlockId(messageId: string): string {
+  return `message:${messageId}`;
 }
 
 /** A patchbay-authored transcript marker — system voice, never agent prose.
@@ -1560,6 +1604,7 @@ export type ChatBlock =
   | ElicitationBlock
   | CompactionBlock
   | NoticeBlock
+  | SessionMessageBlock
   | PatchbayNoticeBlock;
 
 export interface AvailableCommand {
@@ -1630,8 +1675,8 @@ export interface PreferencesView {
   /** The composer's session-stats strip, one preference per read-out —
    * pure render furniture, so hiding any of them loses nothing. Flat keys,
    * not a nested record: the store merges one level deep, so each member
-   * keeps its own default. The read-out strip's chips (prompts, edited
-   * files) are ways in, not read-outs, and have no switch. */
+   * keeps its own default. The read-out strip's chips (sub-agents,
+   * prompts, edited files) are ways in, not read-outs, and have no switch. */
   statsToolCalls: boolean;
   /** The context ring, and with details its numbers beside it. */
   statsContextGauge: GaugeDisplay;
@@ -1678,6 +1723,51 @@ export const DEFAULT_PREFERENCES: PreferencesView = {
   checkAgentUpdates: true,
 };
 
+/** A sub-agent's work, as its agent reported it: `running`,
+ * `requires_action` (waiting on the user), `idle`, `unknown` (the agent
+ * lost sight of it), or a value the spec leaves open — kept as sent. */
+export interface SubagentStateView {
+  state: string;
+  /** Why it went idle, when said. */
+  stopReason?: string;
+  /** Why its work failed — an idle stopped by error. */
+  error?: string;
+}
+
+/** The work a sub-agent's state says it is doing, in the session marks'
+ * words: waiting on the user, or running — null for none. */
+export function subagentWork(state: SubagentStateView | null): "waiting" | "running" | null {
+  return state?.state === "requires_action" ? "waiting" : state?.state === "running" ? "running" : null;
+}
+
+/** A session an agent's session started and owns — its sub-agent: not a
+ * session of the list, only ever seen inside its parent. The roster's row,
+ * written whole by the orchestrator. */
+export interface SubagentView {
+  /** Patchbay's id for the child session — its transcript's key. */
+  id: PatchbaySessionId;
+  /** Who owns it: the session, or another of its sub-agents. */
+  parentId: PatchbaySessionId;
+  /** The parent's name for it, and what it is for — null when unsaid. */
+  title: string | null;
+  description: string | null;
+  /** Its own conversation's title, as it named it. */
+  conversationTitle: string | null;
+  /** Its work as confirmed now — null when nothing current is known:
+   * history, before its first live report, or with its connection gone. */
+  state: SubagentStateView | null;
+  /** The last work it was reported doing, history included, other than
+   * `unknown` — what an unconfirmed or unknown state still shows. */
+  lastKnown: SubagentStateView | null;
+  /** Its work can be cancelled from here, now. */
+  cancel: boolean;
+  /** Where it works, when the agent placed it apart from its parent. */
+  cwd: string | null;
+  additionalDirectories: readonly string[] | null;
+  /** Its configuration as reported — shown, never set. */
+  config: readonly SessionKnobView[];
+}
+
 export interface AgentViewState {
   agents: readonly AgentSummary[];
   sessions: readonly SessionSummary[];
@@ -1699,8 +1789,12 @@ export interface AgentViewState {
   composerFocus: number;
   /** The ACP registry's agents (acp-registry.ts) for the pickers. */
   registryAgents: readonly RegistryAgentView[];
-  /** Render cache, per session — rebuilt wholesale from session/load replay. */
+  /** Render cache, per session — rebuilt wholesale from session/load
+   * replay. A sub-agent's transcript is keyed by its own id. */
   transcripts: Readonly<Record<string, readonly ChatBlock[]>>;
+  /** Each session's sub-agents, nested ones included, in the order they
+   * were announced — rebuilt by replay like the transcript. */
+  subagents: Readonly<Record<string, readonly SubagentView[]>>;
   /** The pinned plan widget's source — the most recent plan snapshot, or
    * none. A plan is *session-level* state spanning many prompts
    * it never enters the per-turn
@@ -1882,6 +1976,7 @@ export const initialAgentViewState: AgentViewState = {
   composerFocus: 0,
   registryAgents: [],
   transcripts: {},
+  subagents: {},
   activePlan: {},
   activeTurn: {},
   commandsBySession: {},
@@ -1965,6 +2060,24 @@ export type AgentViewEvent =
   | { kind: "agentThoughtDelta"; patchbaySessionId: PatchbaySessionId; blockId: string; text: string }
   | { kind: "agentPartAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; part: ContentPart; thought: boolean }
   | { kind: "carriedAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; updateKind: string; payload: string }
+  /** A sub-agent's row, whole — it replaces what the roster held. */
+  | { kind: "subagentUpserted"; patchbaySessionId: PatchbaySessionId; subagent: SubagentView }
+  /** The session's connection went, or it is being attached again: no
+   * sub-agent's work is confirmed, and none can be cancelled. */
+  | { kind: "subagentsUnconfirmed"; patchbaySessionId: PatchbaySessionId }
+  /** A session message, announced or updated: absent `parts` keep what it
+   * holds, empty clears it. */
+  | {
+      kind: "sessionMessageUpserted";
+      patchbaySessionId: PatchbaySessionId;
+      blockId: string;
+      direction: "to" | "from" | null;
+      peer: PatchbaySessionId | null;
+      parts?: readonly ContentPart[];
+    }
+  /** One piece appended to a session message — the block opens here when
+   * no upsert announced it. */
+  | { kind: "sessionMessageAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; part: ContentPart }
   /** A compaction, announced or updated — the spec's patch rules: an
    * absent field keeps its value, an empty `summary` or a null `error`
    * clears it. A new block takes what's absent as none. */
@@ -2032,6 +2145,7 @@ export type AgentViewEvent =
       kind: "permissionRequested";
       patchbaySessionId: PatchbaySessionId;
       patchbayAskId: PatchbayAskId;
+      subagent?: AskedBy;
       title: string;
       detail: string;
       facts: readonly PermissionFact[];
@@ -2043,6 +2157,7 @@ export type AgentViewEvent =
       kind: "diffProposed";
       patchbaySessionId: PatchbaySessionId;
       patchbayAskId: PatchbayAskId;
+      subagent?: AskedBy;
       file: string;
       additions: number;
       deletions: number;
@@ -2268,6 +2383,36 @@ function upsertCompaction(
   return appendBlock(state, patchbaySessionId, patch({ kind: "compaction", id: blockId, status: null, summary: [], error: null, interrupted: false }));
 }
 
+function upsertSessionMessage(
+  state: AgentViewState,
+  patchbaySessionId: PatchbaySessionId,
+  blockId: string,
+  patch: (existing: SessionMessageBlock) => SessionMessageBlock,
+): AgentViewState {
+  if ((state.transcripts[patchbaySessionId] ?? []).some((b) => b.id === blockId)) {
+    return patchBlock<SessionMessageBlock>(state, patchbaySessionId, blockId, patch);
+  }
+  return appendBlock(state, patchbaySessionId, patch({ kind: "sessionMessage", id: blockId, direction: null, peer: null, parts: [] }));
+}
+
+/** A session's sub-agents gone from the view, and what is keyed by each:
+ * its transcript, its plan, its usage — the session closed, or a replay
+ * is about to read them all again. */
+function withoutSubagents(state: AgentViewState, patchbaySessionId: PatchbaySessionId): AgentViewState {
+  const roster = state.subagents[patchbaySessionId];
+  if (roster === undefined) return state;
+  const gone = new Set<string>(roster.map((s) => s.id));
+  const keep = <V>(record: Readonly<Record<string, V>>) => Object.fromEntries(Object.entries(record).filter(([id]) => !gone.has(id)));
+  const { [patchbaySessionId]: _s, ...subagents } = state.subagents;
+  return {
+    ...state,
+    subagents,
+    transcripts: keep(state.transcripts),
+    activePlan: keep(state.activePlan),
+    sessionUsage: keep(state.sessionUsage),
+  };
+}
+
 /** Two parts as one when the second continues the first's text — a
  * streamed passage, not one paragraph per chunk; text meant for the model
  * alone never joins text meant for the user. Null when they stay apart. */
@@ -2392,15 +2537,17 @@ export function reduceAgentView(
     case "chimed":
       return { ...state, chime: { seq: (state.chime?.seq ?? 0) + 1, surface: event.surface } };
     case "sessionClosed": {
-      const { [event.patchbaySessionId]: _t, ...transcripts } = state.transcripts;
-      const { [event.patchbaySessionId]: _c, ...commandsBySession } = state.commandsBySession;
-      const { [event.patchbaySessionId]: _p, ...activePlan } = state.activePlan;
+      // Its sub-agents go with it, and what is keyed by each.
+      const base = withoutSubagents(state, event.patchbaySessionId);
+      const { [event.patchbaySessionId]: _t, ...transcripts } = base.transcripts;
+      const { [event.patchbaySessionId]: _c, ...commandsBySession } = base.commandsBySession;
+      const { [event.patchbaySessionId]: _p, ...activePlan } = base.activePlan;
       const { [event.patchbaySessionId]: _a, ...activeTurn } = state.activeTurn;
       const { [event.patchbaySessionId]: _x, ...contextChips } = state.contextChips;
       const { [event.patchbaySessionId]: _k, ...sessionKnobs } = state.sessionKnobs;
       const { [event.patchbaySessionId]: _r, ...contextRoots } = state.contextRoots;
       const { [event.patchbaySessionId]: _m, ...sessionMcp } = state.sessionMcp;
-      const { [event.patchbaySessionId]: _u, ...sessionUsage } = state.sessionUsage;
+      const { [event.patchbaySessionId]: _u, ...sessionUsage } = base.sessionUsage;
       const { [event.patchbaySessionId]: _q, ...promptQueue } = state.promptQueue;
       const { [event.patchbaySessionId]: _d, ...drafts } = state.drafts;
       const sessions = state.sessions.filter((s) => s.id !== event.patchbaySessionId);
@@ -2410,7 +2557,7 @@ export function reduceAgentView(
       const activePatchbaySessionId =
         state.activePatchbaySessionId === event.patchbaySessionId ? null : state.activePatchbaySessionId;
       return {
-        ...state,
+        ...base,
         sessions,
         transcripts,
         commandsBySession,
@@ -2438,7 +2585,7 @@ export function reduceAgentView(
       // for a stale ticker: no turn survives a transcript rebuild.
       const { [event.patchbaySessionId]: _a, ...activeTurn } = state.activeTurn;
       return {
-        ...withTranscript(state, event.patchbaySessionId, []),
+        ...withTranscript(withoutSubagents(state, event.patchbaySessionId), event.patchbaySessionId, []),
         activePlan: { ...state.activePlan, [event.patchbaySessionId]: null },
         activeTurn,
       };
@@ -2469,6 +2616,34 @@ export function reduceAgentView(
         updateKind: event.updateKind,
         payload: event.payload,
       });
+    case "subagentUpserted": {
+      const roster = state.subagents[event.patchbaySessionId] ?? [];
+      const known = roster.some((s) => s.id === event.subagent.id);
+      return {
+        ...state,
+        subagents: {
+          ...state.subagents,
+          [event.patchbaySessionId]: known ? roster.map((s) => (s.id === event.subagent.id ? event.subagent : s)) : [...roster, event.subagent],
+        },
+      };
+    }
+    case "subagentsUnconfirmed": {
+      const roster = state.subagents[event.patchbaySessionId];
+      if (roster === undefined) return state;
+      return {
+        ...state,
+        subagents: { ...state.subagents, [event.patchbaySessionId]: roster.map((s) => ({ ...s, state: null, cancel: false })) },
+      };
+    }
+    case "sessionMessageUpserted":
+      return upsertSessionMessage(state, event.patchbaySessionId, event.blockId, (b) => ({
+        ...b,
+        direction: event.direction,
+        peer: event.peer,
+        parts: event.parts ?? b.parts,
+      }));
+    case "sessionMessageAppended":
+      return upsertSessionMessage(state, event.patchbaySessionId, event.blockId, (b) => ({ ...b, parts: withPart(b.parts, event.part) }));
     case "toolCallUpserted":
       return upsertToolCall(state, event.patchbaySessionId, event);
     case "compactionUpserted":
@@ -2562,6 +2737,7 @@ export function reduceAgentView(
       return appendBlock(state, event.patchbaySessionId, {
         kind: "permission",
         id: event.patchbayAskId,
+        ...(event.subagent !== undefined ? { subagent: event.subagent } : {}),
         title: event.title,
         detail: event.detail,
         facts: event.facts,
@@ -2578,6 +2754,7 @@ export function reduceAgentView(
       return appendBlock(state, event.patchbaySessionId, {
         kind: "diff",
         id: event.patchbayAskId,
+        ...(event.subagent !== undefined ? { subagent: event.subagent } : {}),
         file: event.file,
         additions: event.additions,
         deletions: event.deletions,
