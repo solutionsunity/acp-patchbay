@@ -10,6 +10,7 @@ import { tempDir } from "./support/teardown";
 import { SETTLE } from "./support/wait-for";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { MemorySecrets } from "../src/orchestrator/stores/mcp-server-tokens";
+import type { PatchbayMcpServerId } from "../src/shared/ids";
 
 const ALL = { routing: "auto", workspaces: "auto" } as const;
 
@@ -79,5 +80,25 @@ describe("a sign-in callback in a window not holding it", () => {
     const { b } = await twoWindows(browser());
     b.orchestrator.signInCallback("", "vscode://solutionsunity.acp-patchbay/elsewhere");
     expect(notices(b)).toEqual([]);
+  });
+});
+
+describe("the link pasted where the sign-in waits", () => {
+  it("finishes it there — the code exchanged with that window's verifier, the server stored signed in", async () => {
+    const tab = browser();
+    const { a, b } = await twoWindows(tab);
+    const adding = addSignedIn(a);
+    await vi.waitFor(() => expect(tab.links).toHaveLength(1), SETTLE);
+    deliver(b, tab.links[0]!);
+    const copied = notices(b)[0]![0] as string;
+
+    a.orchestrator.pasteSignInLink("custom:card", copied);
+    const id = (await adding) as PatchbayMcpServerId;
+    expect((await a.stores.mcpServerTokens.get(id))?.accessToken).toBe("access-1");
+    await vi.waitFor(
+      () => expect(a.settings.state().mcpServers).toEqual([expect.objectContaining({ id, connected: true, signedIn: true })]),
+      SETTLE,
+    );
+    expect(notices(a)).toEqual([]);
   });
 });

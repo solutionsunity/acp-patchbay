@@ -307,6 +307,9 @@ export type Action =
    * note, or the server it made. `key` is the store's own, read off the
    * published connect, never built here. */
   | { kind: "cancelMcpServerConnect"; key: string }
+  /** A sign-in link the user pasted into the card of the connect under
+   * `key`, which waits on the browser. */
+  | { kind: "pasteSignInLink"; key: string; link: string }
   /** Disconnect and remove are the same act — the full clear (config +
    * credential + env): the server is gone, curated or custom; its catalog
    * entry stays, ready to connect again. The non-destructive option is
@@ -630,14 +633,18 @@ export type McpServerWork = "probe" | "remove";
  * a server's edit: the MCP-servers store's live facts, published with the
  * servers. A running one is what the store's connect line holds; a failed
  * or done one stays until dismissed or tried again. `subject` is the
- * catalog id, the add card's key or the server's id. A failure with
- * `signIn` was the server asking for a sign-in; a done one names the
- * `server` it stored. */
+ * catalog id, the add card's key or the server's id. A running one with
+ * `awaitingSignIn` waits on the browser for its sign-in — its card takes
+ * the link pasted from another window, `linkRefused` saying why the last
+ * one was turned away. A failure with `signIn` was the server asking for a
+ * sign-in; a done one names the `server` it stored. */
 export interface McpServerConnectView {
   key: string;
   kind: "catalog" | "custom" | "server";
   subject: string;
   status: "running" | "failed" | "added";
+  awaitingSignIn?: true;
+  linkRefused?: string;
   reason?: string;
   signIn?: true;
   server?: PatchbayMcpServerId;

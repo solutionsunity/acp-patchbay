@@ -129,6 +129,7 @@ export function McpServersSection(props: {
   onUpdate(patchbayMcpServerId: PatchbayMcpServerId, draft: McpDraft, signIn: boolean): void;
   /** `key` is the connect's own, off the published connect. */
   onCancelConnect(key: string): void;
+  onPasteSignInLink(key: string, link: string): void;
   onSetWorkspaces(patchbayMcpServerId: PatchbayMcpServerId, workspaces: Reach<WorkspaceId>): void;
   onRemove(patchbayMcpServerId: PatchbayMcpServerId): void;
   onSetRouting(patchbayMcpServerId: PatchbayMcpServerId, routing: McpServerRoutingView): void;
@@ -181,6 +182,7 @@ export function McpServersSection(props: {
           onConnectOAuth={props.onConnectOAuth}
           onAddCustom={props.onAddCustom}
           onCancelConnect={props.onCancelConnect}
+          onPasteSignInLink={props.onPasteSignInLink}
           onEmpty={() => setAddOpen(false)}
           onAdded={focusServer}
         />
@@ -310,6 +312,7 @@ export function McpServersSection(props: {
                       connect={state.mcpConnects.find((c) => c.kind === "server" && c.subject === server.id)}
                       onSave={(draft, signIn) => props.onUpdate(server.id, draft, signIn)}
                       onCancelConnect={props.onCancelConnect}
+                      onPasteSignInLink={props.onPasteSignInLink}
                       onClose={() => setEditing(null)}
                     />
                   ) : detailsOpen && server.draft !== undefined ? (

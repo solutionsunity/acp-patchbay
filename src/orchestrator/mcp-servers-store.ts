@@ -10,7 +10,7 @@
 // mcp-config.ts): a command with args and env, or a URL with headers, the
 // values in SecretStorage. vscode-free (like SessionsStore/
 // CapabilityTracker): the OAuth browser/redirect step is an injected
-// OAuthUserAgent, so everything is unit-testable against a fake OAuth
+// SignInAgent, so everything is unit-testable against a fake OAuth
 // provider and a fake remote MCP endpoint — the same fixture philosophy as
 // the fake ACP agent.
 import { IPC_ENV } from "../mcp/ipc-protocol";
@@ -35,6 +35,7 @@ import { EDITOR_SERVER_ID, EDITOR_SERVER_NAME } from "../shared/names";
 import { PRODUCT } from "../shared/product";
 import { loggableUrl, nullLogger, type Logger } from "./logger";
 import { connectMcpOAuth, refreshMcpOAuth, type OAuthUserAgent } from "./mcp-oauth";
+import type { CallbackOutcome } from "./oauth-callback";
 import { McpServerTokenStore, type StoredToken } from "./stores/mcp-server-tokens";
 import {
   authTypeOf,
@@ -75,6 +76,22 @@ export interface McpServerWire {
   bridgeScript: string;
   socketPath(): string;
   crossing(value: string): void;
+}
+
+/** A sign-in's browser step, and its one door back in: the callback the
+ * editor delivers and a link the user pastes both go through `deliver`. */
+export interface SignInAgent extends OAuthUserAgent {
+  deliver(query: string): CallbackOutcome;
+}
+
+/** The query a pasted sign-in link carries — null for text that isn't a
+ * link. */
+function linkQuery(link: string): string | null {
+  try {
+    return new URL(link.trim()).search.slice(1);
+  } catch {
+    return null;
+  }
 }
 
 /** Where the stores keep a server's secrets: a stdio server's env, a
@@ -290,7 +307,7 @@ export class McpServersStore {
     /** Browser/redirect step for OAuth connects — the orchestrator wires
      * registerUriHandler + asExternalUri; tests wire a fake. Absent →
      * OAuth connects fail labeled (header connects unaffected). */
-    private readonly oauthUserAgent: OAuthUserAgent | null = null,
+    private readonly oauthUserAgent: SignInAgent | null = null,
     /** Output-channel seam (logger.ts) — hosts and key *names* only, never
      * tokens, env values, or full URLs (query strings can embed secrets). */
     private readonly log: Logger = nullLogger,
@@ -354,6 +371,11 @@ export class McpServersStore {
    * until its card is closed, so the card knows which server it became. */
   private readonly added = new Map<string, PatchbayMcpServerId>();
 
+  /** The sign-in each connect waits on the browser for, under its key: the
+   * state its callback must carry, and why the link last pasted for it was
+   * refused. Held while the wait lasts. */
+  private readonly awaiting = new Map<string, { state: string; refused?: string }>();
+
   /** The refresh in flight per credential — see `refreshOnce`. */
   private readonly refreshing = new Map<string, Promise<void>>();
 
@@ -375,6 +397,10 @@ export class McpServersStore {
         this.log.error(`${key}: failed — ${agentErrorText(err)}`);
       }
       throw err;
+    } finally {
+      // Told to stop, its sign-in's wait may never settle: no link is taken
+      // for an attempt that ended.
+      this.awaiting.delete(key);
     }
   }
 
@@ -385,19 +411,33 @@ export class McpServersStore {
     await this.refresh();
   }
 
-  /** A browser flow: the user agent handed to it waits on the browser for
-   * as long as the user takes, and ends with the attempt's signal — told to
-   * stop (Cancel, the window's end), the wait for the tab is given up, and
-   * the flow with it, so a tab finished later changes nothing. Its result
-   * is never stored then. */
+  /** A browser flow under a connect key: the user agent handed to it waits
+   * on the browser for as long as the user takes — published as waiting
+   * meanwhile, so its card takes a pasted link — and ends with the
+   * attempt's signal — told to stop (Cancel, the window's end), the wait
+   * for the tab is given up, and the flow with it, so a tab finished later
+   * changes nothing. Its result is never stored then. */
   private async browserFlow<T>(
+    key: string,
     userAgent: OAuthUserAgent,
     flow: (bound: OAuthUserAgent) => Promise<T>,
     signal: AbortSignal | undefined,
   ): Promise<T> {
     const running = flow({
       redirectUri: () => userAgent.redirectUri(),
-      authorize: (url, state) => userAgent.authorize(url, state, signal),
+      authorize: async (url, state) => {
+        const waiting = { state };
+        this.awaiting.set(key, waiting);
+        void this.refresh();
+        try {
+          return await userAgent.authorize(url, state, signal);
+        } finally {
+          // A wait given up may settle after the next attempt under the key
+          // began waiting: it clears only its own.
+          if (this.awaiting.get(key) === waiting) this.awaiting.delete(key);
+          void this.refresh();
+        }
+      },
     });
     running.catch(() => {}); // given up, it may still reject — never unhandled
     return unlessAborted(running, signal);
@@ -405,10 +445,29 @@ export class McpServersStore {
 
   /** MCP's sign-in against a remote server: discovery, dynamic client
    * registration, PKCE, the browser — the token it ends with. */
-  private async signIn(url: string, signal: AbortSignal | undefined): Promise<StoredToken> {
+  private async signIn(key: string, url: string, signal: AbortSignal | undefined): Promise<StoredToken> {
     if (this.oauthUserAgent === null) throw new Error("OAuth is unavailable in this environment");
     this.log.info(`browser OAuth starting (endpoint ${loggableUrl(url)})`);
-    return signedIn(await this.browserFlow(this.oauthUserAgent, (ua) => connectMcpOAuth(url, CLIENT_INFO, ua), signal));
+    return signedIn(await this.browserFlow(key, this.oauthUserAgent, (ua) => connectMcpOAuth(url, CLIENT_INFO, ua), signal));
+  }
+
+  /** A sign-in link the user pasted into the card of the connect under
+   * `key` — the callback, handed to another window. Through the door a
+   * delivered callback takes, once its state is the one this connect's
+   * sign-in waits on; any other is refused, the reason on the card. With
+   * no sign-in waiting there, nothing happens: its card no longer asks. */
+  async pasteSignInLink(key: string, link: string): Promise<void> {
+    const waiting = this.awaiting.get(key);
+    if (waiting === undefined || this.oauthUserAgent === null) return;
+    const query = linkQuery(link);
+    const state = query === null ? null : new URLSearchParams(query).get("state");
+    if (query === null || state === null) waiting.refused = "this isn't a sign-in link";
+    else if (state !== waiting.state) waiting.refused = "this link belongs to a different sign-in";
+    else {
+      delete waiting.refused;
+      this.oauthUserAgent.deliver(query);
+    }
+    await this.refresh();
   }
 
   /** Patchbay's own handshake with a server about to be stored — the check
@@ -522,7 +581,16 @@ export class McpServersStore {
     const running = this.lines.connecting();
     const held = (key: string) => !running.includes(key);
     return [
-      ...running.map((key) => ({ key, ...connectOf(key), status: "running" as const })),
+      ...running.map((key) => {
+        const waiting = this.awaiting.get(key);
+        return {
+          key,
+          ...connectOf(key),
+          status: "running" as const,
+          ...(waiting === undefined ? {} : { awaitingSignIn: true as const }),
+          ...(waiting?.refused === undefined ? {} : { linkRefused: waiting.refused }),
+        };
+      }),
       ...[...this.failures]
         .filter(([key]) => held(key))
         .map(([key, { reason, signIn }]) => ({
@@ -711,7 +779,7 @@ export class McpServersStore {
       if (entry === undefined || !entry.auth.oauth) throw new Error("no OAuth mode for this server");
       const endpoint = this.resolveEndpoint(entry, url);
       if ("error" in endpoint) throw new Error(endpoint.error);
-      const token = await this.signIn(endpoint.url, signal);
+      const token = await this.signIn(connectKey.catalog(catalogId), endpoint.url, signal);
       const outcome = await this.check(
         { kind: "http", url: endpoint.url, headers: { Authorization: `Bearer ${token.accessToken}` } },
         signal,
@@ -739,7 +807,7 @@ export class McpServersStore {
     return this.attempt(connectKey.custom(card), signal, async () => {
       McpServerConfigStore.admitName(name);
       const d = normalized(draft);
-      const token = signIn && d.type === "http" ? await this.signIn(d.url, signal) : null;
+      const token = signIn && d.type === "http" ? await this.signIn(connectKey.custom(card), d.url, signal) : null;
       const outcome = await this.checkDraft(d, reach, token?.accessToken ?? null, signal);
       const patchbayMcpServerId = mintPatchbayMcpServerId();
       await this.keepSecrets(patchbayMcpServerId, d, token);
@@ -776,7 +844,7 @@ export class McpServersStore {
         !signIn && d.type === "http" && was.kind === "custom-http" && was.oauth && was.url === d.url
           ? await this.freshToken(patchbayMcpServerId)
           : null;
-      const token = signIn && d.type === "http" ? await this.signIn(d.url, signal) : null;
+      const token = signIn && d.type === "http" ? await this.signIn(connectKey.server(patchbayMcpServerId), d.url, signal) : null;
       const bearer = token?.accessToken ?? kept?.accessToken ?? null;
       const outcome = await this.checkDraft(d, existing, bearer, signal);
       // Removed while it was checked: it stays removed.

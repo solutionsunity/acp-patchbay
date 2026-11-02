@@ -4,6 +4,8 @@
 // token endpoint that actually verifies S256(code_verifier). Same fixture
 // philosophy as the fake ACP agent: exercises the genuine wire shape, no
 // mocks of fetch. `gateDcr` makes registration 403 like Figma's allowlist.
+// Its `/mcp` is the protected resource: an MCP endpoint behind the tokens
+// it issues.
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { OAuthUserAgent } from "../../src/orchestrator/mcp-oauth";
@@ -142,6 +144,35 @@ export class FakeOAuthProvider {
               expires_in: this.expiresIn,
             }),
           );
+          return;
+        }
+        // The protected resource itself: a minimal MCP endpoint that
+        // answers only a token this provider issued.
+        if (url.pathname === "/mcp") {
+          const token = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+          if (!this.issuedAccessTokens.includes(token)) {
+            res.statusCode = 401;
+            res.end(JSON.stringify({ error: "unauthorized" }));
+            return;
+          }
+          if (req.method !== "POST") {
+            res.statusCode = 405; // no standalone stream
+            res.end();
+            return;
+          }
+          const message = JSON.parse(await readBody(req)) as { id?: number; method?: string };
+          if (message.id === undefined) {
+            res.statusCode = 202; // a notification: accepted, nothing to answer
+            res.end();
+            return;
+          }
+          const result =
+            message.method === "initialize"
+              ? { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "fake-oauth-mcp", version: "1" } }
+              : message.method === "tools/list"
+                ? { tools: [] }
+                : {};
+          res.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
           return;
         }
         res.statusCode = 404;

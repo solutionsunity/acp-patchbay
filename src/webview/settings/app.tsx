@@ -152,6 +152,7 @@ export function App({ state }: { state: SettingsState }) {
             onCancelConnect={(key) =>
               send({ kind: "cancelMcpServerConnect", key })
             }
+            onPasteSignInLink={(key, link) => send({ kind: "pasteSignInLink", key, link })}
             onSetWorkspaces={(patchbayMcpServerId, workspaces) =>
               send({ kind: "setMcpServerWorkspaces", patchbayMcpServerId, workspaces })
             }

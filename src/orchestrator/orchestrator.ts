@@ -357,6 +357,7 @@ export class Orchestrator {
           await this.ports.openLink(authorizationUrl);
           return pending;
         },
+        deliver: (query) => this.oauthCallbacks.handle(query),
       },
       log,
     );
@@ -1549,6 +1550,12 @@ export class Orchestrator {
     if (this.oauthCallbacks.handle(query) !== "not waiting") return;
     this.log.info("a sign-in callback arrived that no sign-in in this window waits on — offered to copy");
     this.ports.signInNotWaiting(link);
+  }
+
+  /** A sign-in link the user pasted into the card of the connect under
+   * `key` — the link another window offered to copy. */
+  pasteSignInLink(key: string, link: string): void {
+    void this.mcpServers.pasteSignInLink(key, link).catch(this.logCatch(`paste a sign-in link into ${key}`));
   }
 
   /** Formats a swallowed action failure for the Output channel — these

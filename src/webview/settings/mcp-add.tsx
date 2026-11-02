@@ -236,17 +236,61 @@ function DraftForm(props: {
   );
 }
 
+/** The link a sign-in waiting here takes when its callback reached another
+ * window, which offered it to copy. Sent as it is pasted, or on Enter; the
+ * page never reads the clipboard itself. */
+function PasteLink(props: { refused: boolean; onPaste(link: string): void }) {
+  const [link, setLink] = useState("");
+  const send = (value: string) => value.trim() !== "" && props.onPaste(value);
+  return (
+    <Input
+      type="text"
+      placeholder="Paste link"
+      title="the sign-in link another window offered to copy"
+      aria-invalid={props.refused}
+      value={link}
+      onInput={(e) => {
+        const value = (e.target as HTMLInputElement).value;
+        setLink(value);
+        if ((e.nativeEvent as InputEvent).inputType === "insertFromPaste") send(value);
+      }}
+      onKeyDown={(e) => e.key === "Enter" && send(link)}
+    />
+  );
+}
+
 /** What an add under way, failed or finished says on its card. */
-function ConnectStatus(props: { connect: McpServerConnectView | undefined; onCancel(): void; onSignIn(): void }) {
+function ConnectStatus(props: {
+  connect: McpServerConnectView | undefined;
+  onCancel(): void;
+  onSignIn(): void;
+  onPasteLink(link: string): void;
+}) {
   const c = props.connect;
   if (c === undefined || c.status === "added") return null;
   if (c.status === "running") {
+    const cancel = (
+      <Button variant="outline" size="sm" onClick={props.onCancel}>
+        Cancel
+      </Button>
+    );
+    if (c.awaitingSignIn !== true) {
+      return (
+        <div className="note mx-0 mb-0 mt-1.5 basis-full">
+          <Icon name="loading" spin /> Checking the server…{" "}
+          {cancel}
+        </div>
+      );
+    }
     return (
       <div className="note mx-0 mb-0 mt-1.5 basis-full">
-        <Icon name="loading" spin /> Checking the server — a sign-in waits on your browser…{" "}
-        <Button variant="outline" size="sm" onClick={props.onCancel}>
-          Cancel
-        </Button>
+        <Icon name="loading" spin /> Waiting for your sign-in in the browser… If it opened in another window, paste the link that
+        window copied.
+        <div className="ctl-row mt-1">
+          <PasteLink refused={c.linkRefused !== undefined} onPaste={props.onPasteLink} />
+          {cancel}
+        </div>
+        {c.linkRefused !== undefined && <div className="mt-1 text-destructive">{c.linkRefused}</div>}
       </div>
     );
   }
@@ -380,6 +424,7 @@ export function McpAddCards(props: {
   onAddCustom(card: string, name: string, draft: McpDraft, reach: WhoGets, signIn: boolean): void;
   /** `key` is the connect's own, off the published connect. */
   onCancelConnect(key: string): void;
+  onPasteSignInLink(key: string, link: string): void;
   /** Every card is gone — the last one added, or closed. */
   onEmpty(): void;
   /** A card's server was stored: it is the one to look at now. */
@@ -544,6 +589,7 @@ export function McpAddCards(props: {
                 connect={connect}
                 onCancel={() => connect !== undefined && props.onCancelConnect(connect.key)}
                 onSignIn={() => addCustom(true)}
+                onPasteLink={(link) => connect !== undefined && props.onPasteSignInLink(connect.key, link)}
               />
             </div>
           </div>
@@ -563,6 +609,7 @@ export function EditServerForm(props: {
   connect: McpServerConnectView | undefined;
   onSave(draft: McpDraft, signIn: boolean): void;
   onCancelConnect(key: string): void;
+  onPasteSignInLink(key: string, link: string): void;
   onClose(): void;
 }) {
   const [card, setCard] = useState(() => draftCard(props.server.id, props.server.name, props.server.draft));
@@ -596,6 +643,7 @@ export function EditServerForm(props: {
         connect={connect}
         onCancel={() => connect !== undefined && props.onCancelConnect(connect.key)}
         onSignIn={() => props.onSave(card.draft, true)}
+        onPasteLink={(link) => connect !== undefined && props.onPasteSignInLink(connect.key, link)}
       />
     </div>
   );

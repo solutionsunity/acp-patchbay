@@ -966,6 +966,9 @@ export class OrchestratorHost {
       case "cancelMcpServerConnect":
         void this.orchestrator.mcpServerGates.cancel(action.key).catch(this.orchestrator.logCatch(`cancel ${action.key}`));
         break;
+      case "pasteSignInLink":
+        this.orchestrator.pasteSignInLink(action.key, action.link);
+        break;
       case "setMcpServerWorkspaces":
         // Switched on here, it is probed at once: the user just acted on it.
         void this.orchestrator.mcpServers

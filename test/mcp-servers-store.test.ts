@@ -12,7 +12,7 @@ import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamable
 import { lastEvent } from "./support/transcript";
 import { SETTLE } from "./support/wait-for";
 import { McpServerGates } from "../src/orchestrator/mcp-server-gates";
-import { McpServersStore } from "../src/orchestrator/mcp-servers-store";
+import { McpServersStore, type SignInAgent } from "../src/orchestrator/mcp-servers-store";
 import { Queue } from "../src/orchestrator/queue";
 import type { ProbeFn, ProbeTarget } from "../src/orchestrator/mcp-probe";
 import { McpServerConfigStore } from "../src/orchestrator/stores/mcp-server-configs";
@@ -24,6 +24,7 @@ import type { McpServerConnectView, McpServerRoutingView, McpServerWork, Setting
 import type { McpDraft } from "../src/shared/mcp-config";
 import type { Reach } from "../src/shared/reach";
 import type { OAuthUserAgent } from "../src/orchestrator/mcp-oauth";
+import { OAuthCallbackRegistry } from "../src/orchestrator/oauth-callback";
 import { FakeOAuthProvider, fakeUserAgent } from "./support/fake-oauth-provider";
 import type { PatchbayAgentId, PatchbayMcpServerId } from "../src/shared/ids";
 import type { WorkspaceId } from "../src/shared/workspace";
@@ -77,7 +78,9 @@ const http = (url: string, headers: Record<string, string> = {}): McpDraft => ({
 function harness(
   catalog: CatalogEntry[],
   opts: {
-    userAgent?: OAuthUserAgent;
+    /** The browser step — `deliver`, the door a pasted link goes through,
+     * when the test plays one. */
+    userAgent?: OAuthUserAgent & Partial<Pick<SignInAgent, "deliver">>;
     kv?: MemoryKV;
     secrets?: MemorySecrets;
     /** The agents by id, each with its own configured env. */
@@ -126,7 +129,7 @@ function harness(
       ids: () => Object.keys(opts.agents ?? {}) as PatchbayAgentId[],
       env: async (patchbayAgentId) => opts.agents?.[patchbayAgentId] ?? {},
     },
-    opts.userAgent ?? fakeUserAgent(),
+    { deliver: () => "not waiting", ...(opts.userAgent ?? fakeUserAgent()) },
     undefined,
     (target, signal) => probeFn(target, signal),
   );
@@ -1034,6 +1037,67 @@ describe("McpServersStore — the lines: an add, a probe, a remove", () => {
     await h.gates.cancel("catalog:svc");
     expect(await flow).toMatchObject({ by: "cancel" });
     expect(waitSignal?.aborted).toBe(true);
+  });
+
+  it("a sign-in waiting on the browser takes a pasted link through the callback's own door — refused, with the reason, unless its state is this sign-in's", async () => {
+    const registry = new OAuthCallbackRegistry();
+    const links: string[] = [];
+    const h = harness([entry()], {
+      userAgent: {
+        ...silentTab,
+        // the browser comes back with the link, and it never reaches this window
+        authorize: async (url, state, signal) => {
+          const pending = registry.wait(state, signal);
+          const response = await fetch(url, { redirect: "manual" });
+          await response.body?.cancel();
+          links.push(response.headers.get("location")!);
+          return pending;
+        },
+        deliver: (query) => registry.handle(query),
+      },
+    });
+    const connecting = h.gates.connectOAuth("svc", "Service", undefined, ALL);
+    await vi.waitFor(() => expect(links).toHaveLength(1), SETTLE);
+    const waiting = (extra: Partial<McpServerConnectView> = {}) => [
+      expect.objectContaining({ key: "catalog:svc", status: "running", awaitingSignIn: true, ...extra }),
+    ];
+    expect(await published(h)).toEqual(waiting());
+    expect(connects(h.events)[0]).not.toHaveProperty("linkRefused");
+
+    const link = links[0]!;
+    const another = new URL(link);
+    another.searchParams.set("state", "another-sign-in");
+    for (const [pasted, reason] of [
+      ["not a link", "this isn't a sign-in link"],
+      [new URL("?code=x", link).toString(), "this isn't a sign-in link"],
+      [another.toString(), "this link belongs to a different sign-in"],
+    ] as const) {
+      await h.manager.pasteSignInLink("catalog:svc", pasted);
+      expect(await published(h)).toEqual(waiting({ linkRefused: reason }));
+    }
+    expect(provider.tokenRequests).toEqual([]);
+
+    await h.manager.pasteSignInLink("catalog:svc", ` ${link}\n`);
+    const id = await connecting;
+    expect((await h.tokens.get(id))?.accessToken).toBe("access-1");
+    expect(await published(h)).toEqual([]);
+    // the sign-in ended: a link pasted late finds nothing to finish
+    await h.manager.pasteSignInLink("catalog:svc", link);
+    expect(await published(h)).toEqual([]);
+  });
+
+  it("a connect told to stop mid sign-in leaves no waiting behind — the next attempt under its key isn't asking for a link", async () => {
+    const h = harness([], { userAgent: silentTab });
+    const first = h.add("Remote", http(provider.mcpUrl), ALL, true).catch((err: unknown) => err);
+    await vi.waitFor(async () => expect(await published(h)).toEqual([expect.objectContaining({ awaitingSignIn: true })]), SETTLE);
+    await h.gates.cancel("custom:Remote");
+    expect(await first).toMatchObject({ by: "cancel" });
+    h.setProbeFn(() => new Promise(() => {}));
+    const second = h.add("Remote", http(provider.mcpUrl)).catch((err: unknown) => err);
+    await vi.waitFor(async () => expect(await published(h)).toEqual([expect.objectContaining({ key: "custom:Remote", status: "running" })]), SETTLE);
+    expect(connects(h.events)[0]).not.toHaveProperty("awaitingSignIn");
+    await h.gates.cancel("custom:Remote");
+    expect(await second).toMatchObject({ by: "cancel" });
   });
 
   it("a second Connect while a card's browser flow is out is that flow — one tab, one outcome", async () => {

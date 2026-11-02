@@ -1120,6 +1120,26 @@ for (const theme of Object.keys(THEMES)) {
   await cards.nth(1).locator('button:has-text("Sign in")').click();
   const signIn = await p.evaluate(() => window.__actions.at(-1));
   check(`[${theme}] Sign in adds again, signing in first`, signIn?.kind === "addCustomMcpServer" && signIn.card === remoteCard && signIn.signIn === true);
+  // the sign-in waits on the browser: the card takes the link another
+  // window offered to copy — on Enter, or as it is pasted
+  const waiting = { key: `custom:${remoteCard}`, kind: "custom", subject: remoteCard, status: "running", awaitingSignIn: true };
+  await p.evaluate(outcome, [waiting]);
+  const pasteLink = cards.nth(1).locator('input[placeholder="Paste link"]');
+  const link = "vscode://solutionsunity.acp-patchbay/oauth-callback?code=c1&state=s1";
+  await pasteLink.fill(link);
+  await pasteLink.press("Enter");
+  const entered = await p.evaluate(() => window.__actions.at(-1));
+  check(`[${theme}] a sign-in link entered goes to the connect waiting on it`, entered?.kind === "pasteSignInLink" && entered.key === waiting.key && entered.link === link);
+  await pasteLink.evaluate((el, value) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, value);
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromPaste" }));
+  }, `${link}&again`);
+  const pasted = await p.evaluate(() => window.__actions.at(-1));
+  check(`[${theme}] a sign-in link pasted goes as it lands`, pasted?.kind === "pasteSignInLink" && pasted.link === `${link}&again`);
+  await p.evaluate(outcome, [{ ...waiting, linkRefused: "this link belongs to a different sign-in" }]);
+  const refusal = cards.nth(1).locator("text=this link belongs to a different sign-in");
+  check(`[${theme}] a refused link says why`, await refusal.waitFor().then(() => true, () => false));
+  await cards.nth(1).screenshot({ path: `${OUT}/settings-mcp-add-paste-link-${theme}.png` });
   // added: the card closes, the outcome is cleared, the rest stay
   await p.evaluate(outcome, [{ key: `custom:${remoteCard}`, kind: "custom", subject: remoteCard, status: "added", server: "srv-new" }]);
   await p.waitForFunction(() => document.querySelectorAll("[data-add-card]").length === 1);
