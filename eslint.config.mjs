@@ -1,5 +1,5 @@
-// Scoped to failure classes audits actually found (first the test-code audit,
-// plan.md P14h) — this is a correctness guard, not a style linter. Adding a
+// Scoped to failure classes audits actually found (first the test-code
+// audit) — this is a correctness guard, not a style linter. Adding a
 // rule here requires a demonstrated failure class, same bar as any toolchain.
 import vitest from "@vitest/eslint-plugin";
 import tseslint from "typescript-eslint";

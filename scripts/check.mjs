@@ -1,4 +1,4 @@
-// THE phase gate (plan.md P14h): every suite, one command, loud about
+// THE gate: every suite, one command, loud about
 // anything it cannot run. "Tests clean" means this exits 0 — never a
 // judgment call over which suites happened to run.
 import { execSync } from "node:child_process";
@@ -22,7 +22,7 @@ run("vitest", "vitest run");
 run("ui-gate", "node scripts/ui-gate/shots.mjs");
 
 // the electron suite needs a VS Code download + display; skip LOUDLY when
-// the environment can't run it — a silent gap hid for weeks once (P14h)
+// the environment can't run it — a silent gap hid for weeks once
 try {
   run("electron suite", "npm run pretest:vscode --silent && npm run test:vscode --silent");
 } catch (err) {

@@ -6,7 +6,7 @@
 // by its bare message, which drops what an agent puts in `data`; and a code
 // comment explains its code, never pointing at a document — doc names,
 // sections and planning ids rot as the documents move.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -36,9 +36,14 @@ describe("source boundaries", () => {
     expect(hits(files, bare)).toEqual([]);
   });
 
+  // The build and its scripts are code too: their comments rot the same way.
   it("no comment names a document, a section or a planning id", () => {
-    const files = filesUnder(SRC, /\.tsx?$/);
-    expect(hits(files, /\/\/.*(\.md\b|§|docs\/|compliance [A-Z]\d+|\(P\d+[a-z]?\))|^\s*\*.*(\.md\b|§|docs\/|compliance [A-Z]\d+|\(P\d+[a-z]?\))/)).toEqual([]);
+    const root = join(SRC, "..");
+    const configs = readdirSync(root).filter((name) => /\.(m|c)?js$/.test(name)).map((name) => join(root, name));
+    const files = [...filesUnder(SRC, /\.tsx?$/), ...filesUnder(join(root, "scripts"), /\.(m|c)?js$/), ...configs];
+    const pointer = String.raw`(\.md\b|§|docs\/|compliance [A-Z]\d+|\(P\d+[a-z]?\))`;
+    // a comment, not the `//` of an address in a string
+    expect(hits(files, new RegExp(`(^|[^:/])\\/\\/.*${pointer}|^\\s*\\*.*${pointer}`))).toEqual([]);
   });
 
   // A vendor's behavior is kept where it is curated — an extension module,

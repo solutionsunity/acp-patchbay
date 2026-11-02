@@ -38,8 +38,8 @@ export const chatTranscript = [
     kind: "turnEnd", id: "e0", startedAt: "2026-07-07T10:00:00Z", endedAt: "2026-07-07T10:01:29Z",
     stopReason: "max_tokens", usage: { total: 12025, input: 9800, output: 2225, cached: 7200 },
   },
-  // harness envelope riding the user role (acp-agents-notes/claude-agent-acp.md § Injected
-  // user-role messages) — dim collapsed line, never a bubble, not a prompt
+  // a harness envelope riding the user role (Claude's agent injects such
+  // messages) — dim collapsed line, never a bubble, not a prompt
   {
     kind: "user", id: "inj1", injected: true,
     parts: [{ kind: "text", text: "<task-notification>\n<task-id>abc123</task-id>\n<status>completed</status>\n<result>Agent finished.</result>\n</task-notification>" }],

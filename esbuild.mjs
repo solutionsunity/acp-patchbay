@@ -2,7 +2,7 @@
 // webview, and two standalone agent-spawned processes with no vscode import
 // at all — the local MCP server (src/mcp/server-main.ts) and the
 // MCP stdio-to-HTTP bridge (src/mcp/bridge-main.ts).
-// esbuild by rule (.dotagent/rules/stack.md) — no webpack.
+// esbuild by decision — no webpack.
 import esbuild from "esbuild";
 import { copyFileSync, mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -56,7 +56,7 @@ const extensionHost = {
   plugins: [catalogGlyphs],
 };
 
-// Tailwind v4 runs alongside esbuild as a CSS build step (stack.md) — only
+// Tailwind v4 runs alongside esbuild as a CSS build step — only
 // the shared theme bridge goes through it; the remaining hand-CSS files keep
 // esbuild's plain css loader until their ledger retires them (see the
 // style.css headers). Dependency messages from the postcss run feed
