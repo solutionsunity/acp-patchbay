@@ -1,8 +1,7 @@
 # Auggie (Augment Code) — ACP conduct notes
 
-Identity: `@augmentcode/auggie` via npx (`--acp`), tested v0.32.0 (commit
-eb99b871), protocol 1. Vendor channel: no public issue tracker known —
-support@augmentcode.com / Discord.
+Identity: `@augmentcode/auggie` via npx (`--acp`), protocol 1. Vendor channel:
+no public issue tracker known — support@augmentcode.com / Discord.
 
 ## Compliance issues
 

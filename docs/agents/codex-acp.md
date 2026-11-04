@@ -1,7 +1,6 @@
 # codex-acp (Codex bridge) — ACP conduct notes
 
-Identity: `codex-acp`. Versions tested: none directly — conventions observed
-via shared adapter work. Vendor channel: github.com/agentclientprotocol
+Identity: `codex-acp`. Vendor channel: github.com/agentclientprotocol
 ecosystem.
 
 ## Compliance issues
@@ -36,7 +35,3 @@ ecosystem.
   shipped `dist/index.js`). The engine returns a unified patch; the bridge
   reads the file and reverses the patch to send the full before and after.
   A new file is `oldText: null`, a deleted one `newText: ""`.
-
-## Communication log
-
-- *(empty)*

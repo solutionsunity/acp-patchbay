@@ -37,7 +37,8 @@ Grouped areas:
   [ui-architecture.md](ui/ui-architecture.md) (what they're built
   from), and the binding mockups.
 - **[agents/](agents/)** — one dossier per ACP agent: versioned, reproducible
-  observations of wire behavior and the vendor-communication trail. See
+  observations of wire behavior, and the vendor-communication trail where no
+  public tracker holds it. See
   [agents/README.md](agents/README.md).
 
 Deep dives:

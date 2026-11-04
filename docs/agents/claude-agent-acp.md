@@ -1,8 +1,7 @@
 # claude-agent-acp (Claude Agent SDK bridge) — ACP conduct notes
 
-Identity: `@agentclientprotocol/claude-agent-acp` via npx, tested v0.57.0
-and v0.58.1 (npx floats — 0.58.1 observed 2026-07-12; users get whatever is
-latest), protocol 1. Vendor channel:
+Identity: `@agentclientprotocol/claude-agent-acp` via npx (it floats: users
+get whatever is latest), protocol 1. Vendor channel:
 github.com/agentclientprotocol/claude-agent-acp (public issues).
 
 ## Compliance issues
@@ -18,7 +17,6 @@ github.com/agentclientprotocol/claude-agent-acp (public issues).
   honest turn error. Repro session `06cbb67a-b324-4da8-8575-6bb0ce2e8bb2`
   (cwd /tmp/acp-cancel-test/ws). The prompt itself still persists — it
   appears in the later replay.
-- **Status:** not yet reported upstream.
 
 ### Turn-time auth failure rejected as an internal error, not `auth_required`
 
@@ -40,7 +38,6 @@ github.com/agentclientprotocol/claude-agent-acp (public issues).
   (`-32603` + auth-classified `data.errorKind`, never the message text) as
   `authRequired` evidence at the pool's chokepoints; the authority table
   locks as it would on `-32000`.
-- **Status:** not yet reported upstream.
 
 ## Capability gaps
 
@@ -107,8 +104,7 @@ github.com/agentclientprotocol/claude-agent-acp (public issues).
 - `rate_limit_event` is forwarded only once the turn has an assistant
   message (`lastAssistantTotalUsage`, reset per turn); Claude Code sends the
   turn's first event before it, so that reading is dropped and the gauge
-  catches up at the next change (0.99.1, read from dist 2026-11-01; not
-  reported upstream).
+  catches up at the next change (0.99.1, read from dist 2026-11-01).
 - Observed `_meta` conventions (unadopted — adopt via meta.ts when needed):
   `_claude/sdkMessage`, `_claude/askUserQuestionOption`; the terminal-output
   `_meta` channel, which the bridge uses only for a client that declares
@@ -171,8 +167,4 @@ shows them **as sent** — no vendor filter in core:
   paste any part of it, …)"; the background run then sends no reply — its
   answer is only in the child's own transcript.
 
-- **Status:** reported upstream 2026-11-02 — agentclientprotocol/claude-agent-acp#1519.
-
-## Communication log
-
-- 2026-11-02 — #1519 filed: the RFD sub-agent replies carry `<tools-used-before-summary>` and async-launch metadata.
+- **Reported:** [claude-agent-acp#1519](https://github.com/agentclientprotocol/claude-agent-acp/issues/1519)

@@ -1,7 +1,7 @@
 # Gemini CLI — ACP conduct notes
 
-Identity: Google's Gemini CLI (`gemini`), ACP mode. Versions tested: see
-entries. Vendor channel: github.com/google-gemini/gemini-cli (public issues).
+Identity: Google's Gemini CLI (`gemini`), ACP mode. Vendor channel:
+github.com/google-gemini/gemini-cli (public issues).
 
 ## Compliance issues
 
@@ -51,7 +51,3 @@ as behavioral until a spec clause is pinned)*
   `_meta: {"api-key": {provider: "google"}}`); `authenticate
   _meta["gateway"]: {baseUrl?, headers?}` — gateway config for the `gateway`
   method.
-
-## Communication log
-
-- *(empty)*

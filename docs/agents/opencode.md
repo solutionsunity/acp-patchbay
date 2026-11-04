@@ -1,10 +1,8 @@
 # OpenCode — ACP conduct notes
 
 Identity: `opencode acp` (anomalyco/opencode), ACP registry binary
-distribution, tested 1.18.35 (registry and npm `latest`, released
-2026-10-06), protocol 1. Source read at tag `v1.18.35` and `dev` 3865c69.
-Vendor channel: github.com/anomalyco/opencode (public issues; features need
-core-team design approval first). Patchbay's tracking issue: #87.
+distribution, protocol 1. Vendor channel: github.com/anomalyco/opencode
+(public issues; features need core-team design approval first). Patchbay's tracking issue: #87.
 
 ## Compliance issues
 
@@ -19,14 +17,14 @@ core-team design approval first). Patchbay's tracking issue: #87.
   `type: "terminal"`. With only `_meta` declared, it gets the method with no
   type and the recipe — the convention's own shape.
 - **Impact on patchbay:** none — patchbay declares `auth.terminal`.
-- **Status:** not reported yet.
 
 ## Capability gaps
 
 ### The to-do list is a tool call, never an ACP `plan`
 
-- **Observed:** 2026-10-07, 1.18.35, live capture (raw JSON-RPC driver, free
-  Zen model `opencode/big-pickle`, no credentials) plus source. Its ACP layer
+- **Observed:** 2026-10-07, 1.18.35 (registry and npm `latest`), live capture
+  (raw JSON-RPC driver, free Zen model `opencode/big-pickle`, no credentials)
+  plus source at tag `v1.18.35` and `dev` 3865c69. Its ACP layer
   (`packages/opencode/src/acp/`) sends no `plan` update at all; the agent's
   plan lives in its own `todowrite` tool.
 - **Spec:** ACP's `plan` update carries an agent's execution plan, whole
@@ -69,13 +67,12 @@ core-team design approval first). Patchbay's tracking issue: #87.
 - **Open (to be discussed):** an agent sending both `plan` updates and a
   to-do tool. Today whichever arrives last is the plan; nothing is designed
   for it.
-- **Status:** upstream asked and not merged —
-  anomalyco/opencode#30659 (closed not planned 2026-09-15),
-  anomalyco/opencode#40745 (closed not planned 2026-10-05), PRs
-  anomalyco/opencode#40746 and anomalyco/opencode#41132 closed unmerged,
-  PR anomalyco/opencode#31834 open since 2026-06-11 (maps `cancelled` to
-  `completed` and an unknown priority to `medium`). Mentioned from #87 only;
-  no comment on their tracker.
+- **Reported:** by others —
+  [#30659](https://github.com/anomalyco/opencode/issues/30659),
+  [#40745](https://github.com/anomalyco/opencode/issues/40745); PRs
+  [#40746](https://github.com/anomalyco/opencode/pull/40746),
+  [#41132](https://github.com/anomalyco/opencode/pull/41132),
+  [#31834](https://github.com/anomalyco/opencode/pull/31834).
 
 ## Behavioral notes
 
@@ -92,9 +89,3 @@ core-team design approval first). Patchbay's tracking issue: #87.
 - **Patchbay:** 2.0.25 logs in the spec way — its own launch plus
   `--login` — and the recipe beside it isn't run (#93). 1.18.35's recipe runs
   as written: the binary is the agent's to name.
-- **Status:** not reported yet.
-
-## Communication log
-
-- 2026-10-07 — #87 filed in patchbay, cross-referencing the upstream issues
-  and PRs above.

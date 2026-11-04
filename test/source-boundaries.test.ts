@@ -61,8 +61,8 @@ describe("source boundaries", () => {
   // A wire-extension module carries a deviation from the spec, so it carries
   // its own way out: its header dates the adoption and says when it
   // retires, and an agent dossier names the module — the note holds the
-  // version, the repro and the vendor trail, the module never names the
-  // note. The compose file is the one that isn't an extension.
+  // version and the repro, the module never names the note. The compose
+  // file is the one that isn't an extension.
   it("every wire-extension module dates its adoption, says when it retires, and has a dossier naming it", () => {
     const home = join(SRC, "orchestrator", "extensions");
     const dossiers = filesUnder(fileURLToPath(new URL("../docs/agents/", import.meta.url)), /\.md$/).map((file) => readFileSync(file, "utf8"));
@@ -78,6 +78,18 @@ describe("source boundaries", () => {
         ];
       });
     expect(missing).toEqual([]);
+  });
+
+  // A vendor's public tracker already holds a report's state and history, so
+  // only a dossier of a vendor with no public tracker keeps status lines and
+  // a communication log. Blind to a state written in other words.
+  it("a dossier keeps a vendor's trail only where no public tracker holds it", () => {
+    const dossiers = filesUnder(fileURLToPath(new URL("../docs/agents/", import.meta.url)), /\.md$/)
+      .filter((file) => !file.endsWith("README.md"))
+      .map((file) => ({ file, text: readFileSync(file, "utf8") }))
+      .filter(({ text }) => /^Identity:/m.test(text) && !/no public issue tracker/.test(text));
+    expect(dossiers.length).toBeGreaterThan(0);
+    expect(dossiers.filter(({ text }) => /^## Communication log|^- \*\*Status:\*\*/m.test(text)).map(({ file }) => file)).toEqual([]);
   });
 
   // Which fact proves which capability row is the proof table's to say: a
