@@ -1047,7 +1047,15 @@ the agent grants it.
   (waiting on you, running), plus a hollowed last-known look for work no
   longer confirmed; the gates are pure functions (`subagent-controls.ts`).
   Messages between sessions are one block per message
-  (`SessionMessageBlock`), "To …" or "From …" where they arrived.
+  (`SessionMessageBlock`). The transcript pass (`view-model.ts`) arranges
+  those with the transcript's own sub-agents into one card per delegation,
+  stored nowhere: a "To" opens a card where it arrived, and a "From" joins
+  that sub-agent's latest card by who sent it and when, because the wire links
+  a reply to nothing the spec lets a client read; a resume is a new "To", so a
+  new card. Only the latest card shows state, which comes from the roster
+  alone: a child can restart with no message at all. Any other message stays
+  where it arrived. One head (`subagent-head.tsx`) serves the card, the roster
+  row and the bar above a child's transcript.
 - **Results stay with the session.** The agent replays its children's
   history through the session's own load, so patchbay stores nothing of
   theirs.

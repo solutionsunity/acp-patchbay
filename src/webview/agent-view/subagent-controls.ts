@@ -39,7 +39,7 @@ function stateWords(state: SubagentStateView): string {
   return state.stopReason === undefined || state.stopReason === "end_turn" ? "idle" : `idle · ${state.stopReason}`;
 }
 
-/** What a sub-agent's row says of its work. */
+/** What a sub-agent's head says of its work. */
 export function subagentStateText(subagent: SubagentView): string {
   const { state, lastKnown } = subagent;
   if (state === null) return lastKnown === null ? "nothing reported" : `not confirmed — last ${stateWords(lastKnown)}`;
@@ -53,7 +53,7 @@ export function subagentName(subagent: SubagentView): string {
   return subagent.title ?? subagent.conversationTitle ?? subagent.description ?? "Sub-agent";
 }
 
-/** Whether a sub-agent's row offers Cancel: its agent granted it, and it
+/** Whether a sub-agent's head offers Cancel: its agent granted it, and it
  * has work to cancel — at work, or not known to have stopped. */
 export function cancelOffered(subagent: SubagentView): boolean {
   return subagent.cancel && subagentLook(subagent).mark !== null;
@@ -72,6 +72,19 @@ export function rosterRows(roster: readonly SubagentView[], root: PatchbaySessio
   };
   walk(root, 0);
   return rows;
+}
+
+/** The sub-agents a sub-agent hangs under, the outermost first — the session
+ * itself isn't one of them. */
+export function subagentAncestors(roster: readonly SubagentView[], subagent: SubagentView): SubagentView[] {
+  const parent = roster.find((s) => s.id === subagent.parentId);
+  return parent === undefined ? [] : [...subagentAncestors(roster, parent), parent];
+}
+
+/** How a transcript finds its own sub-agents: those its session started, not
+ * its parent, nor one nested further down. */
+export function ownSubagent(roster: readonly SubagentView[], self: PatchbaySessionId | undefined): (id: PatchbaySessionId) => SubagentView | undefined {
+  return (id) => roster.find((s) => s.id === id && s.parentId === self);
 }
 
 /** The chip: how many sub-agents, how many at work and waiting, and the

@@ -76,6 +76,8 @@ export function Composer(props: {
   focusRequest: number;
   /** Ingress refusals surface through the app's toast. */
   onNotice(message: string): void;
+  /** A prompt left the box, for the session's chat. */
+  onSent(): void;
 }) {
   const send = useActions();
   const [adderOpen, setAdderOpen] = useState(false);
@@ -104,8 +106,10 @@ export function Composer(props: {
   // Enter during a turn underway queues (the orchestrator holds it until the
   // turn ends); the Stop button is the only stop — Enter-as-stop would be
   // too easy to trip once sending mid-turn is legal.
-  const onSubmit = (text: string, parts: readonly PromptPart[] | undefined, draft: string): void =>
+  const onSubmit = (text: string, parts: readonly PromptPart[] | undefined, draft: string): void => {
     send({ kind: "sendPrompt", patchbaySessionId, text, parts, draft });
+    props.onSent();
+  };
   // The words land in the box (the editor's own); what rode beside them is
   // the host's to stage again — only once the words did land.
   const onReused = (prompt: UserBlock, landed: boolean): void => {

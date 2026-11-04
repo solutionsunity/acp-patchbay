@@ -11,18 +11,10 @@
 import type { RefObject } from "react";
 import type { PatchbaySessionId } from "../../shared/ids";
 import type { SubagentView } from "../../shared/protocol";
-import { useActions } from "../shared/actions";
 import { Icon } from "../shared/icon";
-import { MarkDot } from "./attention";
 import { ReadoutPanel } from "./readout-panel";
-import { cancelOffered, rosterRows, rosterSummary, subagentLook, subagentName, subagentStateText, type SubagentLook } from "./subagent-controls";
-
-/** A sub-agent's mark: the session's dot while at work; hollowed — the
- * last-known look — once its work is no longer confirmed. */
-export function SubagentDot({ look }: { look: SubagentLook }) {
-  if (look.mark !== "unknown") return <MarkDot mark={look.mark} />;
-  return <span className={`unknown-dot ${look.last ?? ""}`} title={look.last === null ? "Not known" : "Not confirmed — last seen at work"} />;
-}
+import { rosterRows, rosterSummary } from "./subagent-controls";
+import { SubagentDot, SubagentHead } from "./subagent-head";
 
 export function SubagentsChip({
   patchbaySessionId,
@@ -40,7 +32,6 @@ export function SubagentsChip({
   onOpenChange(open: boolean): void;
   anchor: RefObject<HTMLDivElement | null>;
 }) {
-  const send = useActions();
   const { label, look } = rosterSummary(roster);
   return (
     <ReadoutPanel
@@ -58,34 +49,20 @@ export function SubagentsChip({
     >
       {rosterRows(roster, patchbaySessionId).map(({ subagent, depth }) => (
         <div key={subagent.id} className="subagent-row" style={{ paddingLeft: 8 + depth * 14 }}>
-          <button
-            type="button"
-            className="open"
-            title={subagent.description ?? undefined}
-            onClick={() => {
+          <SubagentHead
+            subagent={subagent}
+            root={patchbaySessionId}
+            onOpen={() => {
               onOpenChange(false);
               onOpen(subagent.id);
             }}
           >
-            <SubagentDot look={subagentLook(subagent)} />
-            <span className="name">{subagentName(subagent)}</span>
-            <span className="state">{subagentStateText(subagent)}</span>
             {subagent.cwd !== null && (
               <span className="where" title={subagent.cwd}>
                 <Icon name="folder" /> {subagent.cwd}
               </span>
             )}
-          </button>
-          {cancelOffered(subagent) && (
-            <button
-              type="button"
-              className="cancel"
-              title="Cancel this sub-agent's work"
-              onClick={() => send({ kind: "cancelSubagent", patchbaySessionId, subagentId: subagent.id })}
-            >
-              Cancel
-            </button>
-          )}
+          </SubagentHead>
         </div>
       ))}
     </ReadoutPanel>

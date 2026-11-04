@@ -198,12 +198,14 @@ deliverable.
   the turn ends: one still working says so. Once the agent's answer is over
   the user can prompt it, whatever its sub-agents are still doing; what it
   says later about them lands in the chat and marks the session like a
-  finished turn. Each opens its own conversation
-  inside the chat, read-only, with a way back; what the session and its
-  sub-agents tell each other shows in the chat where it happened, and a
+  finished turn. Handing work to a sub-agent shows as a card in the chat,
+  where it happened: its name, how it stands, and what went to it and came
+  back, a click away. Each opens its own conversation inside the chat, with
+  the path back through its parents; a prompt can't reach a sub-agent, so one
+  sent from there goes to the session, and the chat returns to it. A
   sub-agent's request for permission is a card in the session's chat that
-  names it. One the agent lets the user stop can be cancelled from the
-  list; nothing else is done to a sub-agent. Their results stay with the
+  names it. One the agent lets the user stop can be cancelled wherever its
+  state shows; nothing else is done to a sub-agent. Their results stay with the
   session: reopened, it shows them again as the agent kept them.
 - Context/token usage is shown when the agent reports it and cleanly absent when it
   doesn't — never a fake number.

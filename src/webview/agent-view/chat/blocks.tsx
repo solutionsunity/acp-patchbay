@@ -16,6 +16,7 @@ import {
   type ContentPart,
   type NoticeBlock,
   type SessionMessageBlock,
+  type SubagentView,
   type DiffStat,
   type PreferencesView,
   type TerminalBlock,
@@ -33,6 +34,7 @@ import { attachmentUri } from "../../shared/attachments-base";
 import { AgentMarkdown } from "./markdown";
 import { DiffStatText } from "./diff-stat";
 import { MENTION_LINK } from "./prompt-pieces";
+import { SubagentHead } from "../subagent-head";
 import { compactionLine, diffTotal, noticeLook, thoughtTail, toolFileRows, type ToolFileRow } from "./view-model";
 import type { PatchbaySessionId } from "../../../shared/ids";
 
@@ -248,29 +250,33 @@ export const SessionLinks = createContext<{ name(id: PatchbaySessionId): string 
 
 /** The other side of a message, or of an ask: its name, opening its
  * transcript — plain words when this window doesn't hold it. */
-function SessionLink({ id, fallback }: { id: PatchbaySessionId | null; fallback: string }) {
+export function SessionLink({ id, fallback }: { id: PatchbaySessionId | null; fallback: string }) {
   const links = useContext(SessionLinks);
   const name = id === null ? null : links.name(id);
   if (id === null || name === null) return <span>{fallback}</span>;
   return (
-    <button type="button" className="session-link" onClick={() => links.open(id)}>
+    <button type="button" className="session-link" title={name} onClick={() => links.open(id)}>
       {name}
     </button>
   );
 }
 
 /** A message one session sent another (SessionMessageBlock): "To …" or
- * "From …", the other side a link — kept apart from the user's words and
- * from answers to the user, its content rendered as an agent's is. */
-export function SessionMessage({ block, live }: { block: SessionMessageBlock; live: boolean }) {
-  const head =
+ * "From …", the other side a link unless its card already names it — kept
+ * apart from the user's words and from answers to the user, what it says one
+ * click away, rendered as an agent's prose is. */
+export function SessionMessage({ block, inCard = false }: { block: SessionMessageBlock; inCard?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const label = open ? "Hide the message" : "Show the message";
+  const toggle = () => setOpen(!open);
+  const words =
     block.direction === "to" ? (
       <>
-        <Icon name="arrow-right" /> To <SessionLink id={block.peer} fallback="another session" />
+        <Icon name="arrow-right" /> To
       </>
     ) : block.direction === "from" ? (
       <>
-        <Icon name="arrow-left" /> From <SessionLink id={block.peer} fallback="another session" />
+        <Icon name="arrow-left" /> From
       </>
     ) : (
       <>
@@ -279,14 +285,52 @@ export function SessionMessage({ block, live }: { block: SessionMessageBlock; li
     );
   return (
     <div className="session-message">
-      <div className="head">{head}</div>
-      {block.parts.map((part, i) =>
-        part.kind === "text" && part.forModel !== true ? (
-          <AgentMarkdown key={i} text={part.text} live={live && i === block.parts.length - 1} />
+      <div className="head">
+        {inCard || block.direction === null ? (
+          <Disclosure open={open} onToggle={toggle} label={label}>
+            {words}
+          </Disclosure>
         ) : (
-          <ContentPartView key={i} part={part} />
-        ),
+          <>
+            {words} <SessionLink id={block.peer} fallback="another session" />
+            <Disclosure open={open} onToggle={toggle} label={label} />
+          </>
+        )}
+      </div>
+      {open && (
+        <div className="body">
+          {block.parts.map((part, i) =>
+            part.kind === "text" && part.forModel !== true ? <AgentMarkdown key={i} text={part.text} live={false} /> : <ContentPartView key={i} part={part} />,
+          )}
+        </div>
       )}
+    </div>
+  );
+}
+
+/** A delegation to a sub-agent, where it was handed over: who it went to and
+ * how that stands, what went there and what came back inside. An earlier
+ * delegation to a sub-agent that was sent back to work says nothing of how it
+ * stands now: its latest card does. */
+export function SubagentCard({
+  subagent,
+  messages,
+  current,
+  root,
+}: {
+  subagent: SubagentView;
+  messages: readonly SessionMessageBlock[];
+  current: boolean;
+  /** The session the sub-agent hangs under. */
+  root: PatchbaySessionId;
+}) {
+  const links = useContext(SessionLinks);
+  return (
+    <div className="card subagent-card">
+      <SubagentHead subagent={subagent} root={root} current={current} onOpen={() => links.open(subagent.id)} />
+      {messages.map((message) => (
+        <SessionMessage key={message.id} block={message} inCard />
+      ))}
     </div>
   );
 }

@@ -8,13 +8,13 @@
 // and send their own actions; everything durable comes from snapshots.
 import { restartOffered } from "../shared/agent-work";
 import { useMemo, useState } from "react";
-import { attaching, type AgentViewState, type UserBlock } from "../../shared/protocol";
+import { attaching, type AgentViewState, type SubagentView, type UserBlock } from "../../shared/protocol";
 import { elsewhere, sessionMark, waitingOn } from "../../shared/attention";
 import { useActions } from "../shared/actions";
 import { Icon } from "../shared/icon";
 import { Chat } from "./chat/chat";
 import { SessionLinks } from "./chat/blocks";
-import { subagentName } from "./subagent-controls";
+import { ownSubagent, subagentAncestors, subagentName } from "./subagent-controls";
 import { deriveTranscript, EMPTY_TRANSCRIPT, turnLive } from "./chat/view-model";
 import { Composer } from "./composer/composer";
 import { newChatInFlight } from "./composer/composer-controls";
@@ -30,6 +30,9 @@ import { Button } from "@/components/ui/button";
 import type { PatchbaySessionId } from "../../shared/ids";
 
 type Drawer = "agents" | "sessions" | null;
+
+/** One instance, so a session with no sub-agents keeps its derived view. */
+const NO_SUBAGENTS: readonly SubagentView[] = [];
 
 export function App({
   state,
@@ -72,18 +75,18 @@ export function App({
   // and the composer's stats strip the same pass's session totals.
   const blocks = active !== null ? (state.transcripts[active.id] ?? []) : [];
   const activeLive = active !== null && turnLive(state, active.id);
-  const derived = useMemo(
-    () => (blocks.length > 0 ? deriveTranscript(blocks, activeLive, state.preferences) : EMPTY_TRANSCRIPT),
-    [blocks, activeLive, state.preferences],
-  );
   // `?? {}` guards snapshots minted before the field existed.
-  const roster = active !== null ? ((state.subagents ?? {})[active.id] ?? []) : [];
+  const roster = active !== null ? ((state.subagents ?? {})[active.id] ?? NO_SUBAGENTS) : NO_SUBAGENTS;
+  const derived = useMemo(
+    () => (blocks.length > 0 ? deriveTranscript(blocks, activeLive, state.preferences, ownSubagent(roster, active?.id)) : EMPTY_TRANSCRIPT),
+    [blocks, activeLive, state.preferences, roster, active?.id],
+  );
   const viewed = viewing !== null && viewing.session === active?.id ? (roster.find((s) => s.id === viewing.subagent) ?? null) : null;
   const viewedBlocks = viewed !== null ? (state.transcripts[viewed.id] ?? []) : [];
   const viewedLive = viewed?.state?.state === "running";
   const viewedDerived = useMemo(
-    () => (viewedBlocks.length > 0 ? deriveTranscript(viewedBlocks, viewedLive, state.preferences) : EMPTY_TRANSCRIPT),
-    [viewedBlocks, viewedLive, state.preferences],
+    () => (viewedBlocks.length > 0 ? deriveTranscript(viewedBlocks, viewedLive, state.preferences, ownSubagent(roster, viewed?.id)) : EMPTY_TRANSCRIPT),
+    [viewedBlocks, viewedLive, state.preferences, roster, viewed?.id],
   );
   // Inside the transcript, the session and its sub-agents are links: each
   // opens its own transcript here, the session's its own again.
@@ -194,7 +197,7 @@ export function App({
           derived={viewed !== null ? viewedDerived : derived}
           onNewChat={newChat}
           goTo={goTo}
-          {...(viewed !== null ? { subagent: { view: viewed, onBack: () => setViewing(null) } } : {})}
+          {...(viewed !== null && active !== null ? { subagent: { view: viewed, path: [active.id, ...subagentAncestors(roster, viewed).map((s) => s.id)] } } : {})}
         />
       </SessionLinks.Provider>
       {active !== null && (
@@ -208,7 +211,10 @@ export function App({
           onOpenSubagent={(subagent) => setViewing({ session: active.id, subagent })}
           prompts={derived.totals.prompts}
           composerEmpty={composerEmpty}
-          onGoTo={(prompt) => setGoTo((g) => ({ seq: (g?.seq ?? 0) + 1, id: prompt.id }))}
+          onGoTo={(prompt) => {
+            setViewing(null);
+            setGoTo((g) => ({ seq: (g?.seq ?? 0) + 1, id: prompt.id }));
+          }}
           onReuse={(prompt) => setReuse((r) => ({ seq: (r?.seq ?? 0) + 1, prompt }))}
           files={derived.totals.files}
           openEditors={state.openEditors}
@@ -257,6 +263,7 @@ export function App({
         totals={derived.totals}
         usage={active !== null ? (state.sessionUsage[active.id] ?? null) : null}
         onNotice={(msg) => showToast(msg, "warning")}
+        onSent={() => setViewing(null)}
       />
       {drawer === "agents" && (
         <AgentsDrawer agents={state.agents} onDone={closeDrawer} />

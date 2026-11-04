@@ -9,6 +9,14 @@
   unseen and chimes like a finished turn, and a session with only a
   sub-agent at work shows as running. A turn that ends this way shows no
   token usage, and what the agent says later has no Stop. (#144)
+- **A sub-agent has its own card in the chat.** Handing work to one used to
+  be two text blocks that said nothing of the work, with the whole task in
+  the conversation and a reply landing wherever it arrived. Now each
+  delegation is one card where it happened: the sub-agent's name (opening its
+  transcript), how it stands, Cancel where granted, and what went there and
+  came back, collapsed. A sub-agent's own view shows the same head under the
+  whole path back through its parents. A prompt sent from there, or going to
+  a prompt from the prompts chip, takes the chat back to the session. (#143)
 
 ## 0.90.0 — 2026-11-03
 

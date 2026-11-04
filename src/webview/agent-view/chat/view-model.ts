@@ -21,6 +21,8 @@ import {
   type CompactionBlock,
   type DiffStat,
   type PreferencesView,
+  type SessionMessageBlock,
+  type SubagentView,
   type ToolCallBlock,
   type ToolCallKind,
   type UserBlock,
@@ -28,13 +30,26 @@ import {
 import { joinsRuns, toolCallDisplay, type ToolDisplayPreference } from "../../../shared/tool-display";
 import type { PatchbaySessionId } from "../../../shared/ids";
 
+/** One delegation to a sub-agent, where it was handed over: what went there
+ * and what came back. The wire links neither, so a reply goes by who sent it
+ * and when: to that sub-agent's latest card. Only the latest is `current` —
+ * a sub-agent's state is its state now, not an earlier delegation's. */
+export interface SubagentCardItem {
+  kind: "subagentCard";
+  id: string;
+  subagent: SubagentView;
+  messages: SessionMessageBlock[];
+  current: boolean;
+}
+
 export type TranscriptItem =
   | { kind: "single"; block: ChatBlock }
-  | { kind: "toolRun"; id: string; calls: readonly ToolCallBlock[] };
+  | { kind: "toolRun"; id: string; calls: readonly ToolCallBlock[] }
+  | SubagentCardItem;
 
 /** An item's identity: its row's key, and what a reading position names. */
 export function itemId(item: TranscriptItem): string {
-  return item.kind === "toolRun" ? item.id : item.block.id;
+  return item.kind === "single" ? item.block.id : item.id;
 }
 
 export interface TurnRollup {
@@ -150,11 +165,13 @@ export function turnLive(state: Pick<AgentViewState, "activeTurn">, patchbaySess
 }
 
 /** `prefs` routes each call's kind to its display: a call whose step ends
- * grouping stands alone and ends the run before it. */
+ * grouping stands alone and ends the run before it. `ownSubagent` finds the
+ * sub-agents this transcript's session started. */
 export function deriveTranscript(
   blocks: readonly ChatBlock[],
   live: boolean,
   prefs: Pick<PreferencesView, ToolDisplayPreference>,
+  ownSubagent: (id: PatchbaySessionId) => SubagentView | undefined = () => undefined,
 ): TranscriptView {
   const items: TranscriptItem[] = [];
   const rollups = new Map<string, TurnRollup>();
@@ -191,8 +208,29 @@ export function deriveTranscript(
   // stream — and never split a run of tool calls either.
   const embedded = embeddedTerminalIds(blocks);
 
+  // each sub-agent's latest card (render arrangement)
+  const cards = new Map<PatchbaySessionId, SubagentCardItem>();
+
   for (const block of blocks) {
     if (block.kind === "terminal" && embedded.has(block.id)) continue;
+    if (block.kind === "sessionMessage") {
+      const subagent = block.peer === null ? undefined : ownSubagent(block.peer);
+      if (subagent !== undefined) {
+        const latest = cards.get(subagent.id);
+        // A reply lands in its card, up the transcript — nothing here for a
+        // run of tool calls to end at.
+        if (latest !== undefined && block.direction !== "to") {
+          latest.messages.push(block);
+          continue;
+        }
+        if (latest !== undefined) latest.current = false;
+        const card: SubagentCardItem = { kind: "subagentCard", id: `card-${block.id}`, subagent, messages: [block], current: true };
+        cards.set(subagent.id, card);
+        flushRun();
+        items.push(card);
+        continue;
+      }
+    }
     if (block.kind === "toolCall") {
       toolCalls++;
       totalCalls++;

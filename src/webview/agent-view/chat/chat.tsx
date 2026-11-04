@@ -31,7 +31,9 @@ import {
   InjectedUser,
   NoticeLine,
   PromptNav,
+  SessionLink,
   SessionMessage,
+  SubagentCard,
   TerminalBlocks,
   Thought,
   ToolCallCard,
@@ -43,8 +45,8 @@ import { AgentMarkdown } from "./markdown";
 import { DiffCard, PermissionCard, TerminalCard } from "./cards";
 import { ElicitationCard } from "../../shared/question-card";
 import { StatePage } from "./state-page";
-import { knobText, subagentLook, subagentName, subagentStateText } from "../subagent-controls";
-import { SubagentDot } from "../subagents-chip";
+import { knobText } from "../subagent-controls";
+import { SubagentHead } from "../subagent-head";
 import { Button } from "@/components/ui/button";
 import type { PatchbaySessionId } from "../../../shared/ids";
 
@@ -181,7 +183,7 @@ function Block({
     case "carried":
       return <CarriedUpdate updateKind={block.updateKind} payload={block.payload} />;
     case "sessionMessage":
-      return <SessionMessage block={block} live={live} />;
+      return <SessionMessage block={block} />;
     case "toolCall":
       return <ToolCallCard block={block} patchbaySessionId={patchbaySessionId} roots={roots} />;
     case "turnEnd":
@@ -234,6 +236,15 @@ const MemoToolRun = memo(
     a.roots === b.roots &&
     a.calls.length === b.calls.length &&
     a.calls.every((c, i) => c === b.calls[i]),
+);
+const MemoSubagentCard = memo(
+  SubagentCard,
+  (a, b) =>
+    a.subagent === b.subagent &&
+    a.current === b.current &&
+    a.root === b.root &&
+    a.messages.length === b.messages.length &&
+    a.messages.every((m, i) => m === b.messages[i]),
 );
 
 /** Windowed mount: rows are the
@@ -294,9 +305,9 @@ export function Chat(props: {
    * prompt into view — a new `seq` is the request. */
   goTo: { seq: number; id: string } | null;
   /** A sub-agent of the session shown instead of the session's own
-   * transcript — `blocks` and `derived` are then its own: read-only, no
-   * turn of its own, and a way back. */
-  subagent?: { view: SubagentView; onBack(): void };
+   * transcript — `blocks` and `derived` are then its own, with no turn of its
+   * own. `path` is the way back: the session, then each sub-agent down to it. */
+  subagent?: { view: SubagentView; path: readonly PatchbaySessionId[] };
 }) {
   const send = useActions();
   const { agents } = props.state;
@@ -597,17 +608,14 @@ export function Chat(props: {
     <PromptNav.Provider value={promptNav}>
     {props.subagent !== undefined && (
       <div className="subagent-bar">
-        <button type="button" className="back" title={`Back to ${active.title}`} onClick={props.subagent.onBack}>
-          <Icon name="arrow-left" /> {active.title}
-        </button>
-        <span className="sep">/</span>
-        <SubagentDot look={subagentLook(props.subagent.view)} />
-        <span className="name">{subagentName(props.subagent.view)}</span>
-        <span className="state">
-          {subagentStateText(props.subagent.view)}
-          {props.subagent.view.config.length > 0 && ` · ${props.subagent.view.config.map((k) => knobText(k)).join(" · ")}`}
-        </span>
-        <span className="note">read-only</span>
+        {props.subagent.path.map((id) => (
+          <span key={id} className="crumb">
+            <SessionLink id={id} fallback="" /> /
+          </span>
+        ))}
+        <SubagentHead subagent={props.subagent.view} root={active.id}>
+          {props.subagent.view.config.length > 0 && <span className="settings">{props.subagent.view.config.map((k) => knobText(k)).join(" · ")}</span>}
+        </SubagentHead>
       </div>
     )}
     <div
@@ -641,6 +649,8 @@ export function Chat(props: {
         <div key={itemId(item)} className="chat-row" data-item={itemId(item)}>
           {item.kind === "toolRun" ? (
             <MemoToolRun calls={item.calls} patchbaySessionId={transcriptId} roots={props.state.workspaceRoots} />
+          ) : item.kind === "subagentCard" ? (
+            <MemoSubagentCard subagent={item.subagent} messages={item.messages} current={item.current} root={active.id} />
           ) : item.block.kind === "turnEnd" ? (
             <TurnLine
               live={false}

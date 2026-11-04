@@ -2,7 +2,7 @@
 // last-known look for work no longer confirmed, the words for each state,
 // the roster's tree order, and the chip's summary.
 import { describe, expect, it } from "vitest";
-import { cancelOffered, knobText, rosterRows, rosterSummary, subagentLook, subagentName, subagentStateText } from "../src/webview/agent-view/subagent-controls";
+import { cancelOffered, knobText, ownSubagent, rosterRows, rosterSummary, subagentAncestors, subagentLook, subagentName, subagentStateText } from "../src/webview/agent-view/subagent-controls";
 import type { PatchbaySessionId } from "../src/shared/ids";
 import type { SubagentView } from "../src/shared/protocol";
 
@@ -87,6 +87,25 @@ describe("rosterRows", () => {
       ["a1", 1],
       ["b", 0],
     ]);
+  });
+});
+
+describe("where a sub-agent hangs", () => {
+  const a = view({ id: "root/a" as PatchbaySessionId });
+  const b = view({ id: "root/a/b" as PatchbaySessionId, parentId: a.id });
+  const c = view({ id: "root/a/b/c" as PatchbaySessionId, parentId: b.id });
+  const roster = [a, c, b];
+
+  it("its parents, the outermost first, the session itself not one of them", () => {
+    expect(subagentAncestors(roster, a)).toEqual([]);
+    expect(subagentAncestors(roster, c)).toEqual([a, b]);
+  });
+
+  it("a transcript's own sub-agent is one this session started — not a nested one's, not its parent", () => {
+    expect(ownSubagent(roster, ROOT)(a.id)).toBe(a);
+    expect(ownSubagent(roster, ROOT)(b.id)).toBeUndefined();
+    expect(ownSubagent(roster, a.id)(b.id)).toBe(b);
+    expect(ownSubagent(roster, a.id)(ROOT)).toBeUndefined();
   });
 });
 

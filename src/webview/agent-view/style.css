@@ -345,12 +345,9 @@ body {
   min-width: 0;
 }
 
-/* a sub-agent in the roster: its mark, name, what it is doing, where it
-   works — the row opens its transcript; Cancel sits apart, flush right */
+/* a sub-agent in the roster: its head, indented by depth */
 .overlay-panel .subagent-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  padding-right: 8px;
   border-radius: 4px;
   min-width: 0;
 }
@@ -359,37 +356,73 @@ body {
   background: var(--pb-bg);
 }
 
-.overlay-panel .subagent-row .open {
+/* a sub-agent's head, wherever it is named: its mark, name, what it is doing
+   and what the place adds; Cancel sits apart, flush right */
+.subagent-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+}
+
+.subagent-head .open {
   display: flex;
   align-items: center;
   gap: 6px;
   flex: 1 1 auto;
   min-width: 0;
   padding: 3px 0;
-  font-size: 11.5px;
   color: var(--pb-text-dim);
   background: none;
   border: none;
-  cursor: pointer;
   text-align: left;
 }
 
-.overlay-panel .subagent-row .name {
-  color: var(--pb-text);
-  flex: none;
+.subagent-head button.open {
+  cursor: pointer;
 }
 
-.overlay-panel .subagent-row .state,
-.overlay-panel .subagent-row .where {
-  color: var(--pb-text-faint);
+.subagent-head .name,
+.subagent-head .state,
+.subagent-head .where,
+.subagent-head .settings {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.overlay-panel .subagent-row .cancel {
+.subagent-head .name {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--pb-text);
+}
+
+.subagent-head button.open .name {
+  color: var(--pb-accent);
+}
+
+.subagent-head button.open:hover .name {
+  text-decoration: underline;
+}
+
+/* short of room: what the place adds gives way first, then the name; the
+   state stays, unless a long failure takes more than its share */
+.subagent-head .state {
   flex: none;
-  margin-right: 8px;
+  max-width: 60%;
+  color: var(--pb-text-faint);
+}
+
+.subagent-head .where,
+.subagent-head .settings {
+  flex: 0 1000 auto;
+  color: var(--pb-text-faint);
+}
+
+.subagent-head .cancel {
+  flex: none;
   padding: 0 6px;
   font-size: 11px;
   color: var(--pb-text-dim);
@@ -399,7 +432,7 @@ body {
   cursor: pointer;
 }
 
-.overlay-panel .subagent-row .cancel:hover {
+.subagent-head .cancel:hover {
   color: var(--pb-text);
 }
 
@@ -1531,58 +1564,50 @@ body {
   border-color: var(--pb-warn);
 }
 
-/* a sub-agent's transcript on view in its session's chat: the way back, and
-   whose it is */
+/* a sub-agent's transcript on view in its session's chat: the path back
+   through its parents, wrapping rather than hiding it, then its head */
 .subagent-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 0 6px;
   padding: 3px 8px;
   font-size: 11.5px;
-  color: var(--pb-text-dim);
+  color: var(--pb-text-faint);
   border-bottom: 1px solid var(--pb-panel);
   min-width: 0;
 }
 
-.subagent-bar .back {
+.subagent-bar .crumb {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.subagent-bar .session-link {
   min-width: 0;
-  max-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--pb-text-dim);
-  background: none;
-  border: none;
-  cursor: pointer;
 }
 
-.subagent-bar .back:hover,
-.subagent-bar .name {
-  color: var(--pb-text);
-}
-
-.subagent-bar .state {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--pb-text-faint);
-}
-
-.subagent-bar .note {
-  margin-left: auto;
-  flex: none;
-  color: var(--pb-text-faint);
-  font-style: italic;
+/* a delegation to a sub-agent, where it was handed over: its head, then what
+   went there and what came back */
+.subagent-card {
+  margin: 4px 0;
+  padding: 3px 10px;
 }
 
 /* a message between sessions — neither the user's words nor an answer to
-   the user: a side rule, its direction and other side above */
+   the user: its direction and other side, what it says one click away */
 .session-message {
+  margin: 2px 0;
+}
+
+.session-message .body {
   margin: 4px 0;
-  padding-left: 8px;
+  padding-left: 10px;
   border-left: 2px solid var(--pb-accent-dim);
 }
 

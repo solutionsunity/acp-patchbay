@@ -23,6 +23,8 @@ import {
   userPartsText,
   type AgentViewEvent,
   type ChatBlock,
+  type SessionMessageBlock,
+  type SubagentView,
   type ToolCallBlock,
 } from "../src/shared/protocol";
 import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../src/shared/ids";
@@ -50,6 +52,76 @@ function tool(id: string, over: Partial<ToolCallBlock> = {}): ToolCallBlock {
 function text(id: string): ChatBlock {
   return { kind: "text", id, text: "prose" };
 }
+
+describe("deriveTranscript: a sub-agent's card", () => {
+  const A = "sess/a" as PatchbaySessionId;
+  const B = "sess/b" as PatchbaySessionId;
+  const subagent = (id: PatchbaySessionId): SubagentView => ({
+    id,
+    parentId: S,
+    title: id,
+    description: null,
+    conversationTitle: null,
+    state: null,
+    lastKnown: null,
+    cancel: false,
+    cwd: null,
+    additionalDirectories: null,
+    config: [],
+  });
+  const own = new Map([A, B].map((id) => [id, subagent(id)]));
+  const message = (id: string, direction: SessionMessageBlock["direction"], peer: PatchbaySessionId | null): SessionMessageBlock => ({
+    kind: "sessionMessage",
+    id,
+    direction,
+    peer,
+    parts: [],
+  });
+  const read = (blocks: ChatBlock[]) =>
+    deriveTranscript(blocks, false, DEFAULT_PREFERENCES, (id) => own.get(id)).items.map((item) => {
+      if (item.kind === "single") return item.block.id;
+      if (item.kind === "toolRun") return `run:${item.calls.length}`;
+      return `${item.current ? "card" : "old"}:${item.subagent.id}:${item.messages.map((m) => m.id).join("+")}`;
+    });
+
+  it("a delegation is one card where it was handed over, its reply inside", () => {
+    expect(read([message("to", "to", A), text("said"), message("back", "from", A), text("after")])).toEqual(["card:sess/a:to+back", "said", "after"]);
+  });
+
+  it("with several at work, a reply goes to its own sub-agent's card", () => {
+    expect(read([message("toA", "to", A), message("toB", "to", B), message("backB", "from", B), message("backA", "from", A)])).toEqual([
+      "card:sess/a:toA+backA",
+      "card:sess/b:toB+backB",
+    ]);
+  });
+
+  it("a resume opens a new card: later replies go there, the older one is no longer current", () => {
+    expect(read([message("first", "to", A), message("back", "from", A), text("said"), message("again", "to", A), message("back2", "from", A)])).toEqual([
+      "old:sess/a:first+back",
+      "said",
+      "card:sess/a:again+back2",
+    ]);
+  });
+
+  it("a sub-agent heard from before anything was sent to it still gets its card", () => {
+    expect(read([message("back", "from", A)])).toEqual(["card:sess/a:back"]);
+  });
+
+  it("a message with anyone but this transcript's own sub-agent stays where it arrived", () => {
+    const parent = "sess" as PatchbaySessionId;
+    expect(read([message("task", "from", parent), message("reply", "to", parent), message("nameless", "to", null), message("unsaid", null, null)])).toEqual([
+      "task",
+      "reply",
+      "nameless",
+      "unsaid",
+    ]);
+  });
+
+  it("a reply landing in its card doesn't split a run of tool calls; a new delegation does", () => {
+    expect(read([message("to", "to", A), tool("t1"), tool("t2"), message("back", "from", A), tool("t3")])).toEqual(["card:sess/a:to+back", "run:3"]);
+    expect(read([tool("t1"), tool("t2"), message("to", "to", A), tool("t3")])).toEqual(["t1", "t2", "card:sess/a:to", "t3"]);
+  });
+});
 
 describe("deriveTranscript: grouping (sequential tool-call runs)", () => {
   it("collapses runs of >= TOOL_RUN_MIN consecutive tool calls, preserving order", () => {
@@ -88,7 +160,7 @@ describe("deriveTranscript: grouping (sequential tool-call runs)", () => {
     expect(grouped.items.map((i) => i.kind)).toEqual(["toolRun", "single"]);
     for (const executeCalls of ["ungrouped-truncated", "ungrouped-untruncated", "uncollapsed"] as const) {
       const { items, rollups } = deriveTranscript(blocks, false, { ...DEFAULT_PREFERENCES, executeCalls });
-      expect(items.map((i) => (i.kind === "single" ? i.block.id : i.calls.map((c) => c.id).join("+")))).toEqual(["r1", "r2", "x1", "r3+r4+r5", "e1"]);
+      expect(items.map((i) => (i.kind === "single" ? i.block.id : i.kind === "toolRun" ? i.calls.map((c) => c.id).join("+") : i.id))).toEqual(["r1", "r2", "x1", "r3+r4+r5", "e1"]);
       expect(rollups.get("e1")).toMatchObject({ toolCalls: 6, byKind: { other: 5, execute: 1 } });
     }
   });
@@ -624,7 +696,7 @@ describe("deriveTranscript: embedded terminals", () => {
     ];
     const items = deriveTranscript(blocks, false, DEFAULT_PREFERENCES).items;
     // t1..t3 stay one run: the embedded terminal no longer sits between them
-    expect(items.map((i) => (i.kind === "toolRun" ? `run:${i.calls.length}` : i.block.id))).toEqual([
+    expect(items.map((i) => (i.kind === "toolRun" ? `run:${i.calls.length}` : i.kind === "single" ? i.block.id : i.id))).toEqual([
       "run:3",
       "term-block-term-2",
     ]);

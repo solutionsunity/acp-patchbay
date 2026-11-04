@@ -2013,6 +2013,11 @@ for (const theme of Object.keys(THEMES)) {
       { id: "s1/a", parentId: "s1", title: `Explore ${LONG}`, description: "general-purpose", conversationTitle: null, state: { state: "running" }, lastKnown: { state: "running" }, cancel: true, cwd: longPath, additionalDirectories: [], config: [] },
     ],
   };
+  av.transcripts = {
+    ...av.transcripts,
+    s1: [...av.transcripts.s1, { kind: "sessionMessage", id: "message:narrow", direction: "to", peer: "s1/a", parts: [{ kind: "text", text: "Explore." }] }],
+    "s1/a": [{ kind: "sessionMessage", id: "message:narrowin", direction: "from", peer: "s1", parts: [{ kind: "text", text: "Explore." }] }],
+  };
   av.sessionKnobs = {
     s1: [
       {
@@ -2055,6 +2060,18 @@ for (const theme of Object.keys(THEMES)) {
   await p.locator(".input-foot").screenshot({ path: `${OUT}/narrow-composer-stats.png` });
   await opened(p, ".readout-strip .chip.subagents", "popover-content", "sub-agents roster");
   await p.keyboard.press("Escape");
+  await p.waitForSelector(".subagents-panel", { state: "detached" });
+  await p.locator(".chat .subagent-card").scrollIntoViewIfNeeded();
+  await sweep(p, "a sub-agent's card");
+  const stateWhole = await p.$eval(".chat .subagent-card .state", (el) => el.scrollWidth <= el.clientWidth);
+  check("[narrow] a long-named sub-agent's card still says how it stands, whole", stateWhole);
+  await p.locator(".chat .subagent-card").screenshot({ path: `${OUT}/narrow-subagent-card.png` });
+  await p.click(".chat .subagent-card button.open");
+  await p.waitForSelector(".subagent-bar");
+  await sweep(p, "a sub-agent's bar");
+  await p.locator(".subagent-bar").screenshot({ path: `${OUT}/narrow-subagent-bar.png` });
+  await p.click(".subagent-bar .session-link");
+  await p.waitForSelector(".subagent-bar", { state: "detached" });
   await opened(p, '.ctx-chip:has-text("root")', "popover-content", "roots popover");
   await opened(p, '[data-slot="popover-content"] button:has-text("Save")', "dropdown-menu-content", "a root's Save menu");
   await p.keyboard.press("Escape");
@@ -2504,8 +2521,9 @@ for (const theme of Object.keys(THEMES)) {
 // ── sub-agents (#60): a chip in the read-out strip in the session marks'
 // vocabulary, its own last-known look for work no longer confirmed; a
 // Radix roster in tree order, Cancel only where granted; a row opens the
-// sub-agent's transcript inside the session's chat, read-only, with a way
-// back; To/From messages link their other side; a sub-agent's ask names it.
+// sub-agent's transcript inside the session's chat, under the path back through
+// its parents; one card per delegation, its messages collapsed inside; a
+// sub-agent's ask names it.
 // Theme-independent: run once. ──
 {
   const theme0 = Object.keys(THEMES)[0];
@@ -2527,7 +2545,11 @@ for (const theme of Object.keys(THEMES)) {
     s1: [
       ...av.transcripts.s1,
       { kind: "sessionMessage", id: "message:m1", direction: "to", peer: "s1/a", parts: [{ kind: "text", text: "Count the lines in /ws/a.txt." }] },
+      { kind: "text", id: "text-between", text: "Waiting on the counter." },
       { kind: "sessionMessage", id: "message:m1r", direction: "from", peer: "s1/a", parts: [{ kind: "text", text: "a.txt has **4** lines." }] },
+      { kind: "sessionMessage", id: "message:m2", direction: "to", peer: "s1/d", parts: [{ kind: "text", text: "Read b.txt too." }] },
+      { kind: "sessionMessage", id: "message:m2r", direction: "from", peer: "s1/d", parts: [{ kind: "text", text: "Read it." }] },
+      { kind: "sessionMessage", id: "message:m3", direction: "to", peer: "s1/d", parts: [{ kind: "text", text: "And c.txt." }] },
       {
         kind: "permission", id: "perm-sub", subagent: { id: "s1/b", title: "Create c.txt" }, title: "Write c.txt", detail: "", facts: [],
         options: [{ optionId: "y", label: "Allow once", kind: "allow_once" }, { optionId: "n", label: "Reject", kind: "reject_once" }], resolution: null,
@@ -2536,6 +2558,11 @@ for (const theme of Object.keys(THEMES)) {
     "s1/a": [
       { kind: "sessionMessage", id: "message:m1in", direction: "from", peer: "s1", parts: [{ kind: "text", text: "Count the lines in /ws/a.txt." }] },
       { kind: "text", id: "text-sub-1", text: "Reading it now." },
+      { kind: "sessionMessage", id: "message:n1", direction: "to", peer: "s1/a1", parts: [{ kind: "text", text: "Read the first line." }] },
+    ],
+    "s1/a1": [
+      { kind: "sessionMessage", id: "message:n1in", direction: "from", peer: "s1/a", parts: [{ kind: "text", text: "Read the first line." }] },
+      { kind: "text", id: "text-sub-2", text: "Nested at work." },
     ],
   };
   const p = await page(browser, theme0, { width: 420, height: 900 });
@@ -2569,19 +2596,85 @@ for (const theme of Object.keys(THEMES)) {
   check("[sub-agents] a row opens its transcript inside the session's chat", await p.waitForSelector(".subagent-bar", { timeout: 3000 }).then(() => true, () => false));
   check("[sub-agents] the roster closes as it opens one", (await p.$(".subagents-panel")) === null);
   const bar = await p.$eval(".subagent-bar", (el) => el.textContent);
-  check(`[sub-agents] the bar names it, its state and settings, read-only ("${bar}")`, bar.includes("Count lines in a.txt") && bar.includes("running") && bar.includes("Model: Haiku") && bar.includes("read-only"));
-  check("[sub-agents] its own transcript shows — the task it was given, from the session", (await p.locator(".chat .session-message", { hasText: "From" }).locator(".session-link", { hasText: "find foo" }).count()) === 1 && (await p.locator(".chat .msg-agent", { hasText: "Reading it now." }).count()) === 1);
+  check(`[sub-agents] the bar names it, its state and settings ("${bar}")`, bar.includes("Count lines in a.txt") && bar.includes("running") && bar.includes("Model: Haiku"));
+  check("[sub-agents] the bar's head is the same head, Cancel where granted", (await p.locator(".subagent-bar .subagent-head .cancel").count()) === 1);
+  check(
+    "[sub-agents] the bar's own name opens nothing, so it isn't coloured as a link",
+    await p.evaluate(() => getComputedStyle(document.querySelector(".subagent-bar .name")).color !== getComputedStyle(document.querySelector(".subagent-bar .session-link")).color),
+  );
+  check("[sub-agents] nothing in the bar calls it read-only: the composer stays live for the session", !bar.includes("read-only"));
+  const task = p.locator(".chat .session-message", { hasText: "From" });
+  check("[sub-agents] its own transcript shows — the task it was given, from the session", (await task.locator(".session-link", { hasText: "find foo" }).count()) === 1 && (await p.locator(".chat .msg-agent", { hasText: "Reading it now." }).count()) === 1);
+  check("[sub-agents] the task is collapsed like every message between sessions", (await p.locator(".chat", { hasText: "Count the lines" }).count()) === 0);
+  await task.locator('button[aria-expanded="false"]').click();
+  check("[sub-agents] the task opens on a click", (await task.locator(".body", { hasText: "Count the lines" }).count()) === 1);
   check("[sub-agents] none of the session's own blocks show inside it", (await p.locator(".chat .msg-user").count()) === 0);
   await p.screenshot({ path: `${OUT}/subagents-transcript.png`, fullPage: true });
-  await p.click(".subagent-bar .back");
-  check("[sub-agents] the way back is the session's chat again", await p.waitForSelector(".subagent-bar", { state: "detached", timeout: 3000 }).then(() => true, () => false));
-  const to = p.locator(".chat .session-message", { hasText: "Count the lines" }).first();
-  check("[sub-agents] a message to a sub-agent reads To, its name a link", (await to.locator(".head", { hasText: "To" }).locator(".session-link", { hasText: "Count lines in a.txt" }).count()) === 1);
-  const reply = await p.locator(".chat .session-message", { hasText: "a.txt has" }).innerText();
-  check(`[sub-agents] its reply reads From, rendered as an agent's prose (${JSON.stringify(reply)})`, reply.includes("From") && reply.includes("a.txt has 4 lines.") && !reply.includes("**"));
+  // Nested: the child's own sub-agent is a card here, and the path goes through it.
+  await p.click('.chat .subagent-card button.open:has-text("Nested read")');
+  await p.waitForSelector('.subagent-bar .subagent-head:has-text("Nested read")');
+  const crumbs = await p.$$eval(".subagent-bar .session-link", (els) => els.map((el) => el.textContent));
+  check(`[sub-agents] a nested sub-agent's bar goes back through every parent (${crumbs.join(" / ")})`, JSON.stringify(crumbs) === JSON.stringify(["find foo", "Count lines in a.txt"]));
+  await p.screenshot({ path: `${OUT}/subagents-nested.png`, fullPage: true });
+  await p.click('.subagent-bar .session-link:has-text("Count lines in a.txt")');
+  check("[sub-agents] a segment of the path opens that parent, not the session", await p.waitForSelector('.subagent-bar .subagent-head:has-text("Count lines in a.txt")', { timeout: 3000 }).then(() => true, () => false));
+  await p.click('.subagent-bar .session-link:has-text("find foo")');
+  check("[sub-agents] its first segment is the session's chat again", await p.waitForSelector(".subagent-bar", { state: "detached", timeout: 3000 }).then(() => true, () => false));
+  const heads = await p.$$eval(".chat .subagent-card", (els) => els.map((el) => el.querySelector(".subagent-head").textContent));
+  check(`[sub-agents] one card per delegation, in the chat where it happened (${JSON.stringify(heads)})`, heads.length === 3 && heads[0].includes("Count lines in a.txt"));
+  check("[sub-agents] a card says how it stands, from the roster", heads[0].includes("running") && (await p.locator(".chat .subagent-card").first().locator(".live-dot").count()) === 1);
+  const firstCard = p.locator(".chat .subagent-card").first();
+  const nameColor = (el) => getComputedStyle(el).color;
+  const linkColor = await p.$eval(".chat .asked-by .session-link", nameColor);
+  check("[sub-agents] a card's name reads as the link it is, like every link to a session", (await firstCard.locator(".name").evaluate(nameColor)) === linkColor);
+  check("[sub-agents] the reply sits in its card, not where it arrived", (await firstCard.locator(".session-message").count()) === 2 && (await p.locator(".chat-row > .session-message").count()) === 0);
+  check("[sub-agents] what they said stays collapsed in the card", (await p.locator(".chat", { hasText: "a.txt has" }).count()) === 0);
+  await firstCard.locator(".session-message", { hasText: "From" }).locator("button").click();
+  const reply = await firstCard.locator(".session-message", { hasText: "From" }).locator(".body").innerText();
+  check(`[sub-agents] a reply opens rendered as an agent's prose (${JSON.stringify(reply)})`, reply.includes("a.txt has 4 lines.") && !reply.includes("**"));
+  const old = p.locator(".chat .subagent-card").nth(1);
+  const latest = p.locator(".chat .subagent-card").nth(2);
+  check("[sub-agents] a resume opens a new card: the older says only who", (await old.locator(".state").count()) === 0 && (await old.locator(".name", { hasText: "Done one" }).count()) === 1 && (await old.locator(".session-message").count()) === 2);
+  check("[sub-agents] its latest card carries the state and Cancel's gate", (await latest.locator(".state", { hasText: "idle" }).count()) === 1 && (await latest.locator(".cancel").count()) === 0);
+  await firstCard.locator(".subagent-head .cancel").click();
+  const cancelledInCard = await p.evaluate(() => window.__actions.at(-1));
+  check("[sub-agents] Cancel in a card goes through the session", JSON.stringify(cancelledInCard) === JSON.stringify({ kind: "cancelSubagent", patchbaySessionId: "s1", subagentId: "s1/a" }));
+  await p.screenshot({ path: `${OUT}/subagents-cards.png`, fullPage: true });
   check("[sub-agents] a sub-agent's ask names it above its card", (await p.locator(".chat .asked-by", { hasText: "Asked by sub-agent" }).locator(".session-link", { hasText: "Create c.txt" }).count()) === 1);
-  await to.locator(".session-link").click();
-  check("[sub-agents] a message's link opens the other side's transcript", await p.waitForSelector(".subagent-bar", { timeout: 3000 }).then(() => true, () => false));
+  const offsets = await p.$$eval(".chat .subagent-card .name", (els) => els.map((el) => Math.round(el.getBoundingClientRect().left)));
+  check(`[sub-agents] names line up, card to card, marked or not (${offsets.join(", ")})`, new Set(offsets).size === 1);
+  await firstCard.locator(".subagent-head button.open").click();
+  check("[sub-agents] a card's title opens its transcript", await p.waitForSelector(".subagent-bar", { timeout: 3000 }).then(() => true, () => false));
+  await p.click(".readout-strip .chip.prompts");
+  await p.click('.prompts-panel .prompt-row[data-prompt-row="u1"] .words');
+  check("[sub-agents] going to a prompt from a sub-agent's view takes the chat back to the session", await p.waitForSelector(".subagent-bar", { state: "detached", timeout: 3000 }).then(() => true, () => false));
+  await settled(p);
+  const landed = await p.evaluate(() => {
+    const row = document.querySelector('.chat-body > [data-item="u1"]');
+    const chat = document.querySelector(".chat");
+    return row !== null && Math.abs(row.getBoundingClientRect().top - chat.getBoundingClientRect().top) < 2;
+  });
+  check("[sub-agents] and the prompt lands at the top of it", landed);
+  await firstCard.locator(".subagent-head button.open").click();
+  await p.waitForSelector(".subagent-bar");
+  await p.click(".prompt-editor");
+  await p.keyboard.type("to the session");
+  await p.keyboard.press("Enter");
+  check("[sub-agents] a prompt sent from a sub-agent's view goes to the session's chat, where it appears", await p.waitForSelector(".subagent-bar", { state: "detached", timeout: 3000 }).then(() => true, () => false));
+  const sent = await p.evaluate(() => window.__actions.filter((a) => a.kind === "sendPrompt").at(-1));
+  check("[sub-agents] the prompt was the session's", sent?.patchbaySessionId === "s1" && sent?.text === "to the session");
+  // A card is a memoized row: a roster report alone must still reach it.
+  await p.evaluate(() =>
+    window.__patch([
+      {
+        kind: "subagentUpserted",
+        patchbaySessionId: "s1",
+        subagent: { id: "s1/a", parentId: "s1", title: "Count lines in a.txt", description: "general-purpose", conversationTitle: null, state: { state: "idle", stopReason: "cancelled" }, lastKnown: { state: "idle", stopReason: "cancelled" }, cancel: true, cwd: null, additionalDirectories: null, config: [] },
+      },
+    ]),
+  );
+  check("[sub-agents] a card follows the roster: its state changes with no new message", await p.waitForSelector('.chat .subagent-card:has-text("Count lines in a.txt") .state:has-text("cancelled")', { timeout: 3000 }).then(() => true, () => false));
+  check("[sub-agents] and Cancel goes with the work", (await firstCard.locator(".cancel").count()) === 0 && (await firstCard.locator(".live-dot").count()) === 0);
   await p.close();
 }
 

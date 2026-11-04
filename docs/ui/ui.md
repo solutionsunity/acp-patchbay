@@ -77,8 +77,10 @@ Sub-agents panel: each sub-agent in tree order (nested ones indented under
 their parent) — its mark, its name, what it is doing or why it stopped, and
 where it works when its agent placed it apart (a worktree); **Cancel** only
 where its agent granted it and it has work to cancel; a row opens its
-transcript inside the chat, read-only, under a bar naming it — its state,
-its settings — with the way back to the session. Prompts
+transcript inside the chat, under a bar: the path back through its parents,
+each a link, then its head again, with its settings. A prompt sent from
+there goes to the session and takes the chat back to it, as does going to a
+prompt from the prompts chip. Prompts
 panel: the session's prompts newest first, each numbered in the order asked
 and shown at most three lines long; its words take the chat to that prompt
 (the prompt lands at the top, the view unpinned, the bubble flashing once);
@@ -120,6 +122,8 @@ session's worth of change against.
 | Question | ❓ card | "*Agent* asks:" + the agent's message; one control per field (text, number, Yes/No, choice, multi-choice), declared defaults pre-filled; **Send** stays disabled until required fields are filled and limits hold; **Decline / Cancel** reach the agent as themselves; resolution line records the outcome. The same card serves the MCP `request_user_input` tool. Off screen, a native notification names the question with **Open**, which brings the session up — the answer is given in the card, and the notification stays until dismissed (VS Code gives no way to close it) |
 | Link | 🔗 card | "*Agent* asks you to open a page:" + the agent's message; the host in bold and the full address as plain text (never a clickable link), with a warning line per suspicious trait; **Open in browser / Decline / Cancel** — Open is the consent and opens the system browser; once opened, "waiting for *Agent* to finish" with **Open again** until the agent reports it done ("completed"); a question the agent takes back reads "withdrawn by the agent" |
 | Diff | 📝 card | file + its **+a −d** (the tool card's count, one rendering: only the sides that moved), then the whole change when it fits — every hunk with three unchanged lines each side, at most twelve rows — or, when it doesn't, none of it and a line saying so: a card never shows part of a change; while the proposal is open, **Open diff** (VS Code's own diff editor, current vs proposed, one tab per file, closed when the ask ends) leads the answers; **Accept / Reject before disk is touched**; auto-accept rules change who clicks, not what is visible; off screen, a native notification offers **Open** — the change is decided at the card, never from a line that can't show it |
+| Sub-agent | card | one per delegation, where it was handed over: the sub-agent's head — mark, name (opens its transcript), what it is doing or why it stopped, **Cancel** where granted, the same head as its roster row — then `→ To` and `← From`, each collapsed. A reply goes to that sub-agent's latest card, whenever it arrives. Sent back to work, the sub-agent gets a new card and the older one keeps only its name, since state is the sub-agent's now, not that delegation's |
+| Message between sessions | `→ To` / `← From` line | any other message between sessions, such as the task in a sub-agent's own transcript: the other side a link, what it says collapsed, rendered as agent text |
 | Crash banner | ⚠ red strip | shown the moment the agent dies; `Restart` is the one action; after restart, the continuation is labeled |
 
 ### 5 · Composer
