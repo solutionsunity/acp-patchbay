@@ -124,6 +124,84 @@ describe("a sub-agent's work outlives its parent's turn", () => {
   });
 });
 
+describe("an answer over while a sub-agent it set going works on", () => {
+  const answerEnded = (kind: string): TurnStep => ({
+    type: "update",
+    update: { sessionUpdate: "usage_update", used: 1, size: 2, cost: { amount: 0.01, currency: "USD" }, _meta: { "_claude/origin": { kind } } },
+  });
+  const turnEnds = (state: AgentViewState, id: PatchbaySessionId) => (state.transcripts[id] ?? []).filter((b) => b.kind === "turnEnd");
+  // The agent holds its answer to the prompt until the sub-agent is cancelled.
+  const held: TurnStep[] = [say("launched"), announce("a"), answerEnded("human"), { type: "awaitCancel", as: "a" }];
+
+  it("the turn ends there, as any turn does, and the agent's late answer changes nothing", async () => {
+    const { h, id, state } = await open({ turn: held });
+    await h.orchestrator.sessionGates.prompt(id, { text: "go" });
+    expect(state().activeTurn[id]).toBeUndefined();
+    expect(turnEnds(state(), id)).toMatchObject([{ stopReason: "end_turn", usage: null }]);
+    expect(child(state(), id, "a")?.state).toEqual({ state: "running" });
+    expect(h.orchestrator.sessions.openWork(AGENT)).toEqual({ conversations: 1, turns: 1 });
+
+    h.orchestrator.sessions.cancelSubagent(id, child(state(), id, "a")!.id);
+    await waitFor(() => child(state(), id, "a")?.state?.state === "idle");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(turnEnds(state(), id)).toHaveLength(1);
+  });
+
+  it("a nested sub-agent the turn set going, or one waiting on the user, counts as at work", async () => {
+    const nested = await open({ turn: [announce("a"), announce("b", {}, "a"), answerEnded("human"), { type: "awaitCancel", as: "b" }] });
+    await nested.h.orchestrator.sessionGates.prompt(nested.id, { text: "go" });
+    expect(nested.state().activeTurn[nested.id]).toBeUndefined();
+    const waiting = await open({ turn: [announce("a", { state: { state: "requires_action" } }), answerEnded("human"), { type: "awaitCancel", as: "a" }] });
+    await waiting.h.orchestrator.sessionGates.prompt(waiting.id, { text: "go" });
+    expect(waiting.state().activeTurn[waiting.id]).toBeUndefined();
+  });
+
+  it("the next prompt goes out at once; a sub-agent an earlier turn set going doesn't end this turn", async () => {
+    const { h, id, state } = await open({ turn: held });
+    await h.orchestrator.sessionGates.prompt(id, { text: "go" });
+    const next = h.orchestrator.sessionGates.prompt(id, { text: "next" }).catch(() => {});
+    await waitFor(() => texts(state().transcripts[id]).length === 2);
+    await waitFor(() => (state().transcripts[id] ?? []).filter((b) => b.kind === "user").length === 2);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(state().activeTurn[id]).toBeDefined();
+    expect(turnEnds(state(), id)).toHaveLength(1);
+    h.orchestrator.sessions.cancelSubagent(id, child(state(), id, "a")!.id);
+    await next;
+    expect(turnEnds(state(), id)).toHaveLength(2);
+  });
+
+  it("with no sub-agent at work, the turn waits for the agent's own answer", async () => {
+    const { h, id, state } = await open({ turn: [announce("a"), { type: "update", update: { sessionUpdate: "subagent_update", sessionId: "$a", state: { state: "idle", stopReason: "end_turn" } } }, answerEnded("human"), { type: "usage", used: 1, size: 2 }, say("the last word")] });
+    await h.orchestrator.sessionGates.prompt(id, { text: "go" });
+    const blocks = state().transcripts[id] ?? [];
+    expect(blocks.at(-1)?.kind).toBe("turnEnd");
+    expect(texts(blocks)).toEqual(["the last word"]);
+  });
+
+  it("a report of no kind it knows ends nothing: the session behaves as if none came", async () => {
+    const { h, id, state } = await open({ turn: [announce("a"), answerEnded("something-new"), say("the last word")] });
+    await h.orchestrator.sessionGates.prompt(id, { text: "go" });
+    expect(texts(state().transcripts[id])).toEqual(["the last word"]);
+    expect(state().transcripts[id]?.at(-1)?.kind).toBe("turnEnd");
+  });
+
+  it("an answer with no turn open still reaches the user: it stays, and off screen it is unseen", async () => {
+    const { h, id, state } = await open({
+      turn: [announce("a"), answerEnded("human"), { type: "endTurn" }, { type: "update", update: { sessionUpdate: "subagent_update", sessionId: "$a", state: { state: "idle", stopReason: "end_turn" } } }, say("the summary"), answerEnded("task-notification")],
+    });
+    await h.orchestrator.sessionGates.prompt(id, { text: "go" });
+    await waitFor(() => h.agentView.events().some((e) => e.kind === "answerLanded"));
+    expect(texts(state().transcripts[id])).toEqual(["the summary"]);
+    expect(state().activeTurn[id]).toBeUndefined();
+  });
+
+  it("the agent's own answer during a turn is that turn's: no landing of its own", async () => {
+    const { h, id } = await open({ turn: [say("a word"), answerEnded("task-notification"), say("the last word")] });
+    await h.orchestrator.sessionGates.prompt(id, { text: "go" });
+    expect(h.agentView.events().filter((e) => e.kind === "answerLanded")).toEqual([]);
+  });
+});
+
 describe("history is history", () => {
   const replayed: FakeAgentScript = {
     declare: { loadSession: true },

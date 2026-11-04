@@ -28,17 +28,17 @@
       "text": "launched"
     },
     {
-      "kind": "text",
-      "id": "<id-4>",
-      "text": "b.txt has **7 lines** (beta 1 through beta 7). The sub-agent read it with the Read tool, which also showed an empty line 8. That most likely means the file ends with a trailing newline, but the agent did not confirm that with `wc -l`."
-    },
-    {
       "kind": "turnEnd",
-      "id": "<id-5>",
+      "id": "<id-4>",
       "startedAt": "<time>",
       "endedAt": "<time>",
       "stopReason": "end_turn",
       "usage": null
+    },
+    {
+      "kind": "text",
+      "id": "<id-5>",
+      "text": "b.txt has **7 lines** (beta 1 through beta 7). The sub-agent read it with the Read tool, which also showed an empty line 8. That most likely means the file ends with a trailing newline, but the agent did not confirm that with `wc -l`."
     }
   ],
   "subagents": [

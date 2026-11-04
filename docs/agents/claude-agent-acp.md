@@ -168,3 +168,26 @@ shows them **as sent** — no vendor filter in core:
   answer is only in the child's own transcript.
 
 - **Reported:** [claude-agent-acp#1519](https://github.com/agentclientprotocol/claude-agent-acp/issues/1519)
+
+### The turn held for background sub-agents (v0.100.0)
+
+- **Observed:** 2026-11-04, source read and recorded runs on model haiku. With
+  a client that isn't AIR, `session/prompt` doesn't answer while a background
+  sub-agent the turn started or resumed is alive, though the model's turn is
+  over at its `result`. An ACP v1 AIR client declaring `backgroundSubagents`
+  is exempt, and any AIR `_meta` also leaves the RFD form.
+- **What it does say:** at each `result` a `usage_update` with `cost` and
+  `_meta["_claude/origin"]`: `kind: "human"` for the user's prompt (held runs
+  show 3–12 s before the response; unheld, under 0.1 s),
+  `kind: "task-notification"` for the follow-up it starts when a sub-agent
+  ends. A plain second `session/prompt` is taken at once and settles the held
+  one with its recorded outcome.
+- **Repro:** initialize with `subagents: {}`, prompt "Launch one sub-agent with
+  the Agent tool (general-purpose) with run_in_background set to true. Its
+  task: run `sleep 40 && cat b.txt` with the Bash tool. Do not wait for it: end
+  your turn right after launching it, saying only 'launched'." After the
+  `human` report, send a second prompt: the first answered `end_turn` 2.3 s
+  later and the second at once, with the sub-agent still running.
+- **Patchbay:** module `extensions/answer-end-report.ts` reads the report; a
+  `human` one with a sub-agent the turn set going at work ends the turn.
+- **Reported:** [claude-agent-acp#1527](https://github.com/agentclientprotocol/claude-agent-acp/issues/1527)

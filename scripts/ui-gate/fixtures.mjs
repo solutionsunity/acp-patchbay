@@ -230,6 +230,7 @@ export function agentViewState({ live }) {
       s3: [{ kind: "elicitation", id: "q-s3", message: "Which database?", mode: "form", fields: [], resolution: null }],
     },
     activePlan: { s1: chatPlan },
+    subagents: {},
     activeTurn: live ? { s1: new Date(Date.now() - 42_000).toISOString() } : {},
     commandsBySession: { s1: [{ name: "create-plan", description: "draft a plan" }, { name: "review" }, longCommand] },
     sessionUsage: {},

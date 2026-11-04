@@ -113,6 +113,18 @@ describe("session marks — most urgent first", () => {
     const both = { ...running, sessions: [{ ...running.sessions[0]!, unseen: true }] };
     expect(sessionMark(both, both.sessions[0]!)).toBe("unseen");
   });
+
+  it("a sub-agent at work is running, with no turn open; a stopped one is nothing", () => {
+    const id = "a" as PatchbaySessionId;
+    const roster = (state: string) => replay([
+      created("a"),
+      { kind: "subagentUpserted", patchbaySessionId: id, subagent: { id: "a/c" as PatchbaySessionId, parentId: id, title: "c", description: null, conversationTitle: null, state: { state }, lastKnown: { state }, cancel: false, cwd: null, additionalDirectories: null, config: [] } },
+    ]);
+    const at = (state: string) => { const s = roster(state); return sessionMark(s, s.sessions[0]!); };
+    expect(at("running")).toBe("running");
+    expect(at("requires_action")).toBe("running");
+    expect(at("idle")).toBeNull();
+  });
 });
 
 describe("elsewhere — what the header reports", () => {

@@ -311,8 +311,8 @@ SecretStorage, a sign-in.
   gate runs patchbay as a user has it, installed from its package into a
   fresh extensions folder, and installs the next version beside it.
 - **The turn-end chime plays in the view.** Deciding is work: the
-  orchestrator decides a chime is due (a turn ended, not cancelled; the
-  preference on) and picks the one surface that plays it — the Agent View's
+  orchestrator decides a chime is due (a turn ended, not cancelled, or an
+  answer landed with no turn open; the preference on) and picks the one surface that plays it — the Agent View's
   state (`chime`) names it, and only that page plays. Playing is
   reflection: the page is in the editor UI, on the user's machine, so the
   sound is where the user sits, local or remote alike. The sound is two
@@ -1030,6 +1030,16 @@ the agent grants it.
   (the reducer's `sessionClosed`); a load's reset rebuilds them from the
   replay. A child at work keeps its session from the idle reaper, counts as
   work a stop would cut off, and refuses a release.
+- **A turn its agent holds for a child.** A turn ends when `session/prompt`
+  answers, and an agent may keep that answer back while a background child
+  the turn set going is alive. Where the agent reports the answer's end
+  (`extensions/answer-end-report.ts`, the `answerEnd` of a usage update), the
+  turn ends there if a child it set going is at work (`Child.setGoingBy`):
+  the normal end, with no usage, and the late response only logged. The next
+  prompt goes out as a plain `session/prompt`. An answer the agent then gives
+  unprompted lands with no turn open (`answerLanded`): latest activity, the
+  unseen mark, the chime. A child at work counts as the session running
+  (`sessionMark`).
 - **The view.** The roster is the orchestrator's (`subagentUpserted`, each
   row whole); the webview renders the sub-agents chip in the read-out strip,
   the roster in its Radix panel, and a child's transcript inside its
@@ -1770,7 +1780,8 @@ supplies each agent in its own standard — and ACP carries no channel for it
   screen" is one fact too: the view hosts report each surface's visibility (the
   sidebar and the full-view panel follow the active-session pointer; a pinned
   panel shows its own session), and the unseen mark follows it — a turn that
-  ends where no visible surface shows it is unseen until one does.
+  ends, or an answer that lands with no turn open, where no visible surface
+  shows it is unseen until one does.
 
 ## Context usage
 

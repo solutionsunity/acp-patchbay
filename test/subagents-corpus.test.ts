@@ -72,10 +72,23 @@ async function session(name: string, over: Partial<FakeAgentScript> = {}): Promi
 }
 
 describe("sub-agents corpus", () => {
-  for (const name of ["parallel", "nested", "worktree", "background"]) {
+  for (const name of ["parallel", "nested"]) {
     it(`${name}: renders as pinned`, async () => {
       const { h, patchbaySessionId } = await session(name);
       await h.orchestrator.sessionGates.prompt(patchbaySessionId, { text: "go" });
+      await expect(rendered(h.agentView.state(), patchbaySessionId)).toMatchFileSnapshot(`./goldens/subagents/${name}.json`);
+      await h.orchestrator.pool.stop(AGENT);
+    });
+  }
+
+  // Launched in the background, these two end their turn at the answer's end,
+  // with the sub-agent at work; what the agent says about it lands after.
+  for (const name of ["worktree", "background"]) {
+    it(`${name}: renders as pinned`, async () => {
+      const { h, patchbaySessionId } = await session(name);
+      await h.orchestrator.sessionGates.prompt(patchbaySessionId, { text: "go" });
+      expect(h.agentView.state().activeTurn[patchbaySessionId]).toBeUndefined();
+      await waitFor(() => h.agentView.events().some((e) => e.kind === "answerLanded"));
       await expect(rendered(h.agentView.state(), patchbaySessionId)).toMatchFileSnapshot(`./goldens/subagents/${name}.json`);
       await h.orchestrator.pool.stop(AGENT);
     });

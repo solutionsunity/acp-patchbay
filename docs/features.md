@@ -195,7 +195,10 @@ deliverable.
   through patchbay or the agent.
 - When the agent hands work to sub-agents, a chip above the composer shows
   them — running, waiting on the user, done — and keeps showing them after
-  the turn ends: one still working says so. Each opens its own conversation
+  the turn ends: one still working says so. Once the agent's answer is over
+  the user can prompt it, whatever its sub-agents are still doing; what it
+  says later about them lands in the chat and marks the session like a
+  finished turn. Each opens its own conversation
   inside the chat, read-only, with a way back; what the session and its
   sub-agents tell each other shows in the chat where it happened, and a
   sub-agent's request for permission is a card in the session's chat that

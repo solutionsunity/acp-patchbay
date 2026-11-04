@@ -15,7 +15,7 @@ what it's made of.
 | Element | Appearance | Meaning |
 |---|---|---|
 | Status dot | ● green (glow) / red / amber (pulsing) / gray / ○ hollow | agent running / crashed / reconnecting / stopped / untested (configured, never connected) |
-| Session mark | ● amber (pulsing) / blue / green (pulsing) | waiting on you / finished while no visible surface showed it / turn underway — one per session, in the one order of marks — most urgent first |
+| Session mark | ● amber (pulsing) / blue / green (pulsing) | waiting on you / finished while no visible surface showed it / a turn or a sub-agent underway — one per session, in the one order of marks — most urgent first |
 | Matrix states | ● / ◌ / — | used / declared but not used / not declared |
 | Lit (teal) | accent color on a chip or control | active or available *right now* (external root plugged, live selection exists) |
 | Toast | transient strip, bottom-center | confirmation of an action; never the only record (the audit holds the durable one) |
@@ -181,7 +181,7 @@ connected` / capability one-liner); picking the row starts a chat with it,
 connecting in-pane when it isn't running. Footer: `＋ Add or manage agents —
 Settings…` — adding lives in Settings only; stop/restart are Settings
 troubleshooting controls plus the crash banner's `Restart`. **Sessions drawer** —
-per session: session mark (waiting on you / turn underway / finished unseen) · title · agent + state subtitle · kebab
+per session: session mark (waiting on you / turn or sub-agent underway / finished unseen) · title · agent + state subtitle · kebab
 (same actions as the session row). Below the rows, one line per agent whose
 handshake declared no `session/list`: `{agent} doesn't report its sessions —
 only the ones open in this window are listed`. Footer: `＋ New session` (the
@@ -377,7 +377,8 @@ review, and catalog list, #130.)*
 Machine-scoped behavior defaults (non-sensitive), in cards, each a full read of
 the stored truth — the page never assumes its own write landed:
 
-- **Turn end** — chime toggle (default on); a cancelled turn never chimes. One
+- **Turn end** — chime toggle (default on), also for an answer the agent gives
+  with no turn open; a cancelled turn never chimes. One
   open Agent View plays it, on the machine the user sits at, hidden or not —
   behind another tab, in a collapsed sidebar, in a minimized window. The card
   says the two cases that stay silent: a view not clicked since it opened

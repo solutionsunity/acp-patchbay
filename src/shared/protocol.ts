@@ -950,8 +950,8 @@ export interface SessionSummary {
   /** The session has had a turn — the sessions store's fact (a session the
    * agent lists has, a new one hasn't until its first prompt). */
   hasTurns: boolean;
-  /** A turn completed while no visible surface showed this session — the
-   * blue dot. Reducer-derived (turnEnded off screen), cleared once a
+  /** A result landed while no visible surface showed this session — the
+   * blue dot. Reducer-derived (turnEnded or answerLanded off screen), cleared once a
    * visible surface renders it; never persisted — a reload starts with
    * nothing unread. */
   unseen?: boolean;
@@ -2062,6 +2062,9 @@ export type AgentViewEvent =
   | { kind: "carriedAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; updateKind: string; payload: string }
   /** A sub-agent's row, whole — it replaces what the roster held. */
   | { kind: "subagentUpserted"; patchbaySessionId: PatchbaySessionId; subagent: SubagentView }
+  /** An answer the agent gave with no turn open is over: what a turn's end
+   * says of a result, for a result no turn ends. */
+  | { kind: "answerLanded"; patchbaySessionId: PatchbaySessionId; at: string }
   /** The session's connection went, or it is being attached again: no
    * sub-agent's work is confirmed, and none can be cancelled. */
   | { kind: "subagentsUnconfirmed"; patchbaySessionId: PatchbaySessionId }
@@ -2247,6 +2250,18 @@ function withTranscript(
   blocks: readonly ChatBlock[],
 ): AgentViewState {
   return { ...state, transcripts: { ...state.transcripts, [patchbaySessionId]: blocks } };
+}
+
+/** A result landed: latest activity — and, while no visible surface shows
+ * the session, the blue dot (unseen) until one does. Watching it complete
+ * counts as seen. */
+function resultLanded(state: AgentViewState, patchbaySessionId: PatchbaySessionId, at: string): AgentViewState {
+  return {
+    ...state,
+    sessions: state.sessions.map((s) =>
+      s.id === patchbaySessionId ? { ...s, updatedAt: at, unseen: !onScreen(state).has(patchbaySessionId) || undefined } : s,
+    ),
+  };
 }
 
 /** Seeing is what clears the blue dot: every unseen session a visible
@@ -2702,19 +2717,10 @@ export function reduceAgentView(
       // the block appends, but "latest activity" and the unseen dot are
       // live-turn facts and must not fire off a load replay.
       if (event.at === null) return { ...appended, activeTurn };
-      const at = event.at;
-      return {
-        ...appended,
-        activeTurn,
-        // A turn finished while no visible surface showed it → the blue dot
-        // (unseen) until one does. Watching it complete counts as seen.
-        sessions: state.sessions.map((s) =>
-          s.id === event.patchbaySessionId
-            ? { ...s, updatedAt: at, unseen: !onScreen(state).has(event.patchbaySessionId) || undefined }
-            : s,
-        ),
-      };
+      return resultLanded({ ...appended, activeTurn }, event.patchbaySessionId, event.at);
     }
+    case "answerLanded":
+      return resultLanded(state, event.patchbaySessionId, event.at);
     case "commandsAdvertised":
       return {
         ...state,

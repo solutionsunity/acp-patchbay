@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **A background sub-agent no longer holds a Claude session's turn open.**
+  Once the agent's answer is over the turn ends, so Stop goes away and
+  prompts send, while the chip keeps showing the sub-agents at work. What
+  the agent says about them later lands in the chat, marks the session
+  unseen and chimes like a finished turn, and a session with only a
+  sub-agent at work shows as running. A turn that ends this way shows no
+  token usage, and what the agent says later has no Stop. (#144)
+
 ## 0.90.0 — 2026-11-03
 
 Sub-agents show up, MCP servers get one reworked add card and can be on per

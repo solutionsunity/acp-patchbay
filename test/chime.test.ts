@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { fakeAgent } from "./support/fake-agent";
 import { orchestratorHarness } from "./support/orchestrator-harness";
 import { tempDir } from "./support/teardown";
+import { waitFor } from "./support/wait-for";
+import type { FakeAgentScript } from "./fake-agent/main";
 import { chimePlayer, type SurfaceFacts } from "../src/orchestrator/chime";
 import { initialAgentViewState, reduceAgentView, type AgentViewEvent } from "../src/shared/protocol";
 import type { PatchbayAgentId } from "../src/shared/ids";
@@ -40,6 +42,19 @@ describe("the chimed event", () => {
   });
 });
 
+describe("an answer landing with no turn open", () => {
+  const id = "a" as never;
+  const open = reduceAgentView(initialAgentViewState, {
+    kind: "sessionListed",
+    session: { id, patchbayAgentId: "fake" as PatchbayAgentId, title: "t", busy: [], updatedAt: "2026-01-01T00:00:00Z" } as never,
+  });
+
+  it("is latest activity, and unseen while no surface shows it", () => {
+    const landed = reduceAgentView(open, { kind: "answerLanded", patchbaySessionId: id, at: "2026-02-02T00:00:00Z" });
+    expect(landed.sessions[0]).toMatchObject({ updatedAt: "2026-02-02T00:00:00Z", unseen: true });
+  });
+});
+
 describe("a turn's chime", () => {
   let cwd: string;
   beforeEach(async () => {
@@ -51,6 +66,7 @@ describe("a turn's chime", () => {
     closed?: string[];
     soundOnDone?: boolean;
     cancel?: boolean;
+    script?: FakeAgentScript;
   }) {
     const h = orchestratorHarness(cwd);
     const o = h.orchestrator;
@@ -65,7 +81,7 @@ describe("a turn's chime", () => {
     }
     if (opts.soundOnDone === false) await o.preferences.set({ soundOnDone: false });
     const id = "chimer" as PatchbayAgentId;
-    await o.pool.connect(fakeAgent(opts.cancel ? { turn: [{ type: "chunk", text: "a" }], stepDelayMs: 300 } : { turn: [{ type: "chunk", text: "done" }] }, id, cwd));
+    await o.pool.connect(fakeAgent(opts.script ?? (opts.cancel ? { turn: [{ type: "chunk", text: "a" }], stepDelayMs: 300 } : { turn: [{ type: "chunk", text: "done" }] }), id, cwd));
     await o.listsSynced();
     const session = await o.sessionGates.create(id, "Fake Agent", cwd);
     const prompt = o.sessionGates.prompt(session, { text: "go" }).catch(() => {});
@@ -74,6 +90,7 @@ describe("a turn's chime", () => {
       await o.sessionGates.stop(session);
     }
     await prompt;
+    if (opts.script !== undefined) await waitFor(() => h.agentView.events().some((e) => e.kind === "answerLanded"));
     o.agentView.flushNow();
     const events: AgentViewEvent[] = h.agentView.events();
     await o.pool.stop(id);
@@ -87,6 +104,22 @@ describe("a turn's chime", () => {
     const { ended, chimes } = await turn({ surfaces: [["hidden", { visible: false, activated: true }], ["shown", { visible: true, activated: false }]] });
     expect(ended).toHaveLength(1);
     expect(chimes).toEqual([{ kind: "chimed", surface: "hidden" }]);
+  });
+
+  it("an answer landing with no turn open chimes too", async () => {
+    const usage = (kind: string) => ({ type: "update" as const, update: { sessionUpdate: "usage_update" as const, used: 1, size: 2, _meta: { "_claude/origin": { kind } } } });
+    const { chimes } = await turn({
+      surfaces: [["shown", { visible: true, activated: true }]],
+      soundOnDone: false,
+      script: { turn: [{ type: "endTurn" }, { type: "chunk", text: "the summary" }, usage("task-notification")] },
+    });
+    expect(chimes).toEqual([]);
+    const { ended, chimes: heard } = await turn({
+      surfaces: [["shown", { visible: true, activated: true }]],
+      script: { turn: [{ type: "endTurn" }, { type: "chunk", text: "the summary" }, usage("task-notification")], stepDelayMs: 100 },
+    });
+    expect(ended).toHaveLength(1);
+    expect(heard.length).toBeGreaterThanOrEqual(1);
   });
 
   it("no surface the user has touched: silent", async () => {

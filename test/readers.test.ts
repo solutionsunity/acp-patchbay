@@ -221,6 +221,11 @@ describe("readSessionUpdate", () => {
 
   it("a usage update without a cost says nothing about the cost", () => {
     expect(readSessionUpdate({ sessionUpdate: "usage_update", used: 1, size: 2 }, note)).toEqual({ kind: "usage", used: 1, size: 2 });
+    const reported = (origin: unknown) => readSessionUpdate({ sessionUpdate: "usage_update", used: 1, size: 2, _meta: { "_claude/origin": origin } as never }, note);
+    expect(reported({ kind: "human" })).toEqual({ kind: "usage", used: 1, size: 2, answerEnd: "prompted" });
+    expect(reported({ kind: "task-notification" })).toEqual({ kind: "usage", used: 1, size: 2, answerEnd: "unprompted" });
+    // what it doesn't know is no report at all
+    for (const origin of [{ kind: "something-new" }, { kind: 3 }, "human", null]) expect(reported(origin)).toEqual({ kind: "usage", used: 1, size: 2 });
   });
 
   it("a compaction keeps the spec's patch rules: absent is unchanged, null and an empty summary clear", () => {

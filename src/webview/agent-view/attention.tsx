@@ -14,7 +14,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 
 const MARK_TITLE: Record<SessionMark, string> = {
   waiting: "Waiting on you",
-  running: "Turn in progress",
+  running: "In progress",
   unseen: "Finished since you last saw it",
 };
 

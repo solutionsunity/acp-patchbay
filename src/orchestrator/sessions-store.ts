@@ -279,6 +279,10 @@ interface LiveSession extends StreamState {
   /** The session's sub-agents, nested ones included, by the agent's id
    * for each — they ride the attachment and go with it. */
   children: Map<string, Child>;
+  /** Ends the turn underway here: its answer is over, and the agent keeps
+   * its response back only for a sub-agent the turn set going. Null between
+   * turns. */
+  answerHeld: (() => void) | null;
 }
 
 /** A sub-agent: a session the agent's session started and owns. Not a row
@@ -297,6 +301,8 @@ interface Child extends StreamState {
   conversationTitle: string | null;
   /** Its work as confirmed now; null when nothing current is known. */
   state: SubagentStateFact | null;
+  /** The turn underway when its work last started — null: none was. */
+  setGoingBy: string | null;
   lastKnown: SubagentStateFact | null;
   /** The agent's live grant to cancel it — history grants nothing. */
   cancel: boolean;
@@ -311,6 +317,7 @@ function liveSession(opening: LiveSession["opening"] = null): LiveSession {
     ...freshStream(),
     opening,
     children: new Map(),
+    answerHeld: null,
     knobs: NO_KNOBS,
     lastActivityAt: Date.now(),
     userModeSetPending: false,
@@ -2358,7 +2365,19 @@ export class SessionsStore {
     signal.addEventListener("abort", cancel, { once: true });
     try {
       const answer = this.pool.prompt(known.patchbayAgentId, sessionId, prompt);
-      const response = await this.answerOrEnd(patchbaySessionId, answer, signal);
+      const held = new Promise<"held">((resolve) => {
+        session.answerHeld = () => resolve("held");
+      });
+      const response = await this.answerOrEnd(patchbaySessionId, Promise.race([answer, held]), signal);
+      if (response === "held") {
+        this.log.debug(`session ${patchbaySessionId}: turn ended at its answer's end — its agent holds the response for a sub-agent`);
+        void answer.then(
+          (late) => this.log.debug(`session ${patchbaySessionId}: the held response came — ${late.stopReason}`),
+          (err: unknown) => this.log.info(`session ${patchbaySessionId}: the held response came as an error — ${agentErrorText(err)}`),
+        );
+        endTurn(signal.aborted ? "cancelled" : "end_turn", null);
+        return;
+      }
       if (response === null) {
         this.log.info(`session ${patchbaySessionId}: turn told to stop, ended here before its agent answered`);
         // The agent's own answer may still come: said when it does, never
@@ -2391,7 +2410,10 @@ export class SessionsStore {
       signal.removeEventListener("abort", cancel);
       const current = this.sessions.get(patchbaySessionId);
       if (current !== undefined) {
-        if (current.turn === turn) current.turn = null;
+        if (current.turn === turn) {
+          current.turn = null;
+          current.answerHeld = null;
+        }
         current.lastActivityAt = Date.now();
       }
     }
@@ -2611,7 +2633,29 @@ export class SessionsStore {
         break;
       default:
         this.stream.apply(patchbaySessionId, session, update, this.peersOf(patchbaySessionId, session, sessionId));
+        if (update.kind === "usage" && update.answerEnd !== undefined) this.noteAnswerEnd(patchbaySessionId, session, update.answerEnd, seq);
     }
+  }
+
+  /** Whether the update at `seq` is what a load is replaying: by its place
+   * on the connection, not by when it is handled here. */
+  private isHistory(root: PatchbaySessionId, session: LiveSession, seq: number): boolean {
+    return session.opening === "load" && !this.pool.answeredBefore(this.agentOfLive(root), this.known.get(root)!.sessionId, seq);
+  }
+
+  /** An answer's end, as the agent reported it. To the user's prompt, with
+   * a sub-agent this turn set going at work: nothing but that sub-agent
+   * keeps the turn open, so it ends here. With none, the agent's response
+   * follows at once and carries the turn's usage. Unprompted, with no turn
+   * open: it landed, and nothing else will say so. */
+  private noteAnswerEnd(patchbaySessionId: PatchbaySessionId, session: LiveSession, end: "prompted" | "unprompted", seq: number): void {
+    if (end === "prompted") {
+      if (session.turn !== null && [...session.children.values()].some((c) => working(c) && c.setGoingBy === session.turn)) session.answerHeld?.();
+      return;
+    }
+    if (session.turn !== null || this.isHistory(patchbaySessionId, session, seq)) return;
+    this.stream.seal(patchbaySessionId, session);
+    this.hooks.emit({ kind: "answerLanded", patchbaySessionId, at: new Date().toISOString() });
   }
 
   /** An update the agent addressed to a sub-agent: its own facts kept on
@@ -2668,6 +2712,7 @@ export class SessionsStore {
         description: null,
         conversationTitle: null,
         state: null,
+        setGoingBy: null,
         lastKnown: null,
         cancel: false,
         cwd: null,
@@ -2680,7 +2725,7 @@ export class SessionsStore {
       this.notes.at(patchbayAgentId, "session/update")("a sub-agent can't move to another parent — the update is ignored");
       return;
     }
-    const history = session.opening === "load" && !this.pool.answeredBefore(patchbayAgentId, this.known.get(root)!.sessionId, seq);
+    const history = this.isHistory(root, session, seq);
     const { patch } = fact;
     if (patch.title !== undefined) child.title = patch.title;
     if (patch.description !== undefined) child.description = patch.description;
@@ -2689,7 +2734,10 @@ export class SessionsStore {
     if (patch.capabilities !== undefined && !history) child.cancel = patch.capabilities?.cancel === true;
     if (patch.state !== undefined) {
       if (patch.state !== null && patch.state.state !== "unknown") child.lastKnown = patch.state;
-      if (!history) child.state = patch.state;
+      if (!history) {
+        if (subagentWork(child.state) === null && subagentWork(patch.state) !== null) child.setGoingBy = session.turn;
+        child.state = patch.state;
+      }
       if (patch.state?.state === "idle") {
         this.stream.sweep(child.id, child);
         this.stream.seal(child.id, child);

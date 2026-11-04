@@ -40,17 +40,17 @@
       "text": "The sub-agent is running in a separate worktree. I'll report its output and the directory it ran in when the completion notification arrives."
     },
     {
-      "kind": "text",
-      "id": "<id-4>",
-      "text": "The sub-agent ran in its own worktree at `/w/.claude/worktrees/agent-c1`. Its `ls` listed `a.txt` and `b.txt`."
-    },
-    {
       "kind": "turnEnd",
-      "id": "<id-5>",
+      "id": "<id-4>",
       "startedAt": "<time>",
       "endedAt": "<time>",
       "stopReason": "end_turn",
       "usage": null
+    },
+    {
+      "kind": "text",
+      "id": "<id-5>",
+      "text": "The sub-agent ran in its own worktree at `/w/.claude/worktrees/agent-c1`. Its `ls` listed `a.txt` and `b.txt`."
     }
   ],
   "subagents": [

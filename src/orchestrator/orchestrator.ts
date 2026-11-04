@@ -1142,12 +1142,13 @@ export class Orchestrator {
     void this.lastActiveSession.set({ patchbayAgentId, sessionId });
   }
 
-  /** The turn-end chime (Preferences), as a turn resolves — decided here,
-   * played by the one surface `chimePlayer` picks. A cancelled turn never
-   * chimes: the user was present to cancel it. */
+  /** The turn-end chime (Preferences), as a turn resolves or an answer
+   * lands with no turn open — decided here, played by the one surface
+   * `chimePlayer` picks. A cancelled turn never chimes: the user was
+   * present to cancel it. */
   private maybeChime(events: readonly AgentViewEvent[]): void {
     for (const event of events) {
-      if (event.kind !== "turnEnded" || event.stopReason === "cancelled") continue;
+      if (event.kind !== "answerLanded" && (event.kind !== "turnEnded" || event.stopReason === "cancelled")) continue;
       if (!this.preferences.get().soundOnDone) return;
       const surface = chimePlayer(this.surfaces);
       if (surface === null) this.log.debug("turn-end chime: no open Agent View the user has touched — silent");

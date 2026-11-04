@@ -8,6 +8,7 @@
 // what counts as waiting.
 import {
   onScreen,
+  subagentWork,
   turnUnderway,
   type AgentViewState,
   type ChatBlock,
@@ -39,9 +40,9 @@ export function waitingOn(state: AgentViewState, session: SessionSummary): strin
 }
 
 /** The marks a session can carry, most urgent first: waiting on the user,
- * then a result not yet seen — it asks for the user too — then a turn
- * running, which asks for nothing. A session's one mark is the first that
- * holds, and every list of them is shown in this order. */
+ * then a result not yet seen — it asks for the user too — then a turn or a
+ * sub-agent running, which asks for nothing. A session's one mark is the
+ * first that holds, and every list of them is shown in this order. */
 export const SESSION_MARKS = ["waiting", "unseen", "running"] as const;
 export type SessionMark = (typeof SESSION_MARKS)[number];
 
@@ -49,7 +50,7 @@ export function sessionMark(state: AgentViewState, session: SessionSummary): Ses
   const holds: Record<SessionMark, () => boolean> = {
     waiting: () => openAsks(state.transcripts[session.id] ?? []).length > 0,
     unseen: () => session.unseen === true,
-    running: () => turnUnderway(session),
+    running: () => turnUnderway(session) || (state.subagents[session.id] ?? []).some((s) => subagentWork(s.state) !== null),
   };
   return SESSION_MARKS.find((mark) => holds[mark]()) ?? null;
 }
