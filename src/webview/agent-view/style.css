@@ -238,6 +238,14 @@ body {
   text-overflow: ellipsis;
 }
 
+/* what they do takes only the room left over, up to its own size, so how many
+   there are stays whole for longer; the mark always shows, the most urgent */
+.readout-strip .chip.at-work {
+  flex: 1 1 0;
+  min-width: 28px;
+  max-width: max-content;
+}
+
 /* the right-hand group starts at whichever of its chips shows first; its
    chips are short and keep their size — the left-hand ones give way */
 .readout-strip .chip.prompts,

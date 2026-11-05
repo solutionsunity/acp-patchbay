@@ -2061,6 +2061,11 @@ for (const theme of Object.keys(THEMES)) {
   await opened(p, ".readout-strip .chip.subagents", "popover-content", "sub-agents roster");
   await p.keyboard.press("Escape");
   await p.waitForSelector(".subagents-panel", { state: "detached" });
+  const atWorkMark = await p.$eval(".readout-strip .chip.at-work .live-dot", (el) => { const box = el.getBoundingClientRect(); return box.width > 0 && box.right <= document.documentElement.clientWidth; }).catch(() => false);
+  check("[narrow] the at-work chip keeps its mark in view however short of room", atWorkMark);
+  await opened(p, ".readout-strip .chip.at-work", "popover-content", "sub-agents at work");
+  await p.keyboard.press("Escape");
+  await p.waitForSelector(".subagents-panel", { state: "detached" });
   await p.locator(".chat .subagent-card").scrollIntoViewIfNeeded();
   await sweep(p, "a sub-agent's card");
   const stateWhole = await p.$eval(".chat .subagent-card .state", (el) => el.scrollWidth <= el.clientWidth);
@@ -2569,11 +2574,33 @@ for (const theme of Object.keys(THEMES)) {
   await renderView(p, "agent-view", av);
   await p.waitForSelector(".readout-strip .chip.subagents");
   const chip = await p.$eval(".readout-strip .chip.subagents", (el) => el.textContent.trim());
-  check(`[sub-agents] the chip counts them, at work and waiting ("${chip}")`, chip === "4 sub-agents · 1 running · 1 waiting on you");
-  check("[sub-agents] the chip carries the most urgent mark — waiting on you", (await p.$(".readout-strip .chip.subagents .bg-warn")) !== null);
+  check(`[sub-agents] the full roster's chip counts them ("${chip}")`, chip === "4 sub-agents");
+  const atWorkChip = await p.$eval(".readout-strip .chip.at-work", (el) => el.textContent.trim());
+  const atWorkTitle = await p.$eval(".readout-strip .chip.at-work", (el) => el.title);
+  check(`[sub-agents] the at-work chip says what they do, whole on hover ("${atWorkTitle}")`, atWorkTitle === "1 running · 1 waiting on you · 1 not confirmed" && atWorkChip === atWorkTitle);
+  check("[sub-agents] the at-work chip carries the most urgent mark — waiting on you", (await p.$(".readout-strip .chip.at-work .bg-warn")) !== null);
+  check("[sub-agents] the roster's chip carries no mark of its own", (await p.$(".readout-strip .chip.roster .bg-warn")) === null);
   const chips = await p.$$eval(".readout-strip .chip", (els) => els.map((el) => el.getBoundingClientRect().toJSON()));
-  const overlap = chips.some((a, i) => chips.slice(i + 1).some((b) => a.left < b.right - 1 && b.left < a.right - 1));
-  check(`[sub-agents] four chips share the strip, none over another (${chips.length})`, chips.length === 4 && !overlap);
+  const overlap = chips.some((a, i) => chips.slice(i + 1).some((b) => a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1));
+  check(`[sub-agents] five chips share the strip, none over another (${chips.length})`, chips.length === 5 && !overlap);
+  const planBottom = await p.$eval(".readout-strip .chip.plan", (el) => el.getBoundingClientRect().bottom);
+  const rowTops = await p.$$eval(".readout-strip .chip:not(.plan)", (els) => els.map((el) => el.getBoundingClientRect().top));
+  check(`[sub-agents] the plan has its own row above the others, which share one (${[...new Set(rowTops)].join(", ")})`, rowTops.every((top) => top >= planBottom) && new Set(rowTops).size === 1);
+  check("[sub-agents] the count stays whole at 420px: what they do is what gives way", await p.$eval(".readout-strip .chip.roster .label", (el) => el.scrollWidth <= el.clientWidth));
+  await p.locator(".readout-strip").screenshot({ path: `${OUT}/subagents-strip.png` });
+  await p.click(".readout-strip .chip.at-work");
+  check("[sub-agents] the at-work chip opens its own panel, a Radix popover", await p.waitForSelector('[data-slot="popover-content"].subagents-panel.at-work', { timeout: 3000 }).then(() => true, () => false));
+  const working = await p.$$eval(".subagents-panel.at-work .subagent-row .name", (els) => els.map((el) => el.textContent));
+  check(`[sub-agents] it lists only those at work, in the roster's order (${working.join(", ")})`, JSON.stringify(working) === JSON.stringify(["Count lines in a.txt", "Nested read", "Create c.txt"]));
+  const pads = await p.$$eval(".subagents-panel.at-work .subagent-row", (els) => els.map((el) => el.style.paddingLeft));
+  check(`[sub-agents] flat, nested ones not indented (${pads.join(", ")})`, new Set(pads).size === 1);
+  check("[sub-agents] a row there has the same head, Cancel where granted", (await p.locator(".subagents-panel.at-work .subagent-row", { hasText: "Count lines in a.txt" }).locator(".cancel").count()) === 1);
+  await settled(p);
+  await p.screenshot({ path: `${OUT}/subagents-at-work.png` });
+  await p.click('.subagents-panel.at-work .subagent-row:has-text("Nested read") .open');
+  check("[sub-agents] a row there opens its transcript, the panel closing", await p.waitForSelector('.subagent-bar .subagent-head:has-text("Nested read")', { timeout: 3000 }).then(() => true, () => false) && (await p.$(".subagents-panel")) === null);
+  await p.click('.subagent-bar .session-link:has-text("find foo")');
+  await p.waitForSelector(".subagent-bar", { state: "detached" });
   await p.click(".readout-strip .chip.subagents");
   check("[sub-agents] the roster opens from the strip, a Radix popover", await p.waitForSelector('[data-slot="popover-content"].subagents-panel', { timeout: 3000 }).then(() => true, () => false));
   const names = await p.$$eval(".subagents-panel .subagent-row .name", (els) => els.map((el) => el.textContent));
@@ -2675,6 +2702,17 @@ for (const theme of Object.keys(THEMES)) {
   );
   check("[sub-agents] a card follows the roster: its state changes with no new message", await p.waitForSelector('.chat .subagent-card:has-text("Count lines in a.txt") .state:has-text("cancelled")', { timeout: 3000 }).then(() => true, () => false));
   check("[sub-agents] and Cancel goes with the work", (await firstCard.locator(".cancel").count()) === 0 && (await firstCard.locator(".live-dot").count()) === 0);
+  // The at-work chip lives only while there is work; its panel goes with it.
+  const reportOf = (id, title, parentId, state) => ({ kind: "subagentUpserted", patchbaySessionId: "s1", subagent: { id, parentId, title, description: null, conversationTitle: null, state, lastKnown: state, cancel: false, cwd: null, additionalDirectories: null, config: [] } });
+  await p.click(".readout-strip .chip.at-work");
+  await p.waitForSelector(".subagents-panel.at-work");
+  const ended = { state: "idle", stopReason: "end_turn" };
+  await p.evaluate((events) => window.__patch(events), [reportOf("s1/b", "Create c.txt", "s1", ended), reportOf("s1/a1", "Nested read", "s1/a", ended)]);
+  check("[sub-agents] with no work left, the at-work chip and its open panel are gone", await p.waitForSelector(".subagents-panel.at-work", { state: "detached", timeout: 3000 }).then(() => true, () => false) && (await p.$(".readout-strip .chip.at-work")) === null);
+  check("[sub-agents] the full roster's chip stays", (await p.$(".readout-strip .chip.subagents")) !== null);
+  await p.evaluate((events) => window.__patch(events), [reportOf("s1/b", "Create c.txt", "s1", { state: "running" })]);
+  await p.waitForSelector(".readout-strip .chip.at-work");
+  check("[sub-agents] work back, the chip returns with its panel shut, unasked for", (await p.$(".subagents-panel.at-work")) === null);
   await p.close();
 }
 

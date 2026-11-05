@@ -21,6 +21,12 @@
   which sounds like it is waiting for work or has stalled. A report with no
   stop reason still reads "idle", since the agent gave no reason, and other
   stop reasons read as before. (#142)
+- **The sub-agents at work have their own chip.** The chip showed the running
+  count but opened the whole roster, leaving you to pick out the ones still
+  at work. One chip now opens all of them and reads `4 sub-agents`; a second,
+  present only while any are at work, reads `1 running · 1 waiting on you` and
+  opens only those. To make room, the plan always has its own row above the
+  strip. (#141)
 
 ## 0.90.0 — 2026-11-03
 

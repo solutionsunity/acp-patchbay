@@ -4,9 +4,10 @@
 // The read-out strip between chat and composer: what the agent has done this
 // session, at the eye's resting point, deliberately OUTSIDE the composer — its
 // binding rule ("above the input = what the agent will see") stays intact
-// because nothing here is context. Four chips: the plan and the sub-agents
-// (subagents-chip.tsx) on the left, then the prompts (prompts-chip.tsx) and
-// the edited files (files-chip.tsx) on the right. Absent when none has anything to show. Each opens a panel growing
+// because nothing here is context. The plan has a row of its own, its label
+// carrying the current step. Below it the sub-agents (subagents-chip.tsx) on
+// the left, all of them and those at work, then the prompts (prompts-chip.tsx)
+// and the edited files (files-chip.tsx) on the right. Absent when none has anything to show. Each opens a panel growing
 // up from the strip over the chat (readout-panel.tsx); they are sibling
 // overlays, so they share one open-state here. Expand is manual, never forced — a task completing
 // mid-turn pulses the collapsed plan chip as a peripheral signal instead of
@@ -18,9 +19,11 @@ import { Icon } from "../shared/icon";
 import { FilesChip } from "./files-chip";
 import { PromptsChip } from "./prompts-chip";
 import { ReadoutPanel } from "./readout-panel";
+import { atWorkRows, atWorkSummary, rosterLabel, rosterRows } from "./subagent-controls";
+import { SubagentDot } from "./subagent-head";
 import { SubagentsChip } from "./subagents-chip";
 
-type PanelId = "plan" | "subagents" | "prompts" | "files";
+type PanelId = "plan" | "subagents" | "atWork" | "prompts" | "files";
 
 export function ReadoutStrip(props: {
   patchbaySessionId: PatchbaySessionId;
@@ -52,52 +55,76 @@ export function ReadoutStrip(props: {
 
   // A plan needs more than one task to be worth a chip.
   const hasPlan = props.plan !== null && props.plan.length > 1;
+  const atWork = atWorkRows(props.subagents, props.patchbaySessionId);
+  const anyAtWork = atWork.length > 0;
   // A panel whose chip went away closes with it — left open, it would
-  // spring back the moment a new plan arrives, unasked.
+  // spring back the moment its chip returns, unasked.
   useEffect(() => {
-    if (!hasPlan) setOpenId((current) => (current === "plan" ? null : current));
-  }, [hasPlan]);
-  if (!hasPlan && props.subagents.length === 0 && props.prompts.length === 0 && props.files.length === 0) return null;
+    setOpenId((current) => ((current === "plan" && !hasPlan) || (current === "atWork" && !anyAtWork) ? null : current));
+  }, [hasPlan, anyAtWork]);
+  const hasRow = props.subagents.length > 0 || props.prompts.length > 0 || props.files.length > 0;
+  if (!hasPlan && !hasRow) return null;
+  const atWorkShown = atWorkSummary(atWork.map((row) => row.subagent));
 
   return (
     <div className="readout-strip" ref={stripRef}>
-      <div className="chips">
-        {hasPlan && (
+      {hasPlan && (
+        <div className="chips">
           <PlanChip plan={props.plan!} open={openId === "plan"} onOpenChange={openChange("plan")} anchor={stripRef} />
-        )}
-        {props.subagents.length > 0 && (
-          <SubagentsChip
-            patchbaySessionId={props.patchbaySessionId}
-            roster={props.subagents}
-            onOpen={props.onOpenSubagent}
-            open={openId === "subagents"}
-            onOpenChange={openChange("subagents")}
-            anchor={stripRef}
-          />
-        )}
-        {props.prompts.length > 0 && (
-          <PromptsChip
-            prompts={props.prompts}
-            composerEmpty={props.composerEmpty}
-            onGoTo={props.onGoTo}
-            onReuse={props.onReuse}
-            open={openId === "prompts"}
-            onOpenChange={openChange("prompts")}
-            anchor={stripRef}
-          />
-        )}
-        {props.files.length > 0 && (
-          <FilesChip
-            files={props.files}
-            openEditors={props.openEditors}
-            workspaceRoots={props.workspaceRoots}
-            contextRoots={props.contextRoots}
-            open={openId === "files"}
-            onOpenChange={openChange("files")}
-            anchor={stripRef}
-          />
-        )}
-      </div>
+        </div>
+      )}
+      {hasRow && (
+        <div className="chips">
+          {props.subagents.length > 0 && (
+            <SubagentsChip
+              patchbaySessionId={props.patchbaySessionId}
+              rows={rosterRows(props.subagents, props.patchbaySessionId)}
+              label={rosterLabel(props.subagents)}
+              mark={<Icon name="type-hierarchy-sub" />}
+              className="roster"
+              onOpen={props.onOpenSubagent}
+              open={openId === "subagents"}
+              onOpenChange={openChange("subagents")}
+              anchor={stripRef}
+            />
+          )}
+          {anyAtWork && (
+            <SubagentsChip
+              patchbaySessionId={props.patchbaySessionId}
+              rows={atWork}
+              label={atWorkShown.label}
+              mark={<SubagentDot look={atWorkShown.look} />}
+              className="at-work"
+              onOpen={props.onOpenSubagent}
+              open={openId === "atWork"}
+              onOpenChange={openChange("atWork")}
+              anchor={stripRef}
+            />
+          )}
+          {props.prompts.length > 0 && (
+            <PromptsChip
+              prompts={props.prompts}
+              composerEmpty={props.composerEmpty}
+              onGoTo={props.onGoTo}
+              onReuse={props.onReuse}
+              open={openId === "prompts"}
+              onOpenChange={openChange("prompts")}
+              anchor={stripRef}
+            />
+          )}
+          {props.files.length > 0 && (
+            <FilesChip
+              files={props.files}
+              openEditors={props.openEditors}
+              workspaceRoots={props.workspaceRoots}
+              contextRoots={props.contextRoots}
+              open={openId === "files"}
+              onOpenChange={openChange("files")}
+              anchor={stripRef}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }

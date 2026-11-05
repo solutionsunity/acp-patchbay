@@ -2,7 +2,7 @@
 // last-known look for work no longer confirmed, the words for each state,
 // the roster's tree order, and the chip's summary.
 import { describe, expect, it } from "vitest";
-import { cancelOffered, knobText, ownSubagent, rosterRows, rosterSummary, subagentAncestors, subagentLook, subagentName, subagentStateText } from "../src/webview/agent-view/subagent-controls";
+import { atWorkRows, atWorkSummary, cancelOffered, knobText, ownSubagent, rosterLabel, rosterRows, subagentAncestors, subagentLook, subagentName, subagentStateText } from "../src/webview/agent-view/subagent-controls";
 import type { PatchbaySessionId } from "../src/shared/ids";
 import type { SubagentView } from "../src/shared/protocol";
 
@@ -111,16 +111,36 @@ describe("where a sub-agent hangs", () => {
   });
 });
 
-describe("rosterSummary", () => {
-  it("counts, and the most urgent look: waiting, then running, then unconfirmed", () => {
-    const running = view({ state: { state: "running" } });
-    const waiting = view({ state: { state: "requires_action" } });
-    const lost = view({ state: { state: "unknown" }, lastKnown: { state: "running" } });
-    const done = view({ state: { state: "idle" } });
-    expect(rosterSummary([done])).toEqual({ label: "1 sub-agent", look: { mark: null } });
-    expect(rosterSummary([running, done, lost])).toEqual({ label: "3 sub-agents · 1 running", look: { mark: "running" } });
-    expect(rosterSummary([running, waiting])).toEqual({ label: "2 sub-agents · 1 running · 1 waiting on you", look: { mark: "waiting" } });
-    expect(rosterSummary([done, lost])).toEqual({ label: "2 sub-agents", look: { mark: "unknown", last: "running" } });
+describe("the two chips", () => {
+  const running = view({ state: { state: "running" } });
+  const waiting = view({ state: { state: "requires_action" } });
+  const lost = view({ state: { state: "unknown" }, lastKnown: { state: "running" } });
+  const done = view({ state: { state: "idle" } });
+
+  it("the full roster's chip only counts them", () => {
+    expect(rosterLabel([done])).toBe("1 sub-agent");
+    expect(rosterLabel([running, waiting, done])).toBe("3 sub-agents");
+  });
+
+  it("the at-work chip says what they do, with the most urgent look: waiting, then running, then unconfirmed", () => {
+    expect(atWorkSummary([running])).toEqual({ label: "1 running", look: { mark: "running" } });
+    expect(atWorkSummary([running, waiting])).toEqual({ label: "1 running · 1 waiting on you", look: { mark: "waiting" } });
+    expect(atWorkSummary([running, lost])).toEqual({ label: "1 running · 1 not confirmed", look: { mark: "running" } });
+    expect(atWorkSummary([lost])).toEqual({ label: "1 not confirmed", look: { mark: "unknown", last: "running" } });
+  });
+
+  it("at work means every one with a mark, flat, in the full roster's order", () => {
+    const parent = view({ id: "root/p" as PatchbaySessionId, state: { state: "idle" } });
+    const nested = view({ id: "root/p/n" as PatchbaySessionId, parentId: parent.id, state: { state: "running" } });
+    const later = view({ id: "root/l" as PatchbaySessionId, state: { state: "requires_action" } });
+    const never = view({ id: "root/x" as PatchbaySessionId, state: null, lastKnown: null });
+    const gone = view({ id: "root/g" as PatchbaySessionId, state: null, lastKnown: { state: "requires_action" } });
+    expect(atWorkRows([parent, later, nested, never, gone], ROOT)).toEqual([
+      { subagent: nested, depth: 0 },
+      { subagent: later, depth: 0 },
+      { subagent: gone, depth: 0 },
+    ]);
+    expect(atWorkRows([parent], ROOT)).toEqual([]);
   });
 });
 

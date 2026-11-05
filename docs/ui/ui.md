@@ -63,8 +63,9 @@ placeholder.
 
 | Chip | Where | Behavior |
 |---|---|---|
-| Plan | left | `▸ Plan n/m — current step`, truncating; present only while the agent maintains a plan with >1 tasks; a task completing mid-turn pulses the chip — expand is manual, never forced |
-| Sub-agents | left, after Plan | `⑂ n sub-agents · k running · j waiting on you`, truncating, with the most urgent mark of them — the session marks' dots (amber waits on you, green runs), or a hollow ring in the color it was last seen with once a sub-agent's work is no longer confirmed (the agent lost sight of it, or the connection went); present once the agent announces one, and it stays once all are idle — not the turn's: one still working after the turn ended keeps it running; a way in, not a read-out, so no preference hides it |
+| Plan | its own row, above the others | `▸ Plan n/m — current step`, truncating; present only while the agent maintains a plan with >1 tasks; a task completing mid-turn pulses the chip — expand is manual, never forced |
+| Sub-agents | left | `⑂ n sub-agents`, truncating, opening the full roster; present once the agent announces one, and it stays once all have stopped; a way in, not a read-out, so no preference hides it |
+| At work | left, after Sub-agents | the most urgent mark, then `k running · j waiting on you · l not confirmed`, each only when there are any, truncating first, whole on hover. The marks are the session marks' dots (amber waits on you, green runs), or a hollow ring in the color it was last seen with once a sub-agent's work is no longer confirmed (the agent lost sight of it, or the connection went). Opens only those; present only while there are any — not the turn's: one still working after the turn ended keeps it; a way in, not a read-out, so no preference hides it |
 | Prompts | right | `💬 n prompts` — present once you have asked something; counts your prompts, never a message the agent's harness injected; a way in, not a read-out, so no preference hides it |
 | Files | right, after Prompts | `✎ n files edited` — present once the agent has touched a file; a way in, not a read-out, so no preference hides it |
 
@@ -77,7 +78,8 @@ Sub-agents panel: each sub-agent in tree order (nested ones indented under
 their parent) — its mark, its name, what it is doing or why it stopped (`finished` for an
 `idle` report whose stop reason is `end_turn`; with no reason, `idle` as sent),
 and where it works when its agent placed it apart (a worktree); **Cancel** only
-where its agent granted it and it has work to cancel; a row opens its
+where its agent granted it and it has work to cancel; the at-work panel the
+same rows for those at work, flat, in the same order; a row opens its
 transcript inside the chat, under a bar: the path back through its parents,
 each a link, then its head again, with its settings. A prompt sent from
 there goes to the session and takes the chat back to it, as does going to a

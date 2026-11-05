@@ -5,10 +5,11 @@
 // marks' own vocabulary — waiting on you, running — plus the one look a
 // sub-agent needs and a session doesn't: work no longer confirmed, shown
 // as what it was last seen doing; the words for its state; the roster's
-// order; and the chip's summary. Pure, so a state the agent never sent
+// order; and what its two chips say. Pure, so a state the agent never sent
 // before is a failing test, not a live surprise.
 import type { PatchbaySessionId } from "../../shared/ids";
 import { subagentWork, type SessionKnobView, type SubagentStateView, type SubagentView } from "../../shared/protocol";
+import { count } from "../../shared/count";
 import { optionText } from "../shared/option-label";
 
 /** The session marks a sub-agent's work maps to. */
@@ -56,10 +57,15 @@ export function subagentName(subagent: SubagentView): string {
   return subagent.title ?? subagent.conversationTitle ?? subagent.description ?? "Sub-agent";
 }
 
+/** At work, or not known to have stopped. */
+function atWork(subagent: SubagentView): boolean {
+  return subagentLook(subagent).mark !== null;
+}
+
 /** Whether a sub-agent's head offers Cancel: its agent granted it, and it
- * has work to cancel — at work, or not known to have stopped. */
+ * has work to cancel. */
 export function cancelOffered(subagent: SubagentView): boolean {
-  return subagent.cancel && subagentLook(subagent).mark !== null;
+  return subagent.cancel && atWork(subagent);
 }
 
 /** The roster in tree order: each sub-agent of the session in the order
@@ -77,6 +83,12 @@ export function rosterRows(roster: readonly SubagentView[], root: PatchbaySessio
   return rows;
 }
 
+/** The roster's rows at work, in the same order and flat: what is at work is
+ * read for itself, whoever started it. */
+export function atWorkRows(roster: readonly SubagentView[], root: PatchbaySessionId): { subagent: SubagentView; depth: number }[] {
+  return rosterRows(roster, root).flatMap(({ subagent }) => (atWork(subagent) ? [{ subagent, depth: 0 }] : []));
+}
+
 /** The sub-agents a sub-agent hangs under, the outermost first — the session
  * itself isn't one of them. */
 export function subagentAncestors(roster: readonly SubagentView[], subagent: SubagentView): SubagentView[] {
@@ -90,19 +102,26 @@ export function ownSubagent(roster: readonly SubagentView[], self: PatchbaySessi
   return (id) => roster.find((s) => s.id === id && s.parentId === self);
 }
 
-/** The chip: how many sub-agents, how many at work and waiting, and the
- * most urgent look among them — waiting first, then running, then work
- * no longer confirmed. */
-export function rosterSummary(roster: readonly SubagentView[]): { label: string; look: SubagentLook } {
-  const looks = roster.map(subagentLook);
-  const waiting = looks.filter((l) => l.mark === "waiting").length;
-  const running = looks.filter((l) => l.mark === "running").length;
-  const look =
-    looks.find((l) => l.mark === "waiting") ?? looks.find((l) => l.mark === "running") ?? looks.find((l) => l.mark === "unknown") ?? { mark: null };
-  const parts = [`${roster.length} sub-agent${roster.length === 1 ? "" : "s"}`];
-  if (running > 0) parts.push(`${running} running`);
-  if (waiting > 0) parts.push(`${waiting} waiting on you`);
-  return { label: parts.join(" · "), look };
+/** The full roster's chip: how many sub-agents. */
+export function rosterLabel(roster: readonly SubagentView[]): string {
+  return count(roster.length, "sub-agent");
+}
+
+/** The at-work chip: how many of each, and the most urgent look among them —
+ * waiting first, then running, then work no longer confirmed. */
+export function atWorkSummary(subagents: readonly SubagentView[]): { label: string; look: SubagentLook } {
+  const looks = subagents.map(subagentLook);
+  const words = [
+    { mark: "running", word: "running" },
+    { mark: "waiting", word: "waiting on you" },
+    { mark: "unknown", word: "not confirmed" },
+  ] as const;
+  const label = words.flatMap(({ mark, word }) => {
+    const n = looks.filter((l) => l.mark === mark).length;
+    return n > 0 ? [`${n} ${word}`] : [];
+  });
+  const look = looks.find((l) => l.mark === "waiting") ?? looks.find((l) => l.mark === "running") ?? looks.find((l) => l.mark === "unknown") ?? { mark: null };
+  return { label: label.join(" · "), look };
 }
 
 /** A sub-agent's setting as its line shows it — read, never set: the

@@ -1041,9 +1041,9 @@ the agent grants it.
   unseen mark, the chime. A child at work counts as the session running
   (`sessionMark`).
 - **The view.** The roster is the orchestrator's (`subagentUpserted`, each
-  row whole); the webview renders the sub-agents chip in the read-out strip,
-  the roster in its Radix panel, and a child's transcript inside its
-  session's chat — a view of that pane only. Marks are the session marks
+  row whole); the webview renders two chips in the read-out strip, the
+  roster and those at work, each opening its rows in a Radix panel; and a
+  child's transcript inside its session's chat — a view of that pane only. Marks are the session marks
   (waiting on you, running), plus a hollowed last-known look for work no
   longer confirmed; the gates are pure functions (`subagent-controls.ts`).
   Messages between sessions are one block per message

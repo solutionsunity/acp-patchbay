@@ -1,53 +1,57 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// The sub-agents chip — the read-out strip's way into the sessions this
-// session's agent started. Its own fact, not the turn's: a sub-agent still
-// working after the turn ended keeps it running, and once all are idle it
-// stays, their results a click away. The roster lists each in tree order
-// with its mark (the session marks' own vocabulary), what it is doing, and
-// where it works when its agent placed it apart; a row opens that
-// sub-agent's transcript, and Cancel shows only where its agent granted it.
-import type { RefObject } from "react";
+// A sub-agents chip — the read-out strip's way into the sessions this
+// session's agent started: one for all of them, one for those at work. Their
+// own fact, not the turn's: a sub-agent still working after the turn ended
+// keeps its chip, and once all are idle the roster stays, their results a
+// click away. A panel lists each with its head, and where it works when its
+// agent placed it apart.
+import type { ReactNode, RefObject } from "react";
 import type { PatchbaySessionId } from "../../shared/ids";
 import type { SubagentView } from "../../shared/protocol";
 import { Icon } from "../shared/icon";
 import { ReadoutPanel } from "./readout-panel";
-import { rosterRows, rosterSummary } from "./subagent-controls";
-import { SubagentDot, SubagentHead } from "./subagent-head";
+import { SubagentHead } from "./subagent-head";
 
 export function SubagentsChip({
   patchbaySessionId,
-  roster,
+  rows,
+  label,
+  mark,
+  className,
   onOpen,
   open,
   onOpenChange,
   anchor,
 }: {
   patchbaySessionId: PatchbaySessionId;
-  roster: readonly SubagentView[];
+  rows: readonly { subagent: SubagentView; depth: number }[];
+  label: string;
+  /** What leads the label. */
+  mark: ReactNode;
+  /** Names this chip and its panel apart from the other's. */
+  className: string;
   /** Opens a sub-agent's transcript in the chat. */
   onOpen(subagent: PatchbaySessionId): void;
   open: boolean;
   onOpenChange(open: boolean): void;
   anchor: RefObject<HTMLDivElement | null>;
 }) {
-  const { label, look } = rosterSummary(roster);
   return (
     <ReadoutPanel
       open={open}
       onOpenChange={onOpenChange}
       anchor={anchor}
-      className="subagents-panel"
+      className={`subagents-panel ${className}`}
       title={label}
       chip={
-        <button type="button" className={`chip subagents ${open ? "active" : ""}`}>
-          <Icon name="type-hierarchy-sub" /> <span className="label">{label}</span>
-          {look.mark !== null && <SubagentDot look={look} />}
+        <button type="button" className={`chip subagents ${className} ${open ? "active" : ""}`} title={label}>
+          {mark} <span className="label">{label}</span>
         </button>
       }
     >
-      {rosterRows(roster, patchbaySessionId).map(({ subagent, depth }) => (
+      {rows.map(({ subagent, depth }) => (
         <div key={subagent.id} className="subagent-row" style={{ paddingLeft: 8 + depth * 14 }}>
           <SubagentHead
             subagent={subagent}
