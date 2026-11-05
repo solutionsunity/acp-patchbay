@@ -213,6 +213,7 @@ block and shows as the card icon's tooltip: the card names the call by its
 | Truncate from the beginning when over `outputByteLimit` | ✅ | `tailBytes` counts real bytes and cuts at a UTF-8 code-point boundary — surrogate pairs stay whole by construction. |
 | Output survives release when embedded in tool calls | ✅ | Terminal blocks live in the transcript; release invalidates the id, not the rendered history. |
 | Non-blocking `terminal/output` + `truncated` flag | ✅ | `currentOutput()` is synchronous state. |
+| What a command wrote is there once its exit is told | ✅ | `terminal-runner.ts`: the exit is reported two event-loop turns after the child's `exit` event, so one more poll has read its output; on Linux `exit` can come first when another child's exit shares a long callback's batch of events. Not `close`, which also waits for anything the command left running with its output. Output written after the exit by what it left behind still arrives, after the exit. |
 
 ## 14. Agent plan — ✅
 

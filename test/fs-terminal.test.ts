@@ -2,7 +2,9 @@
 // untouched and reaches the agent as an error; terminal commands are gated
 // the same way. Runs the extension's real fs/terminal handlers (ClientHost),
 // minus vscode (the live-buffer read/write is covered by the vscode suite).
+import { spawn } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeAgent } from "./support/fake-agent";
@@ -12,7 +14,7 @@ import { assertKind } from "./support/assert-kind";
 import { formatCommandLine } from "../src/shared/command-line";
 import { applyFileWrite } from "../src/orchestrator/client-host";
 import { type LaunchSpec } from "../src/orchestrator/pool";
-import { tailBytes } from "../src/orchestrator/terminal-runner";
+import { NodeTerminalRunner, tailBytes } from "../src/orchestrator/terminal-runner";
 import type { OrchestratorPorts } from "../src/orchestrator/orchestrator";
 import type { AgentViewState } from "../src/shared/protocol";
 import { orchestratorHarness } from "./support/orchestrator-harness";
@@ -769,5 +771,52 @@ describe("tailBytes (ACP outputByteLimit — bytes, character-boundary cut)", ()
   it("never splits a code point — cut lands on the next boundary", () => {
     // "😀" is 4 bytes; a 6-byte budget over two emoji can hold only one whole
     expect(tailBytes("😀😀", 6)).toEqual({ text: "😀", truncated: true });
+  });
+});
+
+describe("a terminal's exit, and its output", () => {
+  const runner = new NodeTerminalRunner();
+  const run = (script: string) => runner.create({ command: process.execPath, args: ["-e", script], env: {}, cwd: tmpdir(), outputByteLimit: null });
+
+  // Linux tells of a child's exit on any child's SIGCHLD, so a command that
+  // dies during a long callback can be told of before its output is read,
+  // when another child's exit shares that callback's batch of events.
+  it("all of a command's output is there when its exit is told, however busy the host", { timeout: 60_000 }, async () => {
+    const other = spawn(process.execPath, ["-e", "setInterval(() => console.log('.'), 5)"], { stdio: ["ignore", "pipe", "ignore"] });
+    other.stdout.on("data", () => {
+      const end = Date.now() + 10;
+      while (Date.now() < end);
+    });
+    const [file, args] = process.platform === "win32" ? ["cmd.exe", ["/c", "exit"]] : ["true", []];
+    const siblings = setInterval(() => {
+      for (let i = 0; i < 2; i++) spawn(file, args, { stdio: "ignore" });
+    }, 5);
+    const short: string[] = [];
+    try {
+      for (let i = 0; i < 25; i++) {
+        const terminal = await run("console.log('all of it')");
+        await terminal.waitForExit();
+        const { output } = terminal.currentOutput();
+        if (!output.includes("all of it")) short.push(output);
+      }
+    } finally {
+      clearInterval(siblings);
+      other.kill();
+    }
+    expect(short).toEqual([]);
+  });
+
+  it.each([
+    ["silent", "setTimeout(() => console.log('LEFT BEHIND'), 8000)"],
+    ["printing", "setInterval(() => console.log('tick'), 10); setTimeout(() => { console.log('LEFT BEHIND'); process.exit(0); }, 8000)"],
+  ])("a %s process the command leaves behind holding its output doesn't hold back its exit", async (_kind, left) => {
+    const terminal = await run(
+      `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(left)}], { stdio: 'inherit', detached: true }).unref(); console.log('the command');`,
+    );
+    const status = await terminal.waitForExit();
+    const { output } = terminal.currentOutput();
+    expect(status.exitCode).toBe(0);
+    expect(output).toContain("the command");
+    expect(output).not.toContain("LEFT BEHIND");
   });
 });

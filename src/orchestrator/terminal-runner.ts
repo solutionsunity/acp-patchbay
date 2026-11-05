@@ -121,7 +121,14 @@ export class NodeTerminalRunner implements TerminalRunner {
     if (child !== null) {
       child.stdout!.setEncoding("utf8").on("data", append);
       child.stderr!.setEncoding("utf8").on("data", append);
-      child.on("exit", (code, signal) => finish({ exitCode: code, signal }));
+      // A child's exit can be told before its output is read: on Linux any
+      // child's SIGCHLD reaps every child that has died, so one that dies
+      // during a long callback is told of ahead of its own output. What it
+      // wrote is in the pipe by then, and the next poll reads it — the first
+      // turn ends this loop iteration, the second comes after that poll. Not
+      // "close": that also waits for whatever the command left running with
+      // its output, for as long as that lives.
+      child.on("exit", (code, signal) => setImmediate(() => setImmediate(() => finish({ exitCode: code, signal }))));
       child.on("error", (err) => neverStarted(agentErrorText(err)));
     }
     const started = child;

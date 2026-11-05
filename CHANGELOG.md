@@ -21,6 +21,12 @@
   which sounds like it is waiting for work or has stalled. A report with no
   stop reason still reads "idle", since the agent gave no reason, and other
   stop reasons read as before. (#142)
+- **An agent no longer reads a command's output as empty right after it
+  exits.** When the extension host was busy and another process ended at the
+  same moment, the agent could be told a command had exited before its output
+  had been read, and believe it printed nothing, while the chat's terminal
+  card showed the output. The exit is now reported only after that output has
+  been read, with no added delay. (#146)
 - **The sub-agents at work have their own chip.** The chip showed the running
   count but opened the whole roster, leaving you to pick out the ones still
   at work. One chip now opens all of them and reads `4 sub-agents`; a second,
