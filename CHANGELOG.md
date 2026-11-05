@@ -17,6 +17,10 @@
   came back, collapsed. A sub-agent's own view shows the same head under the
   whole path back through its parents. A prompt sent from there, or going to
   a prompt from the prompts chip, takes the chat back to the session. (#143)
+- **A sub-agent that completed its run reads "finished".** It read "idle",
+  which sounds like it is waiting for work or has stalled. A report with no
+  stop reason still reads "idle", since the agent gave no reason, and other
+  stop reasons read as before. (#142)
 
 ## 0.90.0 — 2026-11-03
 

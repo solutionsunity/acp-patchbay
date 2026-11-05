@@ -36,7 +36,10 @@ function stateWords(state: SubagentStateView): string {
   if (state.state !== "idle") return WORDS[state.state] ?? state.state;
   if (state.stopReason === "cancelled") return "cancelled";
   if (state.stopReason === "error") return state.error !== undefined ? `failed: ${state.error}` : "failed";
-  return state.stopReason === undefined || state.stopReason === "end_turn" ? "idle" : `idle · ${state.stopReason}`;
+  // Its run ended as a turn ends: no claim that the work succeeded, and it can
+  // run again. With no reason given, all that is known is the agent's word.
+  if (state.stopReason === "end_turn") return "finished";
+  return state.stopReason === undefined ? "idle" : `idle · ${state.stopReason}`;
 }
 
 /** What a sub-agent's head says of its work. */

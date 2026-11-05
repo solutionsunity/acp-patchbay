@@ -45,7 +45,8 @@ describe("subagentStateText", () => {
   it("says what it does, or why it stopped", () => {
     expect(subagentStateText(view({ state: { state: "running" } }))).toBe("running");
     expect(subagentStateText(view({ state: { state: "requires_action" } }))).toBe("waiting on you");
-    expect(subagentStateText(view({ state: { state: "idle", stopReason: "end_turn" } }))).toBe("idle");
+    expect(subagentStateText(view({ state: { state: "idle", stopReason: "end_turn" } }))).toBe("finished");
+    expect(subagentStateText(view({ state: { state: "idle" } }))).toBe("idle");
     expect(subagentStateText(view({ state: { state: "idle", stopReason: "cancelled" } }))).toBe("cancelled");
     expect(subagentStateText(view({ state: { state: "idle", stopReason: "error", error: "Authentication required" } }))).toBe("failed: Authentication required");
     expect(subagentStateText(view({ state: { state: "idle", stopReason: "max_tokens" } }))).toBe("idle · max_tokens");
@@ -56,6 +57,7 @@ describe("subagentStateText", () => {
     expect(subagentStateText(view({ state: null, lastKnown: null }))).toBe("nothing reported");
     expect(subagentStateText(view({ state: null, lastKnown: { state: "running" } }))).toBe("not confirmed — last running");
     expect(subagentStateText(view({ state: { state: "unknown" }, lastKnown: { state: "requires_action" } }))).toBe("unknown — last waiting on you");
+    expect(subagentStateText(view({ state: null, lastKnown: { state: "idle", stopReason: "end_turn" } }))).toBe("not confirmed — last finished");
   });
 });
 

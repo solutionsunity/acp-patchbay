@@ -74,8 +74,9 @@ click elsewhere closes; one panel is open at a time, so opening the other chip's
 panel closes this one. Plan panel: the full checklist (✓ done, ▸ active, ○
 pending, ⊘ cancelled; any other status word shows beside its task).
 Sub-agents panel: each sub-agent in tree order (nested ones indented under
-their parent) — its mark, its name, what it is doing or why it stopped, and
-where it works when its agent placed it apart (a worktree); **Cancel** only
+their parent) — its mark, its name, what it is doing or why it stopped (`finished` for an
+`idle` report whose stop reason is `end_turn`; with no reason, `idle` as sent),
+and where it works when its agent placed it apart (a worktree); **Cancel** only
 where its agent granted it and it has work to cancel; a row opens its
 transcript inside the chat, under a bar: the path back through its parents,
 each a link, then its head again, with its settings. A prompt sent from

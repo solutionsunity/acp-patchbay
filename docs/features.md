@@ -194,7 +194,7 @@ deliverable.
   only when the user says so; nothing the user does on that page passes
   through patchbay or the agent.
 - When the agent hands work to sub-agents, a chip above the composer shows
-  them — running, waiting on the user, done — and keeps showing them after
+  them — running, waiting on the user, finished — and keeps showing them after
   the turn ends: one still working says so. Once the agent's answer is over
   the user can prompt it, whatever its sub-agents are still doing; what it
   says later about them lands in the chat and marks the session like a

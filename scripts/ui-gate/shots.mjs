@@ -2635,7 +2635,7 @@ for (const theme of Object.keys(THEMES)) {
   const old = p.locator(".chat .subagent-card").nth(1);
   const latest = p.locator(".chat .subagent-card").nth(2);
   check("[sub-agents] a resume opens a new card: the older says only who", (await old.locator(".state").count()) === 0 && (await old.locator(".name", { hasText: "Done one" }).count()) === 1 && (await old.locator(".session-message").count()) === 2);
-  check("[sub-agents] its latest card carries the state and Cancel's gate", (await latest.locator(".state", { hasText: "idle" }).count()) === 1 && (await latest.locator(".cancel").count()) === 0);
+  check("[sub-agents] its latest card carries the state and Cancel's gate", (await latest.locator(".state", { hasText: "finished" }).count()) === 1 && (await latest.locator(".cancel").count()) === 0);
   await firstCard.locator(".subagent-head .cancel").click();
   const cancelledInCard = await p.evaluate(() => window.__actions.at(-1));
   check("[sub-agents] Cancel in a card goes through the session", JSON.stringify(cancelledInCard) === JSON.stringify({ kind: "cancelSubagent", patchbaySessionId: "s1", subagentId: "s1/a" }));
