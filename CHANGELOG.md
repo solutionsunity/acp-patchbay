@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.90.1 — 2026-11-05
+
+Sub-agents get their own card in the chat and a chip for those at work, and a
+background sub-agent no longer holds a Claude session's turn open. An agent
+also no longer reads a command's output as empty right after it exits.
 
 - **A background sub-agent no longer holds a Claude session's turn open.**
   Once the agent's answer is over the turn ends, so Stop goes away and
