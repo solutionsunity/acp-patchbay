@@ -11,6 +11,7 @@ import { capabilityState } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { orchestratorHarness } from "./support/orchestrator-harness";
 import type { PatchbayAgentId } from "../src/shared/ids";
+import { nullLogger } from "../src/orchestrator/logger";
 
 
 let cwd: string;
@@ -29,6 +30,24 @@ const harness = () => {
 
 
 describe("CapabilityTracker", () => {
+  it("reports a failed probe root on connect and recheck, then recovers", async () => {
+    const debug = vi.fn();
+    const h = orchestratorHarness(cwd, { log: { ...nullLogger, debug } });
+    const { pool, capabilityTracker: tracker, agents } = h.orchestrator;
+    const id = "root-failure" as PatchbayAgentId;
+    const root = vi.spyOn(agents, "probeRoot").mockRejectedValue(new Error("permission denied"));
+
+    await pool.connect(spec({}, id));
+    await vi.waitFor(() => expect(debug).toHaveBeenCalledWith(expect.stringContaining("probe round-trip failed")), SETTLE);
+    expect(h.probes).toHaveLength(0);
+    await expect(tracker.recheck(id)).resolves.toBe("failed");
+
+    root.mockRestore();
+    await expect(tracker.recheck(id)).resolves.toBe("ok");
+    expect(h.probes).toHaveLength(1);
+    await pool.stop(id);
+  });
+
   it("an honest agent's declared close gets used on connect — the check's own round trip", async () => {
     const { pool, tracker } = harness();
     await pool.connect(spec({ declare: { sessionCapabilities: { close: {} } } }, "honest" as PatchbayAgentId));
