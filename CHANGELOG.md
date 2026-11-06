@@ -1,19 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.90.2 — 2026-11-07
 
-- **A capability check that can't create its folder now ends as a failed
-  check.** It used to end with no result and nothing in the log, and right
-  after a successful login it made the login read as failed. Thanks to
-  @mikemikimike. (#150)
-- **An agent's defaults no longer stay on "reading this agent's knob
-  offering…" when its probe folder can't be created.** The Settings card now
-  says the session couldn't open and why, and opening the editor again retries.
-  (#151)
-- **A registry version lower than the pinned one is no longer offered as an
-  Upgrade.** An entry that moves back shows no update on the Settings card, the
-  agent's chip or the notice. An Upgrade clicked after it moved back says so and
-  leaves the agent as it is. (#148)
+A failed action now says what didn't happen and why, and one failure no longer
+takes down what didn't depend on it. A registry version lower than the pinned
+one is no longer offered as an Upgrade.
+
 - **A failed action now says so.** Adding a folder the agent refuses, attaching a
   file that can't be read, saving a command rule, a preference or an MCP setting,
   and the rest of what you click report what didn't happen and why, instead of
@@ -24,6 +16,18 @@
   finish no longer stays on "applying", a failed audit write no longer stops the
   ones after it, and a line from an agent that isn't JSON no longer ends the
   editor's MCP server. (#152)
+- **A registry version lower than the pinned one is no longer offered as an
+  Upgrade.** An entry that moves back shows no update on the Settings card, the
+  agent's chip or the notice. An Upgrade clicked after it moved back says so and
+  leaves the agent as it is. (#148)
+- **An agent's defaults no longer stay on "reading this agent's knob
+  offering…" when its probe folder can't be created.** The Settings card now
+  says the session couldn't open and why, and opening the editor again retries.
+  (#151)
+- **A capability check that can't create its folder now ends as a failed
+  check.** It used to end with no result and nothing in the log, and right
+  after a successful login it made the login read as failed. Thanks to
+  @mikemikimike. (#150)
 
 ## 0.90.1 — 2026-11-05
 
