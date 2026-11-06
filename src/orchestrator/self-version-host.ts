@@ -79,7 +79,7 @@ export class SelfVersionHost implements vscode.Disposable {
           this.deps.log.info(`self version: ${moment.version} not recorded — ${agentErrorText(error)}`),
         );
       }
-      void this.say(moment);
+      void this.say(moment).catch((error: unknown) => this.deps.log.info(`self version: ${agentErrorText(error)}`));
     }
   }
 

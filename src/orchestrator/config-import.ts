@@ -89,7 +89,7 @@ export function readConfiguration(text: string): ReadOutcome {
       continue;
     }
     parts.add(part);
-    void kv.update(key, value);
+    kv.set(key, value);
   }
   if (record(secrets.agents) !== null) parts.add("agents");
   if (record(secrets.mcpServers) !== null) parts.add("mcpServers");

@@ -43,7 +43,7 @@ import type { TerminalAuth } from "./readers/initialize";
 import { rowsProvenBy } from "./capabilities";
 import type { CapabilityTracker } from "./capability-tracker";
 import { checkPathDivergence } from "./launcher-health";
-import { nullLogger, type Logger } from "./logger";
+import { logCatch, nullLogger, type Logger } from "./logger";
 import type { TerminalAuthRecipe } from "./meta";
 import type { AgentPool, LaunchSpec } from "./pool";
 import { mergeEnv, resolveExecutableWin32 } from "./spawn-resolve";
@@ -211,7 +211,7 @@ export class AgentsStore implements ConnectionOperations {
   /** A user-set, agent-confirmed knob combination — the one write of the
    * last-session seed. */
   recordKnobs(patchbayAgentId: PatchbayAgentId, seed: KnobSeed): void {
-    void this.deps.composerKnobs.record(patchbayAgentId, seed);
+    void this.deps.composerKnobs.record(patchbayAgentId, seed).catch(logCatch(this.log, `${patchbayAgentId}: knob seed`));
   }
 
   /** An agent's standing throwaway workspace (`probe/<patchbayAgentId>`) — the
@@ -290,7 +290,7 @@ export class AgentsStore implements ConnectionOperations {
   noteDeclared(patchbayAgentId: PatchbayAgentId): void {
     this.deps.tracker.onDeclared(patchbayAgentId);
     const version = this.deps.pool.get(patchbayAgentId)?.initialize?.agentInfo?.version;
-    if (version !== undefined) void this.recordSeenVersion(patchbayAgentId, version);
+    if (version !== undefined) void this.recordSeenVersion(patchbayAgentId, version).catch(logCatch(this.log, `${patchbayAgentId}: seen version`));
   }
 
   /** The single sink for pool.ts's proof-table hits (capabilities.ts
@@ -388,7 +388,8 @@ export class AgentsStore implements ConnectionOperations {
    * `initialize`. */
   private async spawn(spec: LaunchSpec, signal?: AbortSignal): Promise<void> {
     await this.deps.pool.connect(spec, { signal });
-    void this.warnOnPathDivergence(spec, this.linkedRegistryId(spec.patchbayAgentId));
+    // A diagnostic nicety must never affect a connect.
+    void this.warnOnPathDivergence(spec, this.linkedRegistryId(spec.patchbayAgentId)).catch(() => {});
   }
 
   /** Intentional stop — reads as "stopped", never "crashed". */
@@ -1053,18 +1054,14 @@ export class AgentsStore implements ConnectionOperations {
    * store (launcher-health.ts PATH_SIBLINGS). Warning only, never a gate;
    * once per exact version pair so reconnects don't nag. */
   private async warnOnPathDivergence(spec: LaunchSpec, registryId: string | null): Promise<void> {
-    try {
-      const d = await checkPathDivergence(spec, registryId);
-      if (d === null) return;
-      const key = `${spec.patchbayAgentId}:${d.pathVersion}:${d.bundledVersion}`;
-      if (this.divergenceWarned.has(key)) return;
-      this.divergenceWarned.add(key);
-      this.hooks.warn(
-        `${spec.name}: the \`${d.bin}\` on your PATH is v${d.pathVersion}, but patchbay runs v${d.bundledVersion}. Both share the same ${d.bin} state (sessions, auth, config) — a wide version gap between the two writers can bite. Consider updating the PATH install.`,
-      );
-    } catch {
-      // A diagnostic nicety must never affect a connect.
-    }
+    const d = await checkPathDivergence(spec, registryId);
+    if (d === null) return;
+    const key = `${spec.patchbayAgentId}:${d.pathVersion}:${d.bundledVersion}`;
+    if (this.divergenceWarned.has(key)) return;
+    this.divergenceWarned.add(key);
+    this.hooks.warn(
+      `${spec.name}: the \`${d.bin}\` on your PATH is v${d.pathVersion}, but patchbay runs v${d.bundledVersion}. Both share the same ${d.bin} state (sessions, auth, config) — a wide version gap between the two writers can bite. Consider updating the PATH install.`,
+    );
   }
 
   /** terminal-auth login (meta.ts): runs the method's recipe as a VS Code

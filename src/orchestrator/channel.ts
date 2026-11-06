@@ -183,7 +183,7 @@ export class ChannelHost<S, E> {
       // A disposed-but-not-yet-detached webview throws on postMessage
       // (dispose events race attach on remount) — its detach follows.
       try {
-        void view.postMessage(msg);
+        view.postMessage(msg).then(undefined, () => {});
       } catch {
         /* disposed race */
       }

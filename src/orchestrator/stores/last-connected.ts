@@ -14,7 +14,7 @@
 // applies — accepted: the flagged agents still return, the manual one is a
 // click away. workspaceState: the working set is a workspace fact (sessions
 // are cwd-bound), machine-local, non-sensitive — agent ids only.
-import type { KV } from "./kv";
+import { type KV, rewriteAtOpen } from "./kv";
 import type { PatchbayAgentId } from "../../shared/ids";
 import { STORAGE_KEYS } from "./storage-keys";
 
@@ -40,7 +40,7 @@ export class LastConnectedStore {
     const stored = kv.get<unknown>(KEY);
     if (typeof stored === "object" && stored !== null && "agentIds" in stored) {
       const { agentIds, ...rest } = stored;
-      void kv.update(KEY, { ...rest, patchbayAgentIds: agentIds });
+      rewriteAtOpen(kv.update(KEY, { ...rest, patchbayAgentIds: agentIds }));
     }
   }
 

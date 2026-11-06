@@ -11,7 +11,7 @@
 // record is dropped rather than trusted blind.
 import type { z } from "zod";
 import { freeName } from "../../shared/names";
-import type { KV, StoredEntry } from "./kv";
+import { type KV, type StoredEntry, rewriteAtOpen } from "./kv";
 
 export class RecordStore<T> implements StoredEntry {
   constructor(
@@ -106,7 +106,7 @@ export class NamedRecordStore<T extends { id: string; name: string }> extends Gl
     });
     if (stored.every((r: unknown, i) => keeps[i] || !named(r))) return;
     const taken = [...kept];
-    void kv.update(
+    rewriteAtOpen(kv.update(
       key,
       stored.map((r: unknown, i) => {
         if (keeps[i] || !named(r)) return r;
@@ -114,7 +114,7 @@ export class NamedRecordStore<T extends { id: string; name: string }> extends Gl
         taken.push(name);
         return { ...r, name };
       }),
-    );
+    ));
   }
 
   /** Adds a record under a name no other record holds — picked in the same

@@ -170,6 +170,12 @@ build until it does; a kind answers null when its own surface already states the
 failure (a crash on the agent's row, an MCP add's card, the chat pane), or when
 the user didn't ask for it as such (a keystroke's save).
 
+Work nothing waits on answers for its failure where it starts, in the extension
+host's own process: no handler there could catch it for us, since other extensions
+share that process and VS Code only writes a dropped rejection to its own log. Lint
+holds this — `void` is no answer in the extension host. A webview's dropped
+rejection reaches its error collector, so `void` stays an answer there.
+
 A failure costs what failed. A malformed stored record reads as absent and is
 logged by its id; a line an agent or a subprocess wrote that can't be read is
 dropped; a store's rewrite at open that fails is left for the next open

@@ -13,7 +13,7 @@
 // leftover only once its owner is gone; a window still running owns its
 // processes. File-backed, so Settings Sync can never carry it anywhere.
 import { z } from "zod";
-import { type Logger, nullLogger } from "../logger";
+import { logCatch, type Logger, nullLogger } from "../logger";
 import { commandOf, commandsOf, isAlive, reapOrphans, type TrackedProcess } from "../process-tree";
 import { GlobalRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
@@ -66,7 +66,7 @@ export class SpawnRegistryStore extends GlobalRecordStore<SpawnRecord> {
     this.live.add(pid);
     process.onExit(() => {
       this.live.delete(pid);
-      void this.remove(String(pid));
+      void this.remove(String(pid)).catch(logCatch(this.log, `spawn registry: ${pid}`));
     });
     const [command, owner] = await Promise.all([commandOf(pid), this.host]);
     if (command === "" || owner === null || !process.running()) return;

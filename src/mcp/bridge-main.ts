@@ -115,11 +115,13 @@ async function main(): Promise<void> {
       // — never kills the bridge (v1 died by unhandled rejection here, and
       // the agent saw only a silently absent server).
       if (isRequest(message)) {
-        void agentSide.send({
-          jsonrpc: "2.0",
-          id: message.id,
-          error: { code: -32603, message: `bridge: ${(err as Error).message}` },
-        });
+        agentSide
+          .send({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: -32603, message: `bridge: ${(err as Error).message}` },
+          })
+          .catch(() => {});
       }
     });
   };
@@ -154,7 +156,12 @@ async function main(): Promise<void> {
   // close() aborts in-flight provider requests; their responses have no
   // reader anymore. The SDK's stdio transport only fires onclose from its
   // own close() — the EOF event needs wiring by hand.
-  const shutdown = () => void providerSide.close().finally(() => process.exit(0));
+  const shutdown = () => {
+    void providerSide
+      .close()
+      .catch(() => {})
+      .finally(() => process.exit(0));
+  };
   agentSide.onclose = shutdown;
   process.stdin.on("end", shutdown);
 

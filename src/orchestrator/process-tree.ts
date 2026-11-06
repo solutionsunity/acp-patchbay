@@ -163,7 +163,8 @@ export function killTree(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): vo
  * just read back as the one recorded. */
 function killPidTree(pid: number, signal: "SIGTERM" | "SIGKILL"): void {
   if (process.platform === "win32") {
-    void runToExit("taskkill", ["/pid", String(pid), "/T", "/F"], { env: process.env });
+    // A kill that can't run has nothing to add: the process's exit is what's read.
+    void runToExit("taskkill", ["/pid", String(pid), "/T", "/F"], { env: process.env }).catch(() => {});
     return;
   }
   // Group already gone (or the leader never became one — spawn raced its
@@ -204,7 +205,9 @@ export function trackedChild(child: ChildProcess): TrackedProcess | null {
   return {
     pid,
     running: () => child.exitCode === null && child.signalCode === null,
-    onExit: (listener) => void child.once("exit", listener),
+    onExit: (listener) => {
+      child.once("exit", listener);
+    },
   };
 }
 

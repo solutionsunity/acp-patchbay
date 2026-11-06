@@ -46,9 +46,32 @@ export default tseslint.config(
     },
     plugins: { "@typescript-eslint": tseslint.plugin },
     rules: {
-      // the async-test trap: a dropped promise passes vacuously; in src it's
-      // a silently-lost error path. `void` marks intentional fire-and-forget.
+      // the async-test trap: a dropped promise passes vacuously. A webview's
+      // `void` is an answer: what it drops reaches the view's error collector.
       "@typescript-eslint/no-floating-promises": "error",
+    },
+  },
+  {
+    // In the extension host nothing hears a dropped promise but the host's own
+    // log, so `void` answers nothing: every piece of work says what its failure
+    // does. A notice has no failure of its own to lose.
+    files: ["src/**/*.ts", "src/**/*.tsx"],
+    ignores: ["src/webview/**"],
+    rules: {
+      "@typescript-eslint/no-floating-promises": [
+        "error",
+        {
+          ignoreVoid: false,
+          checkThenables: true,
+          allowForKnownSafeCalls: [
+            { from: "package", package: "vscode", name: ["showInformationMessage", "showWarningMessage", "showErrorMessage"] },
+          ],
+        },
+      ],
+      // what the rule above can't see: `() => void work()`, and an async
+      // function handed to something that drops what it returns
+      "no-void": ["error", { allowAsStatement: true }],
+      "@typescript-eslint/no-misused-promises": "error",
     },
   },
   {

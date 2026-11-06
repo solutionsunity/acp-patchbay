@@ -11,7 +11,7 @@
 import { z } from "zod";
 import { DEFAULT_PREFERENCES, type GaugeDisplay, type PreferencesView, type ToolCallDisplay } from "../../shared/protocol";
 import { DISPLAY_LADDER } from "../../shared/tool-display";
-import type { KV, StoredEntry } from "./kv";
+import { type KV, type StoredEntry, rewriteAtOpen } from "./kv";
 import { STORAGE_KEYS } from "./storage-keys";
 
 const KEY = STORAGE_KEYS.preferences;
@@ -89,11 +89,12 @@ export class PreferencesStore implements StoredEntry {
 
   constructor(private readonly kv: KV) {
     // Once, at construction: a KV applies an update in memory before its
-    // write settles, so no read ever sees the old shape. Disk is a trust
-    // boundary: a non-object value is left for get() to read as it always has.
+    // write settles, so no read sees the old shape unless the write failed
+    // — then the next open rewrites it. Disk is a trust boundary: a
+    // non-object value is left for get() to read as it always has.
     const stored = kv.get<unknown>(KEY);
     if (typeof stored === "object" && stored !== null && RETIRED.some((key) => key in stored)) {
-      void kv.update(KEY, migrate(stored as Record<string, unknown>));
+      rewriteAtOpen(kv.update(KEY, migrate(stored as Record<string, unknown>)));
     }
   }
 

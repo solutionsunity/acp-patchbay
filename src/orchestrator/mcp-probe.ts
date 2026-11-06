@@ -111,7 +111,7 @@ class ChildTransport implements Transport {
     } catch (err) {
       // Past the framing's size cap: the stream can't be read on.
       this.onerror?.(err as Error);
-      void this.close();
+      void this.close().catch(() => {});
       return;
     }
     for (;;) {

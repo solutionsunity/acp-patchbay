@@ -66,7 +66,8 @@ function signInNotWaiting(link: string): void {
       "This sign-in was started in another window, or is no longer waiting — copy the link and paste it where it's waiting.",
       copy,
     )
-    .then((picked) => (picked === copy ? vscode.env.clipboard.writeText(link) : undefined));
+    .then((picked) => (picked === copy ? vscode.env.clipboard.writeText(link) : undefined))
+    .then(undefined, () => {});
 }
 
 /** A modal question with one affirmative choice — true when it was chosen. */
@@ -83,7 +84,7 @@ export class OrchestratorHost {
   private readonly failureSurfaces: FailureSurfaces = {
     logCatch: (context) => this.orchestrator.logCatch(context),
     warn: (message) => {
-      void vscode.window.showWarningMessage(message);
+      vscode.window.showWarningMessage(message);
     },
   };
   /** The one door a view's action comes in by. */
@@ -167,7 +168,7 @@ export class OrchestratorHost {
         },
         openLink: (href) => openInBrowser(href),
         confirm: askModal,
-        warn: (message) => void vscode.window.showWarningMessage(message),
+        warn: this.failureSurfaces.warn,
         signInNotWaiting: (link) => signInNotWaiting(link),
         runLoginTask: (name, recipe) => runLoginTask(name, recipe),
         announceUpdates: () => this.announceUpdates(),
@@ -197,7 +198,7 @@ export class OrchestratorHost {
       openAgentsSettings: () => this.handleAction({ kind: "openSettings", section: "agents" }),
       log,
     });
-    void recovered.then(() => this.selfVersion.start());
+    void recovered.then(() => this.selfVersion.start()).catch(this.orchestrator.logCatch("self version"));
 
     // Live editor context for the composer (the selection
     // ghost chip appears only while the IDE has a selection; the @ mention
@@ -259,10 +260,10 @@ export class OrchestratorHost {
       else await vscode.workspace.fs.writeFile(target, Buffer.from(configurationText(file), "utf8"));
     } catch (err) {
       this.log.error(`export to ${target.toString()}: ${agentErrorText(err)}`);
-      void vscode.window.showErrorMessage(`Export failed — ${agentErrorText(err)}`);
+      vscode.window.showErrorMessage(`Export failed — ${agentErrorText(err)}`);
       return;
     }
-    void vscode.window.showInformationMessage(
+    vscode.window.showInformationMessage(
       `Exported to ${target.fsPath}. It holds your env values and keys in plain text — keep it as you would a password.`,
     );
   }
@@ -298,11 +299,9 @@ export class OrchestratorHost {
    * package.json gates the view-title button and the palette command on it
    * (native surfaces can't read the store; this is their one bridge). */
   private syncDetachContext(): void {
-    void vscode.commands.executeCommand(
-      "setContext",
-      "acpPatchbay.detachEnabled",
-      this.orchestrator.preferences.get().detachWindows,
-    );
+    vscode.commands
+      .executeCommand("setContext", "acpPatchbay.detachEnabled", this.orchestrator.preferences.get().detachWindows)
+      .then(undefined, this.orchestrator.logCatch("detach context"));
   }
 
   /** Active session · agent health · usage when reported —
@@ -320,7 +319,7 @@ export class OrchestratorHost {
   async newSessionCommand(): Promise<void> {
     const agents = this.orchestrator.agents.rows();
     if (agents.length === 0) {
-      void vscode.window.showInformationMessage("Add an agent first — Patchbay Settings › Agents.");
+      vscode.window.showInformationMessage("Add an agent first — Patchbay Settings › Agents.");
       this.handleAction({ kind: "openSettings", section: "agents" });
       return;
     }
@@ -365,12 +364,12 @@ export class OrchestratorHost {
         open = false;
         resolve(undefined);
       });
-      void this.orchestrator.sessions.syncRunningAgents().finally(() => {
+      void this.orchestrator.sessions.syncRunningAgents().catch(this.orchestrator.logCatch("sync sessions")).finally(() => {
         if (!open) return;
         pick.items = items();
         pick.busy = false;
         if (pick.items.length === 0) {
-          void vscode.window.showInformationMessage("No sessions yet.");
+          vscode.window.showInformationMessage("No sessions yet.");
           pick.hide();
         }
       });
@@ -413,7 +412,7 @@ export class OrchestratorHost {
   async addSelectionToContextCommand(): Promise<void> {
     const patchbaySessionId = this.orchestrator.agentView.current.activePatchbaySessionId;
     if (patchbaySessionId === null) {
-      void vscode.window.showInformationMessage("Start a Patchbay session first, then add a selection.");
+      vscode.window.showInformationMessage("Start a Patchbay session first, then add a selection.");
       return;
     }
     this.handleAction({ kind: "addSelectionContext", patchbaySessionId });
@@ -554,13 +553,17 @@ export class OrchestratorHost {
   private notifyAsk(patchbaySessionId: PatchbaySessionId, title: string, ask: OpenAsk): void {
     const { line, answers } = askNotice(ask);
     const labels = [...answers.map((a) => a.label), "Open"];
-    void vscode.window.showWarningMessage(`${title} — ${line}`, ...labels).then((picked) => {
-      if (picked === "Open") void this.orchestrator.revealSession(patchbaySessionId);
-      else {
+    vscode.window
+      .showWarningMessage(`${title} — ${line}`, ...labels)
+      .then(async (picked) => {
+        if (picked === "Open") {
+          await this.orchestrator.revealSession(patchbaySessionId);
+          return;
+        }
         const answer = answers.find((a) => a.label === picked);
         if (answer !== undefined) this.handleAction(answer.action);
-      }
-    });
+      })
+      .then(undefined, this.orchestrator.logCatch(`ask notice ${patchbaySessionId}`));
   }
 
   /** A chat opened for typing: the Agent View takes focus, then its
@@ -819,7 +822,7 @@ export class OrchestratorHost {
       case "restagePromptFiles":
         {
           const missed = await this.orchestrator.sessions.restagePromptFiles(action.patchbaySessionId, action.blockId);
-          if (missed.length > 0) void vscode.window.showWarningMessage(`Reused without ${missed.join("; ")}.`);
+          if (missed.length > 0) vscode.window.showWarningMessage(`Reused without ${missed.join("; ")}.`);
         }
         break;
       case "setSessionDraft":
@@ -907,7 +910,7 @@ export class OrchestratorHost {
       case "addSelectionContext": {
         const selection = this.editorStateHost.getSelection();
         if (selection === null) {
-          void vscode.window.showInformationMessage("No selection — select text in a visible editor first.");
+          vscode.window.showInformationMessage("No selection — select text in a visible editor first.");
           break;
         }
         await this.orchestrator.sessions
@@ -923,7 +926,7 @@ export class OrchestratorHost {
       case "addFileContext": {
         const file = this.editorStateHost.getCurrentFile();
         if (file === null) {
-          void vscode.window.showInformationMessage("No current file — open a file in an editor first.");
+          vscode.window.showInformationMessage("No current file — open a file in an editor first.");
           break;
         }
         await this.orchestrator.sessions
@@ -1150,7 +1153,7 @@ export class OrchestratorHost {
     if ("scope" in target && where === null) return;
     const absolute = normalizeRootPath(isAbsolute(path) ? path : resolve(this.orchestrator.workspaceCwd, path));
     if (!isFolder(absolute)) {
-      void vscode.window.showWarningMessage(`Not saved: ${absolute} is not a folder on this machine.`);
+      vscode.window.showWarningMessage(`Not saved: ${absolute} is not a folder on this machine.`);
       return;
     }
     const store = this.orchestrator.savedRoots;
@@ -1226,7 +1229,7 @@ export class OrchestratorHost {
     const json = await this.orchestrator.mcpServers.exportJson(patchbayMcpServerId);
     if (name === undefined || json === undefined) return;
     await vscode.env.clipboard.writeText(json);
-    void vscode.window.showInformationMessage(`Copied "${name}" as an mcpServers entry.`);
+    vscode.window.showInformationMessage(`Copied "${name}" as an mcpServers entry.`);
   }
 
   /** File writes' add: a folder the user picks lands switched on, at the
@@ -1244,7 +1247,7 @@ export class OrchestratorHost {
     this.orchestrator.publishRules();
   }
 
-  private warnCatch(context: string, what: string): (err: unknown) => void {
+  warnCatch(context: string, what: string): (err: unknown) => void {
     return warnCatch(this.failureSurfaces, context, what);
   }
   dispose(): void {

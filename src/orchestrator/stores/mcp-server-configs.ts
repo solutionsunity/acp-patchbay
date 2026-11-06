@@ -12,7 +12,7 @@
 import { z } from "zod";
 import { addedMcpServerName, mcpServerName } from "../../shared/names";
 import { NamedRecordStore } from "./global-record-store";
-import type { KV } from "./kv";
+import { type KV, rewriteAtOpen } from "./kv";
 import type { PatchbayAgentId, PatchbayMcpServerId } from "../../shared/ids";
 import { forget } from "../../shared/reach";
 import type { WorkspaceId } from "../../shared/workspace";
@@ -141,7 +141,7 @@ export class McpServerConfigStore extends NamedRecordStore<McpServerConfig> {
     const earlier = kv.get<unknown>(STORAGE_KEYS.mcpServersBefore090);
     const copies = kv.get<unknown>(KEY) === undefined && Array.isArray(earlier);
     if (copies) {
-      void kv.update(
+      rewriteAtOpen(kv.update(
         KEY,
         earlier.map((r: unknown) => {
           if (typeof r !== "object" || r === null) return r;
@@ -152,7 +152,7 @@ export class McpServerConfigStore extends NamedRecordStore<McpServerConfig> {
             workspaces: active === false ? [] : "auto",
           };
         }),
-      );
+      ));
     }
     super(kv, KEY, mcpServerConfigSchema);
     this.machine = kv;
@@ -171,14 +171,14 @@ export class McpServerConfigStore extends NamedRecordStore<McpServerConfig> {
       "kind" in r.source &&
       r.source.kind === "registry";
     if (Array.isArray(stored) && stored.some(fromRegistry)) {
-      void kv.update(
+      rewriteAtOpen(kv.update(
         KEY,
         stored.map((r: unknown) => {
           if (!fromRegistry(r)) return r;
           const { kind: _kind, registryId, ...rest } = r.source;
           return { ...r, source: { ...rest, kind: "catalog", catalogId: registryId } };
         }),
-      );
+      ));
     }
   }
 

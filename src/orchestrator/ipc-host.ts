@@ -101,7 +101,8 @@ export class IpcHost {
       buffer += chunk;
       const { messages, rest } = parseLines(buffer);
       buffer = rest;
-      for (const message of messages) void this.handleRequest(socket, message as IpcRequest);
+      // Each request answers its own failure; past that, its asker is gone.
+      for (const message of messages) void this.handleRequest(socket, message as IpcRequest).catch(() => {});
     });
     socket.on("error", () => {});
     socket.on("close", () => this.rootWatchers.delete(socket));

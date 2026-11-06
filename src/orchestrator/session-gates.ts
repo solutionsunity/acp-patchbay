@@ -92,7 +92,7 @@ export class SessionGates {
    * off agent is asked for. */
   open(patchbaySessionId: PatchbaySessionId, opts: { pin?: boolean } = {}): void {
     if (opts.pin !== true) this.sessions.point(patchbaySessionId);
-    void this.attachToView(patchbaySessionId);
+    void this.attachToView(patchbaySessionId).catch(() => {});
     this.asks.connect(patchbaySessionId);
   }
 
@@ -101,7 +101,7 @@ export class SessionGates {
    * focusing a live never-prompted session) come here. */
   activate(patchbaySessionId: PatchbaySessionId): void {
     this.sessions.point(patchbaySessionId);
-    void this.attachToView(patchbaySessionId);
+    void this.attachToView(patchbaySessionId).catch(() => {});
   }
 
   /** An agent came up: each of its sessions on view sat blank, with nothing
@@ -306,12 +306,11 @@ export class SessionGates {
    * is their release. A failure is logged: a blank pane and a working
    * Reload are the honest degraded state, never an error at a click. */
   private attachToView(patchbaySessionId: PatchbaySessionId): Promise<void> {
-    return this.attach(patchbaySessionId).then(
-      (attached) => {
+    return this.attach(patchbaySessionId)
+      .then((attached) => {
         if (attached) this.drain(patchbaySessionId);
-      },
-      (err: unknown) => this.asks.failed(`attach ${patchbaySessionId}`, err),
-    );
+      })
+      .catch((err: unknown) => this.asks.failed(`attach ${patchbaySessionId}`, err));
   }
 
   /** The session attached, if it can be — in the attachment line, an open
@@ -355,7 +354,7 @@ export class SessionGates {
       if (!spent && (by === null || by === "reload")) this.sessions.reHold(patchbaySessionId, words);
       // A cut outcome settles at once, ahead of the turn winding down.
       if (by === null) await this.afterTurn(patchbaySessionId, false);
-      else if (by === "stop") void this.afterTurn(patchbaySessionId, true);
+      else if (by === "stop") void this.afterTurn(patchbaySessionId, true).catch((failure: unknown) => this.asks.failed(`after turn ${patchbaySessionId}`, failure));
       throw err;
     }
     await this.afterTurn(patchbaySessionId, true);

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { AgentConfigStore, type AgentConfig } from "../src/orchestrator/stores/agent-configs";
 import { parseLines } from "../src/mcp/ipc-protocol";
+import { LastActiveSessionStore } from "../src/orchestrator/stores/last-active-session";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { McpServerConfigStore, type McpServerConfig } from "../src/orchestrator/stores/mcp-server-configs";
 import { MemorySecrets } from "../src/orchestrator/stores/mcp-server-tokens";
@@ -55,6 +56,8 @@ const OAUTH_SERVER: McpServerConfig = {
   workspaces: "auto",
 };
 
+const settled = () => new Promise((resolve) => setImmediate(resolve));
+
 const secretsRow = (rows: readonly { id: string; detail: string }[] | null) => rows?.find((r) => r.id === "secrets")?.detail;
 
 describe("a window's start", () => {
@@ -102,6 +105,21 @@ describe("a window's start", () => {
 describe("a line on the window's IPC socket", () => {
   it("that can't be read costs that line: what follows still reads", () => {
     expect(parseLines('not json\n{"id":1}\n{"id"')).toEqual({ messages: [{ id: 1 }], rest: '{"id"' });
+  });
+});
+
+describe("a store's rewrite as it opens", () => {
+  it("that can't be written moves nothing, and the next open writes it", async () => {
+    const kv = new RefusingKV();
+    await kv.update(STORAGE_KEYS.lastActiveSession, { agentId: "a", sessionId: "s" });
+    kv.refused.add(STORAGE_KEYS.lastActiveSession);
+
+    new LastActiveSessionStore(kv);
+    await settled();
+    expect(kv.get(STORAGE_KEYS.lastActiveSession)).toEqual({ agentId: "a", sessionId: "s" });
+
+    kv.refused.clear();
+    expect(new LastActiveSessionStore(kv).get()).toEqual({ patchbayAgentId: "a", sessionId: "s" });
   });
 });
 

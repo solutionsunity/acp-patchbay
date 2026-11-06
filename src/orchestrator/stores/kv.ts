@@ -15,16 +15,27 @@ export interface StoredEntry {
   stored(): unknown;
 }
 
+/** A store's rewrite of what it found as it opened, which nothing waits on.
+ * A write that fails moves nothing: what is stored keeps its old shape, and
+ * the next open rewrites it again. */
+export function rewriteAtOpen(write: Thenable<unknown>): void {
+  write.then(undefined, () => {});
+}
+
 export class MemoryKV implements KV {
   private map = new Map<string, unknown>();
+
+  set(key: string, value: unknown): void {
+    if (value === undefined) this.map.delete(key);
+    else this.map.set(key, value);
+  }
 
   get<T>(key: string): T | undefined {
     return this.map.get(key) as T | undefined;
   }
 
   update(key: string, value: unknown): Thenable<void> {
-    if (value === undefined) this.map.delete(key);
-    else this.map.set(key, value);
+    this.set(key, value);
     return Promise.resolve();
   }
 }

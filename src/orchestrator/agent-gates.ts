@@ -217,8 +217,8 @@ export class AgentGates implements ConnectionOperations {
     const outcome = this.queue.cut(patchbayAgentId, operation, run, identity);
     // The process goes down now: what the cut stopped may be waiting on a
     // hung agent, and ends only with it. The operation's own stop, when it
-    // runs, joins this one.
-    void this.agents.stop(patchbayAgentId);
+    // runs, joins this one — and hears how it ended.
+    void this.agents.stop(patchbayAgentId).catch(() => {});
     return outcome;
   }
 }

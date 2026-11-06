@@ -26,7 +26,7 @@ import { z } from "zod";
 import type { SessionContinuity } from "../../shared/protocol";
 import { ATTACHMENTS_DIR, fileChipLabel } from "../attachments";
 import { RecordStore } from "./global-record-store";
-import type { KV } from "./kv";
+import { type KV, rewriteAtOpen } from "./kv";
 import type { PatchbayAgentId, PatchbayMcpServerId } from "../../shared/ids";
 import { savedId } from "./saved-id";
 import { STORAGE_KEYS } from "./storage-keys";
@@ -180,7 +180,7 @@ export class SessionContinuityStore extends RecordStore<SessionContinuityEntry> 
     };
     const holdsStale = (r: unknown) => chipsOf(r).some(stale) || queueOf(r).some((q) => chipsOf(q).some(stale));
     if (Array.isArray(stored) && stored.some((r) => composite(r) || holdsStale(r))) {
-      void kv.update(
+      rewriteAtOpen(kv.update(
         KEY,
         stored.map((r: unknown) => {
           let row = r;
@@ -196,7 +196,7 @@ export class SessionContinuityStore extends RecordStore<SessionContinuityEntry> 
             ...(queue.length > 0 ? { queue } : {}),
           };
         }),
-      );
+      ));
     }
   }
 

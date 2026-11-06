@@ -12,7 +12,7 @@ import { MODE_KNOB_ID } from "../knobs";
 import type { PatchbayAgentId } from "../../shared/ids";
 import { savedId } from "./saved-id";
 import { NamedRecordStore } from "./global-record-store";
-import type { KV } from "./kv";
+import { type KV, rewriteAtOpen } from "./kv";
 import { STORAGE_KEYS } from "./storage-keys";
 
 /** `options` is keyed by knob id (the agent's own config-option id, or
@@ -124,7 +124,7 @@ export class AgentConfigStore extends NamedRecordStore<AgentConfig> {
     // key, and writes there never reach this one. The migrations below take
     // the copy to the current shape.
     const earlier = kv.get<unknown>(STORAGE_KEYS.agentsBefore090);
-    if (kv.get<unknown>(KEY) === undefined && earlier !== undefined) void kv.update(KEY, earlier);
+    if (kv.get<unknown>(KEY) === undefined && earlier !== undefined) rewriteAtOpen(kv.update(KEY, earlier));
     // Once, at construction: records from when each agent carried a process
     // policy lose that field — an agent now has one process per window,
     // holding all its sessions, so nothing reads it. Only that key goes;
@@ -133,14 +133,14 @@ export class AgentConfigStore extends NamedRecordStore<AgentConfig> {
     const hasPolicy = (r: unknown): r is Record<string, unknown> =>
       typeof r === "object" && r !== null && "processPolicy" in r;
     if (Array.isArray(stored) && stored.some(hasPolicy)) {
-      void kv.update(
+      rewriteAtOpen(kv.update(
         KEY,
         stored.map((r: unknown) => {
           if (!hasPolicy(r)) return r;
           const { processPolicy: _retired, ...rest } = r;
           return rest;
         }),
-      );
+      ));
     }
     // Once, at construction: defaults saved before every knob was keyed by
     // its id carry a mode as a field of its own, `defaults.mode` — rewritten
@@ -156,7 +156,7 @@ export class AgentConfigStore extends NamedRecordStore<AgentConfig> {
       "mode" in r.defaults &&
       typeof r.defaults.mode === "string";
     if (Array.isArray(current) && current.some(withMode)) {
-      void kv.update(
+      rewriteAtOpen(kv.update(
         KEY,
         current.map((r: unknown) => {
           if (!withMode(r)) return r;
@@ -164,7 +164,7 @@ export class AgentConfigStore extends NamedRecordStore<AgentConfig> {
           const options = mode === "" ? defaults.options : { [MODE_KNOB_ID]: mode, ...defaults.options };
           return { ...r, defaults: { ...defaults, ...(options === undefined ? {} : { options }) } };
         }),
-      );
+      ));
     }
     // Once, at construction: a binary agent from when only its archive was
     // kept carries it as `registrySource.binary` ({archiveUrl, cmd,
@@ -181,7 +181,7 @@ export class AgentConfigStore extends NamedRecordStore<AgentConfig> {
       r.registrySource !== null &&
       "binary" in r.registrySource;
     if (Array.isArray(linked) && linked.some(withArchive)) {
-      void kv.update(
+      rewriteAtOpen(kv.update(
         KEY,
         linked.map((r: unknown) => {
           if (!withArchive(r)) return r;
@@ -189,7 +189,7 @@ export class AgentConfigStore extends NamedRecordStore<AgentConfig> {
           const { archiveUrl, ...rest } = binary;
           return { ...r, registrySource: { ...source, distribution: { archive: archiveUrl, ...rest } } };
         }),
-      );
+      ));
     }
     // Once, at construction: `registrySource` held two facts in one field —
     // where the agent came from and the version it is pinned to — so an
@@ -201,7 +201,7 @@ export class AgentConfigStore extends NamedRecordStore<AgentConfig> {
     const withSource = (r: unknown): r is { registrySource: unknown } =>
       typeof r === "object" && r !== null && "registrySource" in r;
     if (Array.isArray(sourced) && sourced.some(withSource)) {
-      void kv.update(
+      rewriteAtOpen(kv.update(
         KEY,
         sourced.map((r: unknown) => {
           if (!withSource(r)) return r;
@@ -212,7 +212,7 @@ export class AgentConfigStore extends NamedRecordStore<AgentConfig> {
           const { registryId, ...link } = registrySource;
           return { ...rest, origin: registryId, link };
         }),
-      );
+      ));
     }
   }
 }

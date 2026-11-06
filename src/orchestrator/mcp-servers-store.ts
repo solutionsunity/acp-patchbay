@@ -33,7 +33,7 @@ import { formatCommandLine, parseCommandLine } from "../shared/command-line";
 import { documentOf, draftProblem, expandDraft, unsetSaid, type McpDraft } from "../shared/mcp-config";
 import { EDITOR_SERVER_ID, EDITOR_SERVER_NAME } from "../shared/names";
 import { PRODUCT } from "../shared/product";
-import { loggableUrl, nullLogger, type Logger } from "./logger";
+import { logCatch, loggableUrl, nullLogger, type Logger } from "./logger";
 import { connectMcpOAuth, refreshMcpOAuth, type OAuthUserAgent } from "./mcp-oauth";
 import { linkQuery, type CallbackOutcome } from "./oauth-callback";
 import { McpServerTokenStore, type StoredToken } from "./stores/mcp-server-tokens";
@@ -418,14 +418,14 @@ export class McpServersStore {
       authorize: async (url, state) => {
         const waiting = { state };
         this.awaiting.set(key, waiting);
-        void this.refresh();
+        this.republish();
         try {
           return await userAgent.authorize(url, state, signal);
         } finally {
           // A wait given up may settle after the next attempt under the key
           // began waiting: it clears only its own.
           if (this.awaiting.get(key) === waiting) this.awaiting.delete(key);
-          void this.refresh();
+          this.republish();
         }
       },
     });
@@ -541,6 +541,11 @@ export class McpServersStore {
               }
             : { kind: "http" as const, url: r.local.url, note: r.local.note },
     }));
+  }
+
+  /** `refresh` when nothing waits on it. */
+  republish(): void {
+    void this.refresh().catch(logCatch(this.log, "MCP server list"));
   }
 
   /** Re-reads config + token presence and republishes the lists wholesale

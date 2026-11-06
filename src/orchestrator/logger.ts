@@ -9,12 +9,25 @@
 // Secret hygiene applies to logs: never argv contents or env *values*
 // (users embed keys in args and URLs) — executables, env key *names*, hosts,
 // ids, and counts only.
+import { Cancelled } from "./queue";
+import { agentErrorText } from "./readers/agent-error";
+
 export interface Logger {
   trace(message: string): void;
   debug(message: string): void;
   info(message: string): void;
   warn(message: string): void;
   error(message: string): void;
+}
+
+/** The answer for work nothing waits on: a failure goes to the log — and a
+ * cancellation, ended by the user's own hand (an agent's Stop or Remove, a
+ * session's Stop, Reload or Close), is no failure. */
+export function logCatch(log: Logger, context: string): (err: unknown) => void {
+  return (err) => {
+    if (err instanceof Cancelled) log.info(`${context}: ${agentErrorText(err)}`);
+    else log.error(`${context}: ${agentErrorText(err)}`);
+  };
 }
 
 export const nullLogger: Logger = {

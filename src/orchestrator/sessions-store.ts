@@ -53,7 +53,7 @@ import {
   performKnobSet,
   type NormalizedKnobs,
 } from "./knobs";
-import { nullLogger, type Logger } from "./logger";
+import { logCatch, nullLogger, type Logger } from "./logger";
 import { unlessAborted } from "./abort";
 import type { AttachedServer } from "./mcp-servers-store";
 import { type AgentPool, ConnectionLost } from "./pool";
@@ -1353,7 +1353,7 @@ export class SessionsStore {
       if ((saved.draft ?? "") !== "") {
         this.hooks.emit({ kind: "sessionDraftChanged", patchbaySessionId, draft: saved.draft! });
       }
-      if ((saved.chips?.length ?? 0) > 0) void this.rehydrateChips(patchbaySessionId, saved.chips!);
+      if ((saved.chips?.length ?? 0) > 0) void this.rehydrateChips(patchbaySessionId, saved.chips!).catch(logCatch(this.log, `session ${patchbaySessionId}: chips`));
       return;
     }
     // A session known but not open here: whoever opened it last set its
@@ -2535,7 +2535,7 @@ export class SessionsStore {
       { kind: "sessionDraftChanged", patchbaySessionId, draft: tail.draft },
     );
     // its chips come back staged with its words
-    if (chips.length > 0) void this.rehydrateChips(patchbaySessionId, chips);
+    if (chips.length > 0) void this.rehydrateChips(patchbaySessionId, chips).catch(logCatch(this.log, `session ${patchbaySessionId}: chips`));
   }
 
   /** Stop means stop: the held words go with the turn the user ended —

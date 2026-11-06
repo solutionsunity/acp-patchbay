@@ -68,7 +68,8 @@ export class FileKV implements KV {
     if (keys.length > 0) {
       this.writeDisk(this.map);
       this.log(`created ${this.filePath} — migrated ${keys.length} entries out of globalState`);
-      for (const key of keys) void migrateFrom?.update(key, undefined);
+      // Left behind, a key is a shadow nothing reads: this file now holds it.
+      for (const key of keys) migrateFrom?.update(key, undefined).then(undefined, () => {});
     }
   }
 

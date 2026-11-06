@@ -10,7 +10,7 @@
 import { z } from "zod";
 import { ownReach, reaches, withOne, type Reach } from "../../shared/reach";
 import type { WorkspaceId } from "../../shared/workspace";
-import type { KV, StoredEntry } from "./kv";
+import { type KV, type StoredEntry, rewriteAtOpen } from "./kv";
 import { reachSchema } from "./reach-schema";
 import { STORAGE_KEYS } from "./storage-keys";
 
@@ -37,10 +37,10 @@ export class SavedRootsStore implements StoredEntry {
     // Anything else in the list is copied as it is, and reads as nothing.
     const earlier = kv.get<unknown>(STORAGE_KEYS.savedRootsBefore090);
     if (kv.get<unknown>(KEY) === undefined && Array.isArray(earlier)) {
-      void kv.update(
+      rewriteAtOpen(kv.update(
         KEY,
         earlier.map((path: unknown) => (typeof path === "string" ? { path, workspaces: "auto" } : path)),
-      );
+      ));
     }
     // Once per workspace, at construction: its own folders, kept by an
     // earlier version in its workspaceState where only its window could
@@ -52,7 +52,7 @@ export class SavedRootsStore implements StoredEntry {
       for (const path of Array.isArray(own) ? own : []) {
         if (typeof path === "string" && path !== "") entries = saved(entries, path, workspace.id);
       }
-      void kv.update(KEY, entries).then(() => workspace.kv.update(STORAGE_KEYS.workspaceSavedRootsBefore090, undefined));
+      rewriteAtOpen(kv.update(KEY, entries).then(() => workspace.kv.update(STORAGE_KEYS.workspaceSavedRootsBefore090, undefined)));
     }
   }
 

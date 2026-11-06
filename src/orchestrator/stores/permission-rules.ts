@@ -14,7 +14,7 @@
 // nothing: deny beats ask beats allow.
 import { z } from "zod";
 import { RULE_VERDICTS, type CommandRuleView, type WriteEntry } from "../../shared/protocol";
-import type { KV, StoredEntry } from "./kv";
+import { type KV, type StoredEntry, rewriteAtOpen } from "./kv";
 import { readWriteEntries } from "./write-scope";
 import { STORAGE_KEYS } from "./storage-keys";
 
@@ -94,17 +94,18 @@ const LEGACY_SCOPE: ReadonlyMap<unknown, WriteEntry[]> = new Map([
 export class PermissionRulesStore {
   constructor(private readonly kv: KV) {
     // Once, at construction: a KV applies an update in memory before its
-    // write settles, so no read ever sees the old shape. A choice this
-    // version doesn't know reads as the default did.
+    // write settles, so no read sees the old shape unless the write failed
+    // — then the next open rewrites it. A choice this version doesn't know
+    // reads as the default did.
     let stored = kv.get<unknown>(KEY);
     if (typeof stored === "object" && stored !== null && "fileWriteScope" in stored) {
       const { fileWriteScope, ...rest } = stored as Record<string, unknown>;
       stored = { ...rest, writeScope: LEGACY_SCOPE.get(fileWriteScope) ?? [] };
-      void kv.update(KEY, stored);
+      rewriteAtOpen(kv.update(KEY, stored));
     }
     if (typeof stored === "object" && stored !== null && kindless((stored as Record<string, unknown>).commandRules)) {
       const held = stored as Record<string, unknown>;
-      void kv.update(KEY, { ...held, commandRules: withKinds(held.commandRules) });
+      rewriteAtOpen(kv.update(KEY, { ...held, commandRules: withKinds(held.commandRules) }));
     }
   }
 
@@ -135,7 +136,7 @@ export class MachineRulesStore implements StoredEntry {
   constructor(private readonly kv: KV) {
     // Once, at construction, as the workspace layer's.
     const stored = kv.get<unknown>(MACHINE_KEY);
-    if (kindless(stored)) void kv.update(MACHINE_KEY, withKinds(stored));
+    if (kindless(stored)) rewriteAtOpen(kv.update(MACHINE_KEY, withKinds(stored)));
   }
 
   stored(): unknown {

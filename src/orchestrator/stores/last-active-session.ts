@@ -14,7 +14,7 @@
 // The bare id 0.84.1 stored is folded into that pair by `resolve`; a value
 // of any other shape is no pointer.
 // workspaceState: sessions are cwd-bound, machine-local, non-sensitive.
-import type { KV } from "./kv";
+import { type KV, rewriteAtOpen } from "./kv";
 import type { PatchbayAgentId } from "../../shared/ids";
 import { STORAGE_KEYS } from "./storage-keys";
 
@@ -41,7 +41,7 @@ export class LastActiveSessionStore {
     const stored = kv.get<unknown>(KEY);
     if (typeof stored === "object" && stored !== null && "agentId" in stored) {
       const { agentId, ...rest } = stored;
-      void kv.update(KEY, { ...rest, patchbayAgentId: agentId });
+      rewriteAtOpen(kv.update(KEY, { ...rest, patchbayAgentId: agentId }));
     }
   }
 

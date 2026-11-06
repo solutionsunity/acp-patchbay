@@ -31,7 +31,7 @@ import type { SessionOpenedFact } from "./readers/responses";
 import type { CapabilityCell, CapabilityMatrix, CapabilityRowId } from "../shared/protocol";
 import { matrixFromDeclared } from "./capabilities";
 import { probeDeferredFor } from "./extensions";
-import { nullLogger, type Logger } from "./logger";
+import { logCatch, nullLogger, type Logger } from "./logger";
 import type { AgentPool } from "./pool";
 import { agentErrorText, authRequiredReasonOf } from "./readers/agent-error";
 import type { UsedCapabilityStore } from "./stores/used-capabilities";
@@ -138,7 +138,7 @@ export class CapabilityTracker {
     const matrix = this.matrix(patchbayAgentId);
     if (matrix === undefined) return;
     const version = this.pool.get(patchbayAgentId)?.initialize?.agentInfo?.version;
-    if (version !== undefined) void this.usedCache.save(patchbayAgentId, version, { ...matrix, [row]: cell });
+    if (version !== undefined) void this.usedCache.save(patchbayAgentId, version, { ...matrix, [row]: cell }).catch(logCatch(this.log, `${patchbayAgentId}: used capabilities`));
     else this.unversionedMarks.set(patchbayAgentId, { ...this.unversionedMarks.get(patchbayAgentId), [row]: cell });
     this.hooks.changed(patchbayAgentId);
   }
@@ -163,7 +163,7 @@ export class CapabilityTracker {
       return;
     }
     this.log.debug(`${patchbayAgentId}: connect-time probe starting`);
-    void this.probeOnItsOwn(patchbayAgentId);
+    void this.probeOnItsOwn(patchbayAgentId).catch(logCatch(this.log, `${patchbayAgentId}: probe`));
   }
 
   /** A probe nothing waits on — at connect, or a deferred one: not on a
@@ -199,7 +199,7 @@ export class CapabilityTracker {
     this.probeSessions.get(patchbayAgentId)?.delete(sessionId);
     if (!this.deferredProbes.delete(patchbayAgentId)) return;
     this.log.debug(`${patchbayAgentId}: deferred probe starting (first real session opened)`);
-    void this.probeOnItsOwn(patchbayAgentId);
+    void this.probeOnItsOwn(patchbayAgentId).catch(logCatch(this.log, `${patchbayAgentId}: probe`));
   }
 
   /** Whether this session is one of the tracker's throwaway probes.

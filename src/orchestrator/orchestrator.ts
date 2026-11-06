@@ -93,7 +93,7 @@ import { SavedRootsStore } from "./stores/saved-roots";
 import { SeenVersionStore } from "./stores/seen-version";
 import { SECRET_FAMILIES } from "./stores/storage-keys";
 import { loadCatalog } from "./stores/mcp-catalog";
-import { SpawnRegistryStore } from "./stores/spawn-registry";
+import { type SpawnRecord, SpawnRegistryStore } from "./stores/spawn-registry";
 import { AuthLockStore } from "./stores/auth-locks";
 import { SessionContinuityStore } from "./stores/session-continuity";
 import { adoptStashedChips, SessionFilesStore } from "./stores/session-files";
@@ -103,7 +103,9 @@ import type { PatchbayAgentId, PatchbayAskId, PatchbayMcpServerId, PatchbaySessi
 import type { AgentsStoreHooks } from "./agents-store";
 import type { KV } from "./stores/kv";
 import { IpcHost, type EditorReads } from "./ipc-host";
-import type { Logger } from "./logger";
+import { logCatch, type Logger } from "./logger";
+import type { TrackedProcess } from "./process-tree";
+import type { RegistryReadMoment } from "../shared/registry-reads";
 import type { OAuthUserAgent } from "./mcp-oauth";
 import type { SecretsLike } from "./stores/mcp-server-tokens";
 import type { WireLogSink } from "./wire-log";
@@ -329,7 +331,7 @@ export class Orchestrator {
     // probe, its remove) and one per connect under way, and the gates over
     // them. What the lines hold is the MCP side's busy state, so every move
     // republishes it.
-    const republish = () => void this.mcpServers.refresh();
+    const republish = () => this.mcpServers.republish();
     const serverLine = new Queue<McpServerWork>(republish);
     const connectLine = new Queue<"connect">(republish);
     const mcpServers = new McpServersStore(
@@ -408,7 +410,7 @@ export class Orchestrator {
       // newer version becomes news (the cached copy at start is not).
       () => {
         this.publishRegistry();
-        void this.ports.announceUpdates();
+        void this.ports.announceUpdates().catch(this.logCatch("announce updates"));
       },
       () => this.preferences.get(),
       log,
@@ -481,7 +483,7 @@ export class Orchestrator {
         this.agents.noteAuthWireFact(patchbayAgentId, method, settled, startedAt, reason),
       wireLogActive: () => this.wireLog.active,
       onWireFrame: (patchbayAgentId, direction, line) => this.wireLog.frame(patchbayAgentId, direction, line),
-      onProcessSpawned: (process) => void this.spawnRegistry.track(process, "agent"),
+      onProcessSpawned: (process) => this.trackProcess(process, "agent"),
       onElicitation: async (patchbayAgentId, reading, signal) => {
         if (reading.kind === "invalid") throw RequestError.invalidParams({ reason: reading.why });
         // A question patchbay can't present reaches no one: no user declined
@@ -683,7 +685,9 @@ export class Orchestrator {
       new Queue<AttachWork, PatchbaySessionId>(publishBusy),
       new Queue<"prompt", PatchbaySessionId>(publishBusy),
       {
-        connect: (patchbaySessionId) => void this.connectForSession(patchbaySessionId),
+        connect: (patchbaySessionId) => {
+          void this.connectForSession(patchbaySessionId).catch(this.logCatch(`connect for session ${patchbaySessionId}`));
+        },
         failed: (context, err) => this.logCatch(context)(err),
         agentSettled: (patchbayAgentId) => this.gates.settled(patchbayAgentId),
         connectionSettled: (patchbayAgentId) => this.gates.connectionSettled(patchbayAgentId),
@@ -757,7 +761,9 @@ export class Orchestrator {
           }
         },
         authCleared: (patchbayAgentId) => this.sessionGates.lockCleared(patchbayAgentId),
-        defaultsChanged: (patchbayAgentId) => void this.defaultsEditor.defaultsChanged(patchbayAgentId),
+        defaultsChanged: (patchbayAgentId) => {
+          void this.defaultsEditor.defaultsChanged(patchbayAgentId).catch(this.logCatch(`defaults ${patchbayAgentId}`));
+        },
       },
       log,
     );
@@ -770,17 +776,21 @@ export class Orchestrator {
     // The editor's sessions exist only to serve the open panel — they end
     // with it.
     this.settings.onAttachment((attached) => {
-      if (attached) void this.acpRegistry.read("settings");
-      else void this.defaultsEditor.closeAll();
+      if (attached) this.readRegistry("settings");
+      else void this.defaultsEditor.closeAll().catch(this.logCatch("defaults editors"));
     });
     this.asks = new AsksStore(this.decisionAudit, {
       emit: (...events) => this.agentView.emit(...events),
       emitAgent: (patchbayAgentId, event) => this.settings.emit({ kind: "agentQuestion", patchbayAgentId, event }),
       turnOf: (patchbaySessionId) => this.sessions.turnOf(patchbaySessionId),
-      onAuditWritten: () => void this.refreshAuditTail(),
+      onAuditWritten: () => this.republishAuditTail(),
       pairOf: (patchbaySessionId) => this.sessions.pairOf(patchbaySessionId),
-      openLink: (href) => void this.ports.openLink(href),
-      ended: (patchbayAskId) => void this.ports.closeAskDiffs(patchbayAskId).catch(this.logCatch(`closeAskDiffs ${patchbayAskId}`)),
+      openLink: (href) => {
+        void this.ports.openLink(href).then(undefined, this.logCatch("open link"));
+      },
+      ended: (patchbayAskId) => {
+        void this.ports.closeAskDiffs(patchbayAskId).catch(this.logCatch(`closeAskDiffs ${patchbayAskId}`));
+      },
     });
     this.broker = new PermissionBroker(
       this.permissionRules,
@@ -797,10 +807,10 @@ export class Orchestrator {
       readLive: (path) => this.ports.readTextFileLive(path),
       writeLive: (path, content) => this.ports.writeTextFileLive(path, content),
       emit: (event) => this.agentView.emit(event),
-      trackProcess: (process) => void this.spawnRegistry.track(process, "terminal"),
+      trackProcess: (process) => this.trackProcess(process, "terminal"),
     });
 
-    void this.refreshAuditTail();
+    this.republishAuditTail();
     void this.agents.publishAll().catch(this.ports.warnCatch("agents list", "The agents' settings weren't read"));
     void this.mcpServers.refresh().catch(this.ports.warnCatch("MCP server list", "The MCP servers weren't read"));
     // Registry links are put right from the registry's copy before any
@@ -810,10 +820,12 @@ export class Orchestrator {
       .load()
       .then(() => this.agents.relinkAll())
       .catch(this.logCatch("registry links"));
-    void registryLoaded.then(() => {
-      this.publishRegistry();
-      void this.acpRegistry.read("startup");
-    });
+    void registryLoaded
+      .then(() => {
+        this.publishRegistry();
+        this.readRegistry("startup");
+      })
+      .catch(this.logCatch("registry publish"));
 
     // Projections of canonical Agent View state via ChannelHost.onChange —
     // the Settings "active today" tile (another channel, same source): same
@@ -836,6 +848,7 @@ export class Orchestrator {
       )
       .then(() => registryLoaded)
       .then(() => this.connectStartupAgents())
+      .catch(this.logCatch("startup"))
       // Settles the view's restore hold no matter how the connects went —
       // the loading page must never outlive the startup sequence.
       .finally(() => this.agentView.emit({ kind: "startupSettled" }));
@@ -1138,7 +1151,7 @@ export class Orchestrator {
       if (event.kind === "sessionActivated") this.recordPointer(event.patchbaySessionId);
       else if (event.kind === "sessionClosed" && event.patchbaySessionId === this.pointerRow) {
         this.pointerRow = null;
-        void this.lastActiveSession.wipe();
+        void this.lastActiveSession.wipe().catch(this.logCatch("last active session"));
       }
     }
   }
@@ -1150,7 +1163,7 @@ export class Orchestrator {
     const sessionId = this.sessions.sessionIdOf(patchbaySessionId);
     if (patchbayAgentId === undefined || sessionId === undefined) return;
     this.pointerRow = patchbaySessionId;
-    void this.lastActiveSession.set({ patchbayAgentId, sessionId });
+    void this.lastActiveSession.set({ patchbayAgentId, sessionId }).catch(this.logCatch("last active session"));
   }
 
   /** The turn-end chime (Preferences), as a turn resolves or an answer
@@ -1274,6 +1287,19 @@ export class Orchestrator {
   async revealSession(patchbaySessionId: PatchbaySessionId): Promise<void> {
     this.sessionGates.open(patchbaySessionId);
     await this.ports.focusComposer();
+  }
+
+  /** A read nothing waits on; its outcome is the store's to log and keep. */
+  private readRegistry(moment: RegistryReadMoment): void {
+    void this.acpRegistry.read(moment).catch(this.logCatch("registry read"));
+  }
+
+  private trackProcess(process: TrackedProcess, kind: SpawnRecord["kind"]): void {
+    void this.spawnRegistry.track(process, kind).catch(this.logCatch("spawn registry"));
+  }
+
+  private republishAuditTail(): void {
+    void this.refreshAuditTail().catch(this.logCatch("audit tail"));
   }
 
   private async refreshAuditTail(): Promise<void> {
@@ -1435,7 +1461,7 @@ export class Orchestrator {
    * specific reason and a Retry — never a silent bounce to the empty
    * state. */
   async startChat(patchbayAgentId: PatchbayAgentId): Promise<void> {
-    void this.acpRegistry.read("new-session");
+    this.readRegistry("new-session");
     const agentName = this.agents.name(patchbayAgentId);
     if (agentName === undefined) return; // unknown agent — nothing to start
     // A still-new (never-prompted) session for this agent already IS the
@@ -1605,20 +1631,15 @@ export class Orchestrator {
    * signal back to the UI), but silently dropping the error entirely left
    * nothing to debug from. */
   logCatch(context: string): (err: unknown) => void {
-    return (err) => {
-      // Ended by the user's own hand — an agent's Stop or Remove, a
-      // session's Stop, Reload or Close — no failure.
-      if (err instanceof Cancelled) this.log.info(`${context}: ${agentErrorText(err)}`);
-      else this.log.error(`${context}: ${agentErrorText(err)}`);
-    };
+    return logCatch(this.log, context);
   }
   /** Ends this window's work and flushes the views; the host releases
    * its own surfaces around it. */
   dispose(): void {
     this.sessionGates.dispose();
-    void this.sessionGates.endAll();
-    void this.mcpServerGates.endAll();
-    void this.gates.stopAll();
+    void this.sessionGates.endAll().catch(this.logCatch("end sessions"));
+    void this.mcpServerGates.endAll().catch(this.logCatch("end MCP servers"));
+    void this.gates.stopAll().catch(this.logCatch("stop agents"));
     this.agentView.flushNow();
     this.settings.flushNow();
     this.wireLog.dispose();
