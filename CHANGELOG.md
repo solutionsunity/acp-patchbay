@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **A capability check that can't create its folder now ends as a failed
+  check.** It used to end with no result and nothing in the log, and right
+  after a successful login it made the login read as failed. Thanks to
+  @mikemikimike. (#150)
+
 ## 0.90.1 — 2026-11-05
 
 Sub-agents get their own card in the chat and a chip for those at work, and a
