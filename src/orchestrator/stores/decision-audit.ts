@@ -27,11 +27,14 @@ export class DecisionAuditStore {
     const file = this.file;
     if (file === null) return Promise.resolve();
     const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n";
-    this.queue = this.queue.then(async () => {
+    const written = this.queue.then(async () => {
       await mkdir(join(file, ".."), { recursive: true });
       await appendFile(file, line, "utf8");
     });
-    return this.queue;
+    // A write that fails costs its entry, and the caller hears it: the next
+    // one still gets its turn.
+    this.queue = written.catch(() => {});
+    return written;
   }
 
   /** The one exception to append-only: the user erasing their own data

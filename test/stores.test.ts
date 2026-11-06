@@ -1,7 +1,7 @@
 // Stores: session index over KV, permission rules defaults, decision audit
 // JSONL append/tail, the generic globalState-backed record store agents/
 // MCP servers/used-capabilities all share.
-import { writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -32,6 +32,23 @@ import { MachineWriteScopeStore, withWriteEntry, writeScopeRows } from "../src/o
 import type { PatchbayAgentId } from "../src/shared/ids";
 import type { WorkspaceId } from "../src/shared/workspace";
 import { STORAGE_KEYS, SECRET_FAMILIES } from "../src/orchestrator/stores/storage-keys";
+
+describe("DecisionAuditStore — a write that fails", () => {
+  it("costs that entry: later ones land, and the audit can still be read", async () => {
+    const dir = join(await tempDir("patchbay-audit-"), "workspace");
+    // A file where its folder belongs: the first write can't land.
+    await writeFile(dir, "");
+    const audit = new DecisionAuditStore(dir);
+    const entry = { kind: "permission", decision: "allow" } as never;
+    await expect(audit.append(entry)).rejects.toThrow();
+
+    await rm(dir);
+    await audit.append(entry);
+
+    expect(await audit.count()).toBe(1);
+    expect(await audit.tail(5)).toHaveLength(1);
+  });
+});
 
 describe("LastConnectedStore — reload-continuation stamp", () => {
   it("a fresh stamp yields its ids, and is spent by the read", async () => {

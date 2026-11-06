@@ -560,7 +560,7 @@ confirmed.
 
 ### Data
 
-Storage inventory: what patchbay holds on this machine. Last card, the danger zone:
+Storage inventory: what patchbay holds on this machine; secrets that can't be read say so on their row. Last card, the danger zone:
 **Disconnect & erase all data** — AlertDialog-confirmed; states what dies (every process now; configs,
 credentials, caches, rules, saved roots, session records permanently) and the reach limit (other
 workspaces' records need their own window). Explicit and user-triggered, never a

@@ -137,11 +137,21 @@ export interface RequestUserInputParams {
   requestedSchema?: unknown;
 }
 
-/** Reads newline-delimited JSON messages from a socket-like stream. */
+/** Reads newline-delimited JSON messages from a socket-like stream. A line
+ * that can't be read costs that line, never the connection: thrown from here,
+ * it would stay in the buffer and throw again on every chunk after it. */
 export function parseLines(buffer: string): { messages: unknown[]; rest: string } {
   const parts = buffer.split("\n");
   const rest = parts.pop() ?? "";
-  const messages = parts.filter((l) => l.trim() !== "").map((l) => JSON.parse(l) as unknown);
+  const messages = parts
+    .filter((l) => l.trim() !== "")
+    .flatMap((l): unknown[] => {
+      try {
+        return [JSON.parse(l)];
+      } catch {
+        return [];
+      }
+    });
   return { messages, rest };
 }
 

@@ -324,7 +324,7 @@ export class Orchestrator {
       (m) => log.warn(`MCP server headers: ${m}`),
       "headers",
     );
-    this.mcpServerTokens = new McpServerTokenStore(place.secrets);
+    this.mcpServerTokens = new McpServerTokenStore(place.secrets, (m) => log.warn(`MCP server tokens: ${m}`));
     // The management side's tools for MCP servers: a line per server (its
     // probe, its remove) and one per connect under way, and the gates over
     // them. What the lines hold is the MCP side's busy state, so every move
@@ -801,8 +801,8 @@ export class Orchestrator {
     });
 
     void this.refreshAuditTail();
-    void this.agents.publishAll();
-    void this.mcpServers.refresh();
+    void this.agents.publishAll().catch(this.ports.warnCatch("agents list", "The agents' settings weren't read"));
+    void this.mcpServers.refresh().catch(this.ports.warnCatch("MCP server list", "The MCP servers weren't read"));
     // Registry links are put right from the registry's copy before any
     // agent starts: a link an edit should have dropped would otherwise
     // launch the registry's build over the command typed.
@@ -825,15 +825,17 @@ export class Orchestrator {
     this.publishSessionStats();
 
     // What gone windows left running is ended before this one starts its
-    // own agents. Chips staged before sessions kept their own files move
-    // into them before any session can read its chips back.
+    // own agents — and a record of it that can't be struck leaves them to
+    // start all the same. Chips staged before sessions kept their own files
+    // move into them before any session can read its chips back.
     void this.spawnRegistry
       .reapLeftovers()
+      .catch(this.logCatch("reap leftovers"))
       .then(() =>
         adoptStashedChips(this.sessionContinuity, this.sessionFiles, ATTACHMENTS_DIR).catch(this.logCatch("adopt stashed chips")),
       )
       .then(() => registryLoaded)
-      .then(() => this.ports.connectStartupAgents())
+      .then(() => this.connectStartupAgents())
       // Settles the view's restore hold no matter how the connects went —
       // the loading page must never outlive the startup sequence.
       .finally(() => this.agentView.emit({ kind: "startupSettled" }));
@@ -959,12 +961,12 @@ export class Orchestrator {
     this.configImport = null;
     const { fileName } = pending;
     this.settings.emit({ kind: "configImportChanged", configImport: { id: importId, stage: "applying", fileName } });
-    this.log.info(`import ${fileName}: stopping every process`);
-    // What runs now is what the restart brings back, as a reload would.
-    await this.agents.stampRunning();
-    await this.stopEverything();
     let outcome: ImportOutcome;
     try {
+      this.log.info(`import ${fileName}: stopping every process`);
+      // What runs now is what the restart brings back, as a reload would.
+      await this.agents.stampRunning();
+      await this.stopEverything();
       // Planned again against what the stores hold now: the review showed
       // the machine as it was when the file was read.
       outcome = await applyImport(pending.read, await this.importPlan(pending.read), new Set(take), {
@@ -979,14 +981,23 @@ export class Orchestrator {
       // Whatever landed before it stopped stays, and the restart still runs.
       outcome = { landed: 0, failures: [`the import stopped — ${agentErrorText(err)}`] };
     }
-    await this.agents.relinkAll();
-    await this.republishAll();
+    try {
+      await this.agents.relinkAll();
+      await this.republishAll();
+    } catch (err) {
+      // However far the views caught up, this page leaves "applying".
+      outcome = { ...outcome, failures: [...outcome.failures, `the pages weren't brought up to date — ${agentErrorText(err)}`] };
+    }
     this.log.info(`import ${fileName}: ${outcome.landed} landed${outcome.failures.map((f) => `; ${f}`).join("")}`);
     this.settings.emit({
       kind: "configImportChanged",
       configImport: { id: importId, stage: "applied", fileName, landed: outcome.landed, failures: outcome.failures },
     });
-    await this.ports.connectStartupAgents();
+    await this.connectStartupAgents();
+  }
+
+  private connectStartupAgents(): Promise<void> {
+    return this.ports.connectStartupAgents().catch(this.ports.warnCatch("startup agents", "The agents this window starts with weren't connected"));
   }
 
   /** A file's plan against this machine as its stores hold it now. */
@@ -1274,6 +1285,21 @@ export class Orchestrator {
    * every request, never cached (reality is the source of truth). Counts
    * only — never values. */
   async publishDataInventory(): Promise<void> {
+    const rows: DataInventoryRow[] = [
+      ...storedRows({ machine: (key) => this.kvs.machine.get(key), workspace: (key) => this.kvs.workspace.get(key) }),
+      {
+        id: "secrets",
+        label: "Credentials & env values",
+        placement: "SecretStorage",
+        // Secrets that can't be read cost their own row, not the page.
+        detail: await this.secretCounts().catch((err: unknown) => `can't be read — ${agentErrorText(err)}`),
+      },
+      { id: "decision-audit", label: "Decision audit", placement: "workspace storage", detail: count(await this.decisionAudit.count(), "entry") },
+    ];
+    this.settings.emit({ kind: "dataInventoryChanged", rows });
+  }
+
+  private async secretCounts(): Promise<string> {
     const agentConfigs = this.agentConfigs.list();
     const agentEnvCount = (await Promise.all(agentConfigs.map((c) => this.agentEnv.get(c.id)))).reduce(
       (sum, env) => sum + Object.keys(env).length,
@@ -1287,17 +1313,7 @@ export class Orchestrator {
     for (const i of mcpServerConfigs) {
       if ((await this.mcpServerTokens.get(i.id)) !== null) tokenCount++;
     }
-    const rows: DataInventoryRow[] = [
-      ...storedRows({ machine: (key) => this.kvs.machine.get(key), workspace: (key) => this.kvs.workspace.get(key) }),
-      {
-        id: "secrets",
-        label: "Credentials & env values",
-        placement: "SecretStorage",
-        detail: `${count(agentEnvCount + mcpServerEnvCount, "env value")} · ${count(tokenCount, "OAuth token")}`,
-      },
-      { id: "decision-audit", label: "Decision audit", placement: "workspace storage", detail: count(await this.decisionAudit.count(), "entry") },
-    ];
-    this.settings.emit({ kind: "dataInventoryChanged", rows });
+    return `${count(agentEnvCount + mcpServerEnvCount, "env value")} · ${count(tokenCount, "OAuth token")}`;
   }
 
   /** Tells both views what the registry holds now — the store is the one

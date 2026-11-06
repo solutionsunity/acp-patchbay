@@ -14,6 +14,16 @@
   Upgrade.** An entry that moves back shows no update on the Settings card, the
   agent's chip or the notice. An Upgrade clicked after it moved back says so and
   leaves the agent as it is. (#148)
+- **A failed action now says so.** Adding a folder the agent refuses, attaching a
+  file that can't be read, saving a command rule, a preference or an MCP setting,
+  and the rest of what you click report what didn't happen and why, instead of
+  leaving a line in the log or nothing at all. (#152)
+- **One failure no longer takes down what didn't depend on it.** Agents still
+  connect when a leftover process can't be struck from the record. A malformed
+  stored token no longer freezes the MCP and Data pages, an import that can't
+  finish no longer stays on "applying", a failed audit write no longer stops the
+  ones after it, and a line from an agent that isn't JSON no longer ends the
+  editor's MCP server. (#152)
 
 ## 0.90.1 — 2026-11-05
 

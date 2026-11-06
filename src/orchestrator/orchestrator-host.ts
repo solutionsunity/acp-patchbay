@@ -19,6 +19,7 @@ import {
 import type { WorkspaceId } from "../shared/workspace";
 import { askNotice } from "../shared/ask-notice";
 import { type OpenAsk } from "../shared/attention";
+import { actionDoor, type FailureSurfaces, warnCatch } from "./action-door";
 import { chipId, fileChipLabel, pickedFileForm } from "./attachments";
 import { diffDir } from "./diff-files";
 import { applyFileWrite } from "./client-host";
@@ -27,7 +28,6 @@ import { EditorStateHost } from "./editor-state-host";
 import { runLoginTask } from "./login-task";
 import { SelfVersionHost } from "./self-version-host";
 import { agentErrorText } from "./readers/agent-error";
-import { Cancelled } from "./queue";
 import type { ExportPart } from "../shared/protocol";
 import { normalizeRootPath } from "./sessions-store";
 import { openDiagramPanel } from "./webview-host";
@@ -80,6 +80,14 @@ export class OrchestratorHost {
   readonly editorStateHost: EditorStateHost;
   private readonly editorSubscriptions: vscode.Disposable[] = [];
   private readonly selfVersion: SelfVersionHost;
+  private readonly failureSurfaces: FailureSurfaces = {
+    logCatch: (context) => this.orchestrator.logCatch(context),
+    warn: (message) => {
+      void vscode.window.showWarningMessage(message);
+    },
+  };
+  /** The one door a view's action comes in by. */
+  private readonly handleAction = actionDoor((action) => this.perform(action), this.failureSurfaces);
   /** Sessions shown in their own detached panels (AgentPanelHost, assigned
    * in extension.ts) — reaper-exempt like the active-in-view session: a
    * session in its own window is being looked at. */
@@ -683,48 +691,45 @@ export class OrchestratorHost {
     }
   }
 
-  private handleAction(action: Action): void {
+  private async perform(action: Action): Promise<void> {
     switch (action.kind) {
       case "openSettings":
         // Navigate after the reveal settles: an already-open panel keeps its
         // section, so without this a deep-linking caller ("Add or manage
         // agents") reads as a dead click.
-        void vscode.commands
-          .executeCommand("acpPatchbay.openSettings")
-          .then(() => {
-            if (action.section !== undefined) this.orchestrator.showSettingsSection(action.section);
-          }, this.orchestrator.logCatch("openSettings"));
+        await vscode.commands.executeCommand("acpPatchbay.openSettings");
+        if (action.section !== undefined) this.orchestrator.showSettingsSection(action.section);
         break;
       case "setSettingsSection":
         this.orchestrator.showSettingsSection(action.section);
         break;
       case "connectAgent":
-        void this.orchestrator.connectFrom(action.source);
+        await this.orchestrator.connectFrom(action.source);
         break;
       case "restartAgent":
         // failure surfaces as a crashed status patch — no reply channel by design
-        void this.orchestrator.gates.restart(action.patchbayAgentId).catch(this.orchestrator.logCatch(`restart ${action.patchbayAgentId}`));
+        await this.orchestrator.gates.restart(action.patchbayAgentId);
         break;
       case "stopAgent":
-        void this.orchestrator.gates.stop(action.patchbayAgentId).catch(this.orchestrator.logCatch(`stop ${action.patchbayAgentId}`));
+        await this.orchestrator.gates.stop(action.patchbayAgentId);
         break;
       case "startChat":
-        void this.orchestrator.startChat(action.patchbayAgentId);
+        await this.orchestrator.startChat(action.patchbayAgentId);
         break;
       case "dismissChatConnect":
         this.orchestrator.agentView.emit({ kind: "chatConnectResolved" });
         break;
       case "eraseAllData":
-        void this.orchestrator.eraseEverything().catch(this.orchestrator.logCatch("eraseAllData"));
+        await this.orchestrator.eraseEverything();
         break;
       case "exportConfiguration":
-        void this.exportToFile(action.parts);
+        await this.exportToFile(action.parts);
         break;
       case "readConfigImport":
-        void this.orchestrator.readConfigImport(action.fileName, action.text).catch(this.orchestrator.logCatch("import: read"));
+        await this.orchestrator.readConfigImport(action.fileName, action.text);
         break;
       case "applyConfigImport":
-        void this.orchestrator.applyConfigImport(action.importId, action.take).catch(this.orchestrator.logCatch("import: apply"));
+        await this.orchestrator.applyConfigImport(action.importId, action.take);
         break;
       case "dismissConfigImport":
         if (this.orchestrator.configImport?.id === action.importId) this.orchestrator.configImport = null;
@@ -733,13 +738,13 @@ export class OrchestratorHost {
         }
         break;
       case "setWireLog":
-        void this.setWireLog(action.active);
+        await this.setWireLog(action.active);
         break;
       case "refreshDataInventory":
-        void this.orchestrator.publishDataInventory();
+        await this.orchestrator.publishDataInventory();
         break;
       case "syncSessions":
-        void this.orchestrator.sessions.syncRunningAgents();
+        await this.orchestrator.sessions.syncRunningAgents();
         break;
       case "switchSession":
         // Switching NEVER closes the session being left — open sessions
@@ -748,26 +753,26 @@ export class OrchestratorHost {
         this.orchestrator.sessionGates.open(action.patchbaySessionId);
         break;
       case "forkSession":
-        void this.orchestrator.forkSession(action.patchbaySessionId);
+        await this.orchestrator.forkSession(action.patchbaySessionId);
         break;
       case "deleteSession":
-        void this.orchestrator.deleteSession(action.patchbaySessionId);
+        await this.orchestrator.deleteSession(action.patchbaySessionId);
         break;
       case "closeSession":
-        void this.orchestrator.sessionGates.close(action.patchbaySessionId).catch(this.orchestrator.logCatch(`close ${action.patchbaySessionId}`));
+        await this.orchestrator.sessionGates.close(action.patchbaySessionId);
         break;
       case "copySessionId": {
         const sessionId = this.orchestrator.sessions.sessionIdOf(action.patchbaySessionId);
-        if (sessionId !== undefined) void vscode.env.clipboard.writeText(sessionId);
+        if (sessionId !== undefined) await vscode.env.clipboard.writeText(sessionId);
         break;
       }
       case "reloadSession":
-        void this.orchestrator.sessionGates.reload(action.patchbaySessionId).catch(this.orchestrator.logCatch(`reload ${action.patchbaySessionId}`));
+        await this.orchestrator.sessionGates.reload(action.patchbaySessionId);
         break;
       // A rejected set leaves authoritative state unchanged — republish it
       // (fresh identity) so the pill's pending spinner settles back to truth.
       case "setSessionKnob":
-        void this.orchestrator.sessionGates
+        await this.orchestrator.sessionGates
           .setKnob(action.patchbaySessionId, action.knobId, action.value)
           .catch((err) => {
             this.warnCatch(`setKnob ${action.patchbaySessionId}`, "The agent didn't take the change")(err);
@@ -782,13 +787,12 @@ export class OrchestratorHost {
         // every prompt passes — a guard here would cover only this entrance.
         // A failure leaves the turn's end, or the words held, with no reply
         // channel by design.
-        void this.orchestrator.sessionGates
+        await this.orchestrator.sessionGates
           .prompt(action.patchbaySessionId, {
             text: action.text,
             ...(action.parts !== undefined ? { parts: action.parts } : {}),
             ...(action.draft !== undefined ? { draft: action.draft } : {}),
-          })
-          .catch(this.orchestrator.logCatch(`sendPrompt ${action.patchbaySessionId}`));
+          });
         break;
       case "detachSession":
         // Preference-gated at the source of truth, not only in the menu
@@ -797,8 +801,11 @@ export class OrchestratorHost {
         // The panel host lives in extension.ts (like Settings) — reach it by
         // command. Then the one open ceremony, pinned: the panel renders
         // this session by id, so the active pointer stays where it is.
-        void vscode.commands.executeCommand("acpPatchbay.detachSession", action.patchbaySessionId);
-        this.orchestrator.sessionGates.open(action.patchbaySessionId, { pin: true });
+        {
+          const panel = vscode.commands.executeCommand("acpPatchbay.detachSession", action.patchbaySessionId);
+          this.orchestrator.sessionGates.open(action.patchbaySessionId, { pin: true });
+          await panel;
+        }
         break;
       case "sendHeldPrompt":
         this.orchestrator.sessionGates.sendHeld(action.patchbaySessionId, action.promptId);
@@ -810,26 +817,23 @@ export class OrchestratorHost {
         this.orchestrator.sessions.takeBack(action.patchbaySessionId, action.promptId);
         break;
       case "restagePromptFiles":
-        void this.orchestrator.sessions.restagePromptFiles(action.patchbaySessionId, action.blockId).then((missed) => {
+        {
+          const missed = await this.orchestrator.sessions.restagePromptFiles(action.patchbaySessionId, action.blockId);
           if (missed.length > 0) void vscode.window.showWarningMessage(`Reused without ${missed.join("; ")}.`);
-        }, this.orchestrator.logCatch(`restage prompt files ${action.patchbaySessionId}`));
+        }
         break;
       case "setSessionDraft":
         // The composer's debounced durable save.
         this.orchestrator.sessions.saveDraft(action.patchbaySessionId, action.draft);
         break;
       case "stopTurn":
-        void this.orchestrator.sessionGates.stop(action.patchbaySessionId).catch(this.orchestrator.logCatch(`stop turn ${action.patchbaySessionId}`));
+        await this.orchestrator.sessionGates.stop(action.patchbaySessionId);
         break;
       case "cancelSubagent":
-        try {
-          this.orchestrator.sessions.cancelSubagent(action.patchbaySessionId, action.subagentId);
-        } catch (err) {
-          void vscode.window.showWarningMessage(`Cancel failed — ${agentErrorText(err)}`);
-        }
+        this.orchestrator.sessions.cancelSubagent(action.patchbaySessionId, action.subagentId);
         break;
       case "editAgentDefaults":
-        void (action.open ? this.orchestrator.defaultsEditor.open(action.patchbayAgentId) : this.orchestrator.defaultsEditor.close(action.patchbayAgentId));
+        await (action.open ? this.orchestrator.defaultsEditor.open(action.patchbayAgentId) : this.orchestrator.defaultsEditor.close(action.patchbayAgentId));
         break;
       case "resolvePermission":
         this.orchestrator.asks.answerOption(action.patchbayAskId, action.optionId);
@@ -839,55 +843,57 @@ export class OrchestratorHost {
         break;
       case "authenticateAgent":
         // a failure leaves needsAuth set, and says why where the user is
-        void this.orchestrator.gates
+        await this.orchestrator.gates
           .login(action.patchbayAgentId, action.methodId)
           .catch(this.warnCatch(`login ${action.patchbayAgentId}`, `Log in to ${this.orchestrator.agentName(action.patchbayAgentId)} failed`));
         break;
       case "logoutAgent":
         // the UI only offers this on a declared auth.logout; a successful
         // logout raises needsAuth directly (capability-tracker.logout)
-        void this.orchestrator.gates
+        await this.orchestrator.gates
           .logout(action.patchbayAgentId)
           .catch(this.warnCatch(`logout ${action.patchbayAgentId}`, `Log out of ${this.orchestrator.agentName(action.patchbayAgentId)} failed`));
         break;
       case "upgradeAgent":
-        void this.orchestrator.gates.upgrade(action.patchbayAgentId).catch(this.orchestrator.logCatch(`upgrade ${action.patchbayAgentId}`));
+        await this.orchestrator.gates.upgrade(action.patchbayAgentId);
         break;
       case "resetAgent":
-        void this.orchestrator.gates.reset(action.patchbayAgentId).catch(this.orchestrator.logCatch(`reset ${action.patchbayAgentId}`));
+        await this.orchestrator.gates.reset(action.patchbayAgentId);
         break;
       case "goBackAgent":
-        void this.orchestrator.gates.goBack(action.patchbayAgentId).catch(this.orchestrator.logCatch(`go back ${action.patchbayAgentId}`));
+        await this.orchestrator.gates.goBack(action.patchbayAgentId);
         break;
       case "refreshRegistry":
-        void this.orchestrator.acpRegistry.read("manual");
+        await this.orchestrator.acpRegistry.read("manual");
         break;
       case "browseRegistry":
-        void this.orchestrator.acpRegistry.read("browse");
+        await this.orchestrator.acpRegistry.read("browse");
         break;
       case "addCommandRule":
-        void this.orchestrator.setCommandRules(action.layer, (rules) => withRule(rules, action.rule));
+        await this.orchestrator.setCommandRules(action.layer, (rules) => withRule(rules, action.rule));
         break;
       case "removeCommandRule":
-        void this.orchestrator.setCommandRules(action.layer, (rules) => rules.filter((r) => !sameRule(r, action.rule)));
+        await this.orchestrator.setCommandRules(action.layer, (rules) => rules.filter((r) => !sameRule(r, action.rule)));
         break;
       case "testCommand":
-        void this.orchestrator.testCommand(action.line, action.shell, action.draft).catch(this.orchestrator.logCatch("testCommand"));
+        await this.orchestrator.testCommand(action.line, action.shell, action.draft);
         break;
       case "setWriteLocation":
-        void this.orchestrator.setWriteLocation(action.location, action.layer, action.on).then(() => this.orchestrator.publishRules());
+        await this.orchestrator.setWriteLocation(action.location, action.layer, action.on);
+        this.orchestrator.publishRules();
         break;
       case "pickWriteFolder":
-        void this.pickWriteFolder(action.layer).catch(this.orchestrator.logCatch("pickWriteFolder"));
+        await this.pickWriteFolder(action.layer);
         break;
       case "setPreferences":
-        void this.orchestrator.preferences.set(action.patch).then((preferences) => {
+        {
+          const preferences = await this.orchestrator.preferences.set(action.patch);
           // One truth, both channels: the Preferences page and the agent
           // view (composer stats) render the same stored object.
           this.orchestrator.settings.emit({ kind: "preferencesChanged", preferences });
           this.orchestrator.agentView.emit({ kind: "preferencesChanged", preferences });
           this.syncDetachContext();
-        });
+        }
         break;
       case "surfaceActivation":
         this.orchestrator.noteSurfaceActivation(action.surface, action.activated);
@@ -904,15 +910,14 @@ export class OrchestratorHost {
           void vscode.window.showInformationMessage("No selection — select text in a visible editor first.");
           break;
         }
-        void this.orchestrator.sessions
+        await this.orchestrator.sessions
           .addContext(action.patchbaySessionId, {
             id: chipId(),
             kind: "selection",
             label: `Selection: ${selection.file}:${selection.startLine}-${selection.endLine}`,
             content: selection.text,
             sourceUri: `${vscode.Uri.file(selection.file)}#L${selection.startLine}-${selection.endLine}`,
-          })
-          .catch(this.orchestrator.logCatch(`add context ${action.patchbaySessionId}`));
+          });
         break;
       }
       case "addFileContext": {
@@ -921,90 +926,80 @@ export class OrchestratorHost {
           void vscode.window.showInformationMessage("No current file — open a file in an editor first.");
           break;
         }
-        void this.orchestrator.sessions
+        await this.orchestrator.sessions
           .addContext(action.patchbaySessionId, {
             id: chipId(),
             kind: "file",
             label: `File: ${file.file}`,
             content: file.content,
             sourceUri: vscode.Uri.file(file.file).toString(),
-          })
-          .catch(this.orchestrator.logCatch(`add context ${action.patchbaySessionId}`));
+          });
         break;
       }
       case "addDiagnosticsContext": {
         const diagnostics = this.editorStateHost.getDiagnostics();
         if (diagnostics.length === 0) break;
-        void this.orchestrator.sessions
+        await this.orchestrator.sessions
           .addContext(action.patchbaySessionId, {
             id: chipId(),
             kind: "diagnostics",
             label: `Problems (${diagnostics.length})`,
             content: diagnostics.map((d) => `${d.file}:${d.line} [${d.severity}] ${d.message}`).join("\n"),
-          })
-          .catch(this.orchestrator.logCatch(`add context ${action.patchbaySessionId}`));
+          });
         break;
       }
       case "removeContextChip":
         this.orchestrator.sessions.removeContext(action.patchbaySessionId, action.chipId);
         break;
-      // A connect's failure is the store's to hold and show; the log has it
-      // already.
+      // A connect's failure is the store's to hold and show.
       case "connectCatalogKey":
-        void this.orchestrator.mcpServerGates
-          .connectWithKey(action.catalogId, action.name, action.token, action.url, action)
-          .catch(() => {});
+        await this.orchestrator.mcpServerGates
+          .connectWithKey(action.catalogId, action.name, action.token, action.url, action);
         break;
       case "connectCatalogOAuth":
-        void this.orchestrator.mcpServerGates
-          .connectOAuth(action.catalogId, action.name, action.url, action)
-          .catch(() => {});
+        await this.orchestrator.mcpServerGates
+          .connectOAuth(action.catalogId, action.name, action.url, action);
         break;
       case "addCustomMcpServer":
-        void this.orchestrator.mcpServerGates
-          .addCustom(action.card, action.name, action.draft, action, action.signIn)
-          .catch(() => {});
+        await this.orchestrator.mcpServerGates
+          .addCustom(action.card, action.name, action.draft, action, action.signIn);
         break;
       case "updateMcpServer":
-        void this.orchestrator.mcpServerGates
-          .updateCustom(action.patchbayMcpServerId, action.draft, action.signIn)
-          .catch(() => {});
+        await this.orchestrator.mcpServerGates
+          .updateCustom(action.patchbayMcpServerId, action.draft, action.signIn);
         break;
       case "cancelMcpServerConnect":
-        void this.orchestrator.mcpServerGates.cancel(action.key).catch(this.orchestrator.logCatch(`cancel ${action.key}`));
+        await this.orchestrator.mcpServerGates.cancel(action.key);
         break;
       case "pasteSignInLink":
         this.orchestrator.pasteSignInLink(action.key, action.link);
         break;
       case "setMcpServerWorkspaces":
         // Switched on here, it is probed at once: the user just acted on it.
-        void this.orchestrator.mcpServers
+        await this.orchestrator.mcpServers
           .setWorkspaces(action.patchbayMcpServerId, action.workspaces)
-          .then((switchedOn) => (switchedOn ? this.orchestrator.mcpServerGates.probe(action.patchbayMcpServerId) : undefined))
-          .catch(this.orchestrator.logCatch(`switch ${action.patchbayMcpServerId}`));
+          .then((switchedOn) => (switchedOn ? this.orchestrator.mcpServerGates.probe(action.patchbayMcpServerId) : undefined));
         break;
       case "removeMcpServer":
-        void this.orchestrator.mcpServerGates.remove(action.patchbayMcpServerId).catch(this.orchestrator.logCatch(`remove ${action.patchbayMcpServerId}`));
+        await this.orchestrator.mcpServerGates.remove(action.patchbayMcpServerId);
         break;
       case "setMcpServerRouting":
-        void this.orchestrator.mcpServers.setRouting(action.patchbayMcpServerId, action.routing);
+        await this.orchestrator.mcpServers.setRouting(action.patchbayMcpServerId, action.routing);
         break;
       case "setMcpServerTransport":
-        void this.orchestrator.mcpServers.setTransport(action.patchbayMcpServerId, action.transport);
+        await this.orchestrator.mcpServers.setTransport(action.patchbayMcpServerId, action.transport);
         break;
       case "probeMcpServer":
-        void this.orchestrator.mcpServerGates.probe(action.patchbayMcpServerId).catch(this.orchestrator.logCatch(`probe ${action.patchbayMcpServerId}`));
+        await this.orchestrator.mcpServerGates.probe(action.patchbayMcpServerId);
         break;
       case "copyMcpServerJson":
-        void this.copyMcpServerJson(action.patchbayMcpServerId);
+        await this.copyMcpServerJson(action.patchbayMcpServerId);
         break;
       case "openProposedDiff":
-        void this.openProposedDiff(action.patchbayAskId).catch(this.orchestrator.logCatch(`openProposedDiff ${action.patchbayAskId}`));
+        await this.openProposedDiff(action.patchbayAskId);
         break;
       case "openToolCallDiff":
-        void this.openToolCallDiff(action.patchbaySessionId, action.toolCallId, action.path).catch(
-          this.orchestrator.logCatch(`openToolCallDiff ${action.path}`),
-        );
+        await this.openToolCallDiff(action.patchbaySessionId, action.toolCallId, action.path);
         break;
       case "openDiagram":
         this.openDiagram(action.svg);
@@ -1016,19 +1011,19 @@ export class OrchestratorHost {
         break;
       case "openFile":
         // files panel rows and tool-call locations — absolute paths
-        void this.openFileAt(action.path, action.line).catch(this.orchestrator.logCatch(`openFile ${action.path}`));
+        await this.openFileAt(action.path, action.line);
         break;
       case "addOrUpdateAgentConfig":
-        void this.orchestrator.agents.save(action.config, action.commandLine);
+        await this.orchestrator.agents.save(action.config, action.commandLine);
         break;
       case "removeAgentConfig":
-        void this.orchestrator.gates.remove(action.patchbayAgentId).catch(this.orchestrator.logCatch(`remove ${action.patchbayAgentId}`));
+        await this.orchestrator.gates.remove(action.patchbayAgentId);
         break;
       case "reorderAgentConfigs":
-        void this.orchestrator.agents.reorder(action.patchbayAgentIds).catch(this.orchestrator.logCatch("reorderAgentConfigs"));
+        await this.orchestrator.agents.reorder(action.patchbayAgentIds);
         break;
       case "reorderMcpServers":
-        void this.orchestrator.mcpServers.reorder(action.patchbayMcpServerIds);
+        await this.orchestrator.mcpServers.reorder(action.patchbayMcpServerIds);
         break;
       case "addSessionMcpServer":
         this.orchestrator.sessions.addMcpServer(action.patchbaySessionId, action.patchbayMcpServerId);
@@ -1037,55 +1032,48 @@ export class OrchestratorHost {
         this.orchestrator.sessions.removeMcpServer(action.patchbaySessionId, action.patchbayMcpServerId);
         break;
       case "addContextRoot":
-        void this.addContextRoot(action.patchbaySessionId);
+        await this.addContextRoot(action.patchbaySessionId);
         break;
       case "saveRoot":
-        void this.saveRoot({ scope: action.scope }, action.path).catch(this.orchestrator.logCatch("saveRoot"));
+        await this.saveRoot({ scope: action.scope }, action.path);
         break;
       case "pickSavedRoot":
-        void this.pickSavedRoot({ scope: action.scope }).catch(this.orchestrator.logCatch("pickSavedRoot"));
+        await this.pickSavedRoot({ scope: action.scope });
         break;
       case "replaceSavedRoot":
-        void this.pickSavedRoot({ replacing: action.path }).catch(this.orchestrator.logCatch("replaceSavedRoot"));
+        await this.pickSavedRoot({ replacing: action.path });
         break;
       case "setSavedRootWorkspaces":
-        void this.orchestrator.savedRoots
-          .setWorkspaces(action.path, action.workspaces)
-          .then(() => this.orchestrator.publishSavedRoots(), this.orchestrator.logCatch("setSavedRootWorkspaces"));
+        await this.orchestrator.savedRoots.setWorkspaces(action.path, action.workspaces);
+        this.orchestrator.publishSavedRoots();
         break;
       case "unsaveRoot":
-        void this.orchestrator.savedRoots
-          .remove(action.path)
-          .then(() => this.orchestrator.publishSavedRoots(), this.orchestrator.logCatch("unsaveRoot"));
+        await this.orchestrator.savedRoots.remove(action.path);
+        this.orchestrator.publishSavedRoots();
         break;
       case "removeContextRoot":
-        void this.orchestrator.sessionGates
-          .removeRoot(action.patchbaySessionId, action.path)
-          .catch(this.orchestrator.logCatch(`removeRoot ${action.patchbaySessionId}`));
+        await this.orchestrator.sessionGates
+          .removeRoot(action.patchbaySessionId, action.path);
         break;
       case "addImageContext":
-        void this.orchestrator.sessions
+        await this.orchestrator.sessions
           .addContext(action.patchbaySessionId, {
             id: chipId(),
             kind: "image",
             label: action.label,
             content: action.base64,
             mimeType: action.mimeType,
-          })
-          .catch(this.orchestrator.logCatch(`add context ${action.patchbaySessionId}`));
+          });
         break;
       case "addDroppedFileContext":
-        void this.orchestrator.sessions
-          .addDroppedFile(action.patchbaySessionId, { chipId: chipId(), name: action.name, mimeType: action.mimeType, base64: action.base64 })
-          .catch(this.orchestrator.logCatch(`addDroppedFileContext ${action.name}`));
+        await this.orchestrator.sessions
+          .addDroppedFile(action.patchbaySessionId, { chipId: chipId(), name: action.name, mimeType: action.mimeType, base64: action.base64 });
         break;
       case "addFilePickerContext":
-        void this.addFilePickerContext(action.patchbaySessionId);
+        await this.addFilePickerContext(action.patchbaySessionId);
         break;
       case "queryWorkspaceFiles":
-        void this.queryWorkspaceFiles(action.query).catch(
-          this.orchestrator.logCatch(`queryWorkspaceFiles "${action.query}"`),
-        );
+        await this.queryWorkspaceFiles(action.query);
         break;
       default:
         // Every action the views can send has its handler here: a new kind
@@ -1256,13 +1244,8 @@ export class OrchestratorHost {
     this.orchestrator.publishRules();
   }
 
-  /** logCatch for what the user asked for themselves: the failure is also
-   * said where they are — what didn't happen, and the reason. */
   private warnCatch(context: string, what: string): (err: unknown) => void {
-    return (err) => {
-      this.orchestrator.logCatch(context)(err);
-      if (!(err instanceof Cancelled)) void vscode.window.showWarningMessage(`${what} — ${agentErrorText(err)}`);
-    };
+    return warnCatch(this.failureSurfaces, context, what);
   }
   dispose(): void {
     for (const d of this.editorSubscriptions) d.dispose();

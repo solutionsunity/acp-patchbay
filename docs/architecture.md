@@ -160,6 +160,22 @@ import. No diffing library, no CRDT, no partial hydration:
 One mechanism sized to the actual problem: webviews die and must resurrect
 cheaply.
 
+### When work fails
+
+A view's action comes in by one door (`action-door.ts`), and the door holds the
+one answer to its failure, thrown or rejected: it goes to the log and, unless it
+is the user's own cancellation, is said where the user is — what didn't happen,
+and the reason. Each action names its words in one table, so a new kind doesn't
+build until it does; a kind answers null when its own surface already states the
+failure (a crash on the agent's row, an MCP add's card, the chat pane), or when
+the user didn't ask for it as such (a keystroke's save).
+
+A failure costs what failed. A malformed stored record reads as absent and is
+logged by its id; a line an agent or a subprocess wrote that can't be read is
+dropped; a store's rewrite at open that fails is left for the next open
+([the stores architecture](store-architecture.md)). A page waiting on work ends when that work ends, however it ends: the import's outcome names what
+stopped it, and the Data page's secrets row says it can't be read.
+
 ## State
 
 The agent owns the conversation (features §1): patchbay persists no session

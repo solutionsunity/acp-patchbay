@@ -71,6 +71,11 @@ class McpTestClient {
     return resp.result;
   }
 
+  /** A line as an agent gone wrong writes it. */
+  writeLine(line: string): void {
+    this.child.stdin.write(line + "\n");
+  }
+
   async listTools(): Promise<{ name: string }[]> {
     const resp = await this.send("tools/list");
     return (resp.result as { tools: { name: string }[] }).tools;
@@ -135,6 +140,14 @@ describe("local MCP server (real bundled subprocess)", () => {
   it("names itself by the extension's own version", async () => {
     const result = (await client.initialize()) as { serverInfo: { name: string; version: string } };
     expect(result.serverInfo).toEqual({ name: "acp-patchbay", version: packageVersion });
+  });
+
+  it.each([
+    ["isn't JSON", "this isn't JSON"],
+    ["is JSON but no message", "null"],
+  ])("a line that %s costs that line: the server goes on answering", async (_case, line) => {
+    client.writeLine(line);
+    expect(await client.listTools()).not.toEqual([]);
   });
 
   it("lists all seven tools", async () => {

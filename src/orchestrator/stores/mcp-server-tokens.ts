@@ -5,6 +5,7 @@
 // (secrets never go in settings, never in state stores, never in logs).
 // Structural subset of vscode.SecretStorage so this store, like the others,
 // is vscode-free and fakeable in tests.
+import { z } from "zod";
 import type { PatchbayMcpServerId } from "../../shared/ids";
 import { SECRET_FAMILIES } from "./storage-keys";
 
@@ -42,8 +43,16 @@ export interface StoredToken {
   clientId?: string;
 }
 
+/** What every stored token holds; the rest of it is read as stored. */
+const storedTokenSchema = z.looseObject({ accessToken: z.string() });
+
 export class McpServerTokenStore {
-  constructor(private readonly secrets: SecretsLike) {}
+  constructor(
+    private readonly secrets: SecretsLike,
+    /** Where a malformed stored token is reported — by its server's id, never
+     * its value. */
+    private readonly log: (message: string) => void = () => {},
+  ) {}
 
   /** Under the name the credentials were first stored by. */
   private key(patchbayMcpServerId: PatchbayMcpServerId): string {
@@ -53,7 +62,17 @@ export class McpServerTokenStore {
   async get(patchbayMcpServerId: PatchbayMcpServerId): Promise<StoredToken | null> {
     const raw = await this.secrets.get(this.key(patchbayMcpServerId));
     if (raw === undefined) return null;
-    return JSON.parse(raw) as StoredToken;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = undefined;
+    }
+    // One bad record costs that record: it reads as no token, and the
+    // server's card says it needs signing in.
+    if (storedTokenSchema.safeParse(parsed).success) return parsed as StoredToken;
+    this.log(`the stored token for ${patchbayMcpServerId} is malformed — read as none`);
+    return null;
   }
 
   async set(patchbayMcpServerId: PatchbayMcpServerId, token: StoredToken): Promise<void> {

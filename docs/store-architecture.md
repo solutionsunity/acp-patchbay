@@ -431,7 +431,11 @@ when it takes facts only a later moment has (the startup lists), at that
 moment. Every migration consumes what triggers it: the rewrite itself, or
 a record that it ran where the old value can't be rewritten (an
 unregistered setting), so none runs twice and none undoes what the user
-did since. Live code reads only the current shape, and reads it through
+did since. A rewrite whose write fails consumes nothing, and the next open
+runs it again. That is the whole answer, by decision: if a later write in the
+same window succeeds, records only the old shape could read are gone — it takes
+a write failing and then working, on the one launch that migrates, and closing
+it would add an "unwritten" state to the storage layer. Live code reads only the current shape, and reads it through
 its schema piece by piece — a record, a rule, a root, a preference that
 isn't the shape is skipped (a preference reads as its default), never
 trusted blind: disk is a trust boundary, and an imported file more so.

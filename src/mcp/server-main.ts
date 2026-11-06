@@ -75,7 +75,19 @@ process.stdin.on("data", (chunk: string) => {
   buffer = lines.pop() ?? "";
   for (const line of lines) {
     if (line.trim() === "") continue;
-    void handleMessage(JSON.parse(line) as JsonRpcMessage);
+    // An agent's line that can't be read costs that line, never the server
+    // every other request still needs — and it isn't echoed: it may hold
+    // what the agent was given.
+    let message: JsonRpcMessage;
+    try {
+      message = JSON.parse(line) as JsonRpcMessage;
+    } catch {
+      process.stderr.write("acp-patchbay MCP server: dropped a line that isn't JSON\n");
+      continue;
+    }
+    void handleMessage(message).catch((err: unknown) => {
+      process.stderr.write(`acp-patchbay MCP server: ${(err as Error).message}\n`);
+    });
   }
 });
 process.stdin.on("end", () => process.exit(0));
