@@ -235,9 +235,9 @@ export class CapabilityTracker {
     if (declared === undefined || declared === null) return "skipped";
     const probes = new Set<string>();
     this.probeSessions.set(patchbayAgentId, probes);
-    const dir = await this.hooks.probeRoot(patchbayAgentId);
     let probeSessionId: string | undefined;
     try {
+      const dir = await this.hooks.probeRoot(patchbayAgentId);
       const response = await this.pool.newSession(patchbayAgentId, dir);
       probeSessionId = response.sessionId;
       probes.add(probeSessionId);
