@@ -18,6 +18,15 @@ describe("agent updates", () => {
     expect(agentUpdates(registry, [config("a1", "reg-a", "1.0.0")])).toEqual(new Map([["a1", { from: "1.0.0", to: "1.2.0" }]]));
   });
 
+  it("a registry version behind the pin is no update — an entry that moved back offers nothing", () => {
+    expect(agentUpdates([{ id: "reg-a", version: "1.19.5" }], [config("a1", "reg-a", "2.2.5")])).toEqual(new Map());
+  });
+
+  it("versions weigh by number, not as text", () => {
+    expect(agentUpdates([{ id: "reg-a", version: "1.10.0" }], [config("a1", "reg-a", "1.9.0")])).toEqual(new Map([["a1", { from: "1.9.0", to: "1.10.0" }]]));
+    expect(agentUpdates([{ id: "reg-a", version: "1.9.0" }], [config("a1", "reg-a", "1.10.0")])).toEqual(new Map());
+  });
+
   it("nothing to offer: current pin, custom command, edited command, or an agent the registry doesn't list", () => {
     const registry = [{ id: "reg-a", version: "1.2.0" }];
     expect(agentUpdates([{ id: "reg-a", version: "1.0.0" }], [config("a1", "reg-a", "1.0.0")])).toEqual(new Map());

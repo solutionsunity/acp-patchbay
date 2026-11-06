@@ -5,6 +5,7 @@
 // surface that offers an upgrade (the Settings card, the Agent View's agent
 // chip, the startup notice), so no surface re-derives it from its own copy
 // of the registry and the configs.
+import { isNewer } from "../shared/product";
 import type { AgentUpdate } from "../shared/protocol";
 import type { PatchbayAgentId } from "../shared/ids";
 
@@ -28,7 +29,7 @@ export function agentUpdates(
   for (const { id, origin, link } of configs) {
     if (origin === null || link === null) continue;
     const latest = registry.find((r) => r.id === origin)?.version;
-    if (latest === undefined || latest === link.pinnedVersion) continue;
+    if (latest === undefined || !isNewer(latest, link.pinnedVersion)) continue;
     updates.set(id, { from: link.pinnedVersion, to: latest });
   }
   return updates;

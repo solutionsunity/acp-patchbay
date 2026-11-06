@@ -10,6 +10,10 @@
   offering…" when its probe folder can't be created.** The Settings card now
   says the session couldn't open and why, and opening the editor again retries.
   (#151)
+- **A registry version lower than the pinned one is no longer offered as an
+  Upgrade.** An entry that moves back shows no update on the Settings card, the
+  agent's chip or the notice. An Upgrade clicked after it moved back says so and
+  leaves the agent as it is. (#148)
 
 ## 0.90.1 — 2026-11-05
 

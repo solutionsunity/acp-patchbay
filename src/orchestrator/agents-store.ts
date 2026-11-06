@@ -190,6 +190,10 @@ export class AgentsStore implements ConnectionOperations {
     return agentUpdates(this.deps.registry.current().agents, this.deps.configs.list());
   }
 
+  private updateOf(config: AgentConfig): AgentUpdate | undefined {
+    return agentUpdates(this.deps.registry.current().agents, [config]).get(config.id);
+  }
+
   authLocked(patchbayAgentId: PatchbayAgentId): boolean {
     return this.deps.authLocks.lockFor(patchbayAgentId) !== null;
   }
@@ -421,8 +425,8 @@ export class AgentsStore implements ConnectionOperations {
     return { ...spec, env: mergeEnv(spec.env, await this.deps.env.get(config.id)) };
   }
 
-  /** A linked agent on the registry's current (possibly newer) version. The
-   * link it replaces is kept as the one way back. */
+  /** A linked agent on the registry's newer version. The link it replaces is
+   * kept as the one way back. */
   upgrade(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void> {
     return this.move(patchbayAgentId, "upgrade", signal, consent);
   }
@@ -447,10 +451,10 @@ export class AgentsStore implements ConnectionOperations {
    * both apply exactly as they would for a brand-new agent. A registry
    * link is resolved from a fresh read before anything stops — never from
    * the copy a chip or a menu was shown from: a registry that no longer
-   * lists the agent, or lists nothing this platform can run, leaves it as
-   * it is, said once. A running agent is stopped only on `consent`, asked
-   * at that moment — the caller's question, so it is never asked for a move
-   * that can't happen.
+   * lists the agent, lists nothing this platform can run, or no longer has
+   * a newer version for an Upgrade leaves it as it is, said once. A running
+   * agent is stopped only on `consent`, asked at that moment — the caller's
+   * question, so it is never asked for a move that can't happen.
    *
    * The new version becomes the agent's only once it has started: it is
    * launched unsaved, and saved once it answered `initialize`. One that
@@ -470,7 +474,11 @@ export class AgentsStore implements ConnectionOperations {
       this.hooks.warn(`${config.name}: the ACP registry lists nothing this machine can run for it — it stays as it is.`);
       return;
     }
-    const moved = this.relinked(config, link, move === "upgrade" ? this.previousAfterUpgrade(config, link) : null);
+    if (move === "upgrade" && this.updateOf(config) === undefined) {
+      this.hooks.warn(`${config.name}: the ACP registry has no newer version for it now — it stays as it is.`);
+      return;
+    }
+    const moved = this.relinked(config, link, move === "upgrade" ? this.previousAfterUpgrade(config) : null);
     if (moved === null) return;
     const wasRunning = this.deps.pool.get(patchbayAgentId)?.status === "running";
     if (wasRunning) {
@@ -493,13 +501,11 @@ export class AgentsStore implements ConnectionOperations {
     await this.saveMove(config, moved);
   }
 
-  /** The way back an Upgrade leaves: the link it replaces — when that is a
-   * different version and its recipe rebuilds the launch; an upgrade to the
-   * version already pinned keeps the way back it had. */
-  private previousAfterUpgrade(config: AgentConfig, next: AgentLink): AgentLink | null {
+  /** The way back an Upgrade leaves: the link it replaces — when its recipe
+   * rebuilds the launch. */
+  private previousAfterUpgrade(config: AgentConfig): AgentLink | null {
     const current = config.link;
-    if (current === null || current.pinnedVersion === next.pinnedVersion) return config.previous;
-    return config.origin !== null && this.linkLaunch(config.origin, current) !== null ? current : null;
+    return current !== null && config.origin !== null && this.linkLaunch(config.origin, current) !== null ? current : null;
   }
 
   /** An imported agent this machine downloads: its launch and pin
@@ -885,7 +891,7 @@ export class AgentsStore implements ConnectionOperations {
     // A process running or starting answers for what it was spawned with;
     // otherwise the config is what the next Connect runs.
     const launch = live !== undefined && processUp(live.status) ? live.spec : config;
-    const update = agentUpdates(this.deps.registry.current().agents, [config]).get(config.id);
+    const update = this.updateOf(config);
     return {
       id: config.id,
       name: config.name,

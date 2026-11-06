@@ -632,6 +632,27 @@ describe("agents store", () => {
     expect(h.row("reg" as PatchbayAgentId)?.status).toBe("running");
   });
 
+  // The chip was shown from an older read: the entry moved back, or down to
+  // the pin, before the click.
+  it("an Upgrade whose fresh read holds nothing newer asks nothing and leaves the agent as it is", async () => {
+    const user = asking();
+    const h = harness({ ports: { confirm: user.confirm } });
+    await upgradable(h);
+    await openConversation(h, "reg" as PatchbayAgentId);
+    expect(h.row("reg" as PatchbayAgentId)?.update).toEqual({ from: "1.0.0", to: "2.0.0" });
+
+    serveRegistry({ id: "reg", version: "0.9.0" });
+    await h.gates.upgrade("reg" as PatchbayAgentId);
+    serveRegistry({ id: "reg", version: "1.0.0" });
+    await h.gates.upgrade("reg" as PatchbayAgentId);
+
+    expect(user.asked).toEqual([]);
+    expect(h.warnings()).toEqual(Array(2).fill(expect.stringContaining("no newer version")));
+    expect(h.row("reg" as PatchbayAgentId)).toMatchObject({ status: "running", update: undefined });
+    expect(h.agents.config("reg" as PatchbayAgentId)?.link?.pinnedVersion).toBe("1.0.0");
+    expect(h.agents.updates()).toEqual(new Map());
+  });
+
   // #125: the new pin was saved before the new version started, so one that
   // couldn't install left the agent pinned to a version that won't run.
   it("an Upgrade whose new version doesn't start leaves the agent on its version — stopped before, it stays down and says why (#125)", async () => {

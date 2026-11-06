@@ -6,9 +6,8 @@
 // the OAuth servers it registers with. One name and one version, the
 // extension's own, folded in from its manifest at build. Everything that
 // names itself ships inside the extension, so no part keeps a version of
-// its own — and every part that weighs one version against another (an
-// export file's, the one this machine last ran, a copy installed beside
-// this one) orders them here.
+// its own — and every part that weighs one version against another, its own
+// or an agent's, orders them here.
 import { name, version } from "../../package.json";
 
 export const PRODUCT = { name, version } as const;

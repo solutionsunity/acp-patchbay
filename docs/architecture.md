@@ -557,8 +557,9 @@ flowchart TD
   otherwise, both in its tooltip; while an update exists the same chip is
   the upgrade (`0.36.0 → 0.37.0`).
 - **Agent updates** — one fact, worked out where it is read
-  (agent-updates.ts): a linked config whose pinned version isn't the
-  registry's latest. Nothing else bears on it — what the agent reports is
+  (agent-updates.ts): a linked config whose pinned version is behind the
+  registry's latest, weighed by number — an entry that moves back is no
+  update. Nothing else bears on it — what the agent reports is
   another scheme. Never stored: it rides each agent's row, re-sent
   whenever a registry read or a config write moves it; the version chip
   and the notice read it, none derives it. A
@@ -568,7 +569,8 @@ flowchart TD
   and Reset to ACP registry and Back to previous (the card's menu). A
   registry move reads the registry (an essential read: the user started
   it) and resolves the version like a first add — before anything stops,
-  so a registry that no longer lists the agent leaves it running and says
+  so a registry that no longer lists the agent, or whose fresh read no
+  longer holds a newer version for an Upgrade, leaves it running and says
   so — and every move asks before a stop that would disconnect open
   conversations. The new launch starts before it is saved, and is saved
   only once the new version answered `initialize`: one that doesn't start
