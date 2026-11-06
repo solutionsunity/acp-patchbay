@@ -6,6 +6,10 @@
   check.** It used to end with no result and nothing in the log, and right
   after a successful login it made the login read as failed. Thanks to
   @mikemikimike. (#150)
+- **An agent's defaults no longer stay on "reading this agent's knob
+  offering…" when its probe folder can't be created.** The Settings card now
+  says the session couldn't open and why, and opening the editor again retries.
+  (#151)
 
 ## 0.90.1 — 2026-11-05
 

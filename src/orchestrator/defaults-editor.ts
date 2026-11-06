@@ -161,14 +161,14 @@ export class DefaultsEditor {
       });
       return;
     }
-    const dir = await this.hooks.probeRoot(patchbayAgentId);
     let response: SessionOpenedFact;
     try {
+      const dir = await this.hooks.probeRoot(patchbayAgentId);
       response = await this.pool.newSession(patchbayAgentId, dir);
     } catch (err) {
-      // auth_required or a plain failure — stated on the card, never a
-      // spinner that spins forever; needsAuth itself is the pool's own
-      // wire chokepoint's business.
+      // A folder that can't be made, auth_required or a plain failure —
+      // stated on the card, never a spinner that spins forever; needsAuth
+      // itself is the pool's own wire chokepoint's business.
       this.hooks.emit({
         kind: "agentKnobsObserved",
         patchbayAgentId,

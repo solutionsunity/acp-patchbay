@@ -265,8 +265,8 @@ collapsing the card ends it — never persisted, so the card states exactly one
 honest fact per situation: stopped → the stored selections as text (`saved
 defaults: … — connect to edit`); connected with the session still opening →
 `reading this agent's knob offering…`; an agent that can't open one yet (a
-latched agent before its first session) states why; an agent that offered
-nothing reads `this agent offered no session knobs`, and saved selections the
+latched agent before its first session) or a session that failed to open
+states why; an agent that offered nothing reads `this agent offered no session knobs`, and saved selections the
 current surface doesn't offer are stated rather than silently blanked · Stop —
 offered whenever there is something to stop: the process, its launch (a
 download included), or work the agent's queue holds; it spins while a Stop

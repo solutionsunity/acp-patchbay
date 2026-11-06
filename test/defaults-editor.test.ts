@@ -4,6 +4,7 @@
 // The fixture's dependentOptions models the shape that motivated it
 // (OpenCode's `effort` exists only for models with variants): a surface
 // read at agent defaults cannot show a knob the saved default would reveal.
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { orchestratorHarness } from "./support/orchestrator-harness";
@@ -211,6 +212,22 @@ describe("DefaultsEditor", () => {
     expect(h.lastView("latched" as PatchbayAgentId)).toMatchObject({ knobs: [], unavailable: expect.stringContaining("first session") });
     expect(h.pool.get("latched" as PatchbayAgentId)!.sessions).toEqual([]);
     await h.pool.stop("latched" as PatchbayAgentId);
+  });
+
+  it("a probe folder that can't be made is stated on the card, and the next open reads the surface", async () => {
+    const h = await harness({ defaults: { blocked: { model: "pro" } } });
+    await h.connected(DEPENDENT_SCRIPT, "blocked" as PatchbayAgentId);
+    // A file where the probe folder belongs: the mkdir fails for real.
+    const probeBase = join(h.paths.globalStorage, "probe");
+    await rm(probeBase, { recursive: true, maxRetries: 10 });
+    await writeFile(probeBase, "");
+    await h.editor.open("blocked" as PatchbayAgentId);
+    expect(h.lastView("blocked" as PatchbayAgentId)).toMatchObject({ knobs: [], unavailable: expect.stringContaining("couldn't open a session") });
+    expect(h.pool.get("blocked" as PatchbayAgentId)!.sessions).toEqual([]);
+    await rm(probeBase);
+    await h.editor.open("blocked" as PatchbayAgentId);
+    expect(h.offered("blocked" as PatchbayAgentId)).toEqual(["model", "effort"]);
+    await h.pool.stop("blocked" as PatchbayAgentId);
   });
 
   it("the connection ending drops the entry without a wire call; open is a no-op while stopped", async () => {
