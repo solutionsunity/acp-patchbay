@@ -3349,6 +3349,10 @@ describe("session activity stamp — one home", () => {
     const createOnWire = h.pool.newSession.bind(h.pool);
     vi.spyOn(h.pool, "newSession").mockImplementation(async (...args) => {
       const reply = await createOnWire(...args);
+      // The creation's alone: the agent's free check may land at any moment
+      // of this test, and a page forged with the window's folder for it would
+      // make a row no real list can.
+      if (args[1] !== cwd) return reply;
       vi.spyOn(h.pool, "listSessions").mockResolvedValueOnce({ sessions: [{ sessionId: reply.sessionId, cwd }], next: { kind: "end" } });
       await h.sessions.syncAgentSessions("st-cross" as PatchbayAgentId);
       listedFirst = h.state().sessions[0]?.id;
@@ -3362,6 +3366,21 @@ describe("session activity stamp — one home", () => {
     expect(h.sessions.rowFor("st-cross" as PatchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!)).toBe(patchbaySessionId);
     expect(h.state().activePatchbaySessionId).toBe(patchbaySessionId);
     await h.pool.stop("st-cross" as PatchbayAgentId);
+  });
+
+  it("the free check's session, named by a list before its reply lands, is no row: it isn't in the window's folder", async () => {
+    const h = harness();
+    await h.connect(spec({ declare: LIST_CAPS, newSessionReplyDelayMs: 200 }, "st-probe"));
+    // An agent answering with all it holds: the folder asked for is a request.
+    const everything = h.pool.listSessions.bind(h.pool);
+    vi.spyOn(h.pool, "listSessions").mockImplementation((patchbayAgentId) => everything(patchbayAgentId, {}));
+    await vi.waitFor(async () => expect((await everything("st-probe" as PatchbayAgentId, {})).sessions).toHaveLength(1), SETTLE);
+    await h.sessions.syncAgentSessions("st-probe" as PatchbayAgentId);
+    expect(h.state().sessions).toEqual([]);
+    await vi.waitFor(() => expect(h.probes).toHaveLength(1), SETTLE);
+    await h.sessions.syncAgentSessions("st-probe" as PatchbayAgentId);
+    expect(h.state().sessions).toEqual([]);
+    await h.pool.stop("st-probe" as PatchbayAgentId);
   });
 
   it("two agents naming their sessions by one id are two rows — an id is only unique per agent", async () => {
@@ -3403,7 +3422,9 @@ describe("context tokens — what the IPC socket admits (#72)", () => {
     await h.connect(spec({ newSessionReplyDelayMs: 200 }, "ct1"));
     const newSession = vi.spyOn(h.pool, "newSession");
     const born = h.gates.create("ct1" as PatchbayAgentId, "Fake Agent", cwd);
-    await vi.waitFor(() => expect(newSession).toHaveBeenCalled(), SETTLE); // session/new is on the wire
+    // session/new is on the wire: the creation's, in the window's folder — the
+    // agent's free check may have made one of its own already
+    await vi.waitFor(() => expect(newSession.mock.calls.some(([, sessionCwd]) => sessionCwd === cwd)).toBe(true), SETTLE);
     const [token] = h.minted();
     expect(token).toMatch(UUID);
     // the agent may start the session's servers before it answers
