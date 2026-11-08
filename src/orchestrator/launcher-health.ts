@@ -48,11 +48,16 @@ import { runToExit, type ExitAnswer } from "./process-tree";
 import { mergeEnv } from "./spawn-resolve";
 import { agentErrorText } from "./readers/agent-error";
 
-/** Normalized launcher name from a command that may be a path or a Windows
- * shim — THE one spelling of "is this an ecosystem launcher", shared by the
- * runtime resolver and every capability here. */
+/** A command's bare program name, from a path or a Windows shim — the one
+ * spelling the runtime resolver and every capability here read a command
+ * by. */
+export function commandName(command: string): string {
+  return basename(command).replace(/\.(cmd|bat|exe)$/i, "").toLowerCase();
+}
+
+/** The ecosystem launcher a command is, if it is one. */
 export function launcherKind(command: string): "npx" | "uvx" | null {
-  const cmd = basename(command).replace(/\.(cmd|bat|exe)$/i, "").toLowerCase();
+  const cmd = commandName(command);
   return cmd === "npx" || cmd === "uvx" ? cmd : null;
 }
 

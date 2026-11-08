@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Launch prerequisites: what must exist on disk before an agent can spawn,
-// acquired as a labeled phase of the connect — on the agent's own card,
-// never as part of adding it. Two kinds share one molecule (single-flight
+// Launch prerequisites: what must exist on disk before an agent or a
+// stdio MCP server can spawn. Two kinds share one molecule (single-flight
 // per artifact, explicit consent before any download, a phase label while
 // it runs, the binary installer's staging+rename underneath):
 //
-// Runtime resolution for ecosystem launchers: an `npx` agent needs a working
-// Node.js, a `uvx` agent needs uv (which provisions its own Python) —
-// neither is guaranteed on the machine, and Windows is where the gap
+// Runtime resolution for ecosystem commands: each needs Node.js or uv (which
+// provisions its own Python), by the table below — neither is guaranteed on the machine, and Windows is where the gap
 // actually bites. Detect-first, sandbox-fallback: the system runtime is
 // used when a real `--version` round-trip — through the same spawn rules as
 // the launch itself — proves it works (presence on PATH proves nothing; the
-// gate is the round-trip, re-run fresh every connect, never persisted), and
+// gate is the round-trip, re-run fresh every launch, never persisted), and
 // only on a failed gate is a pinned runtime downloaded into the extension's
-// own storage and PATH-prepended into that one agent's spawn env. The
-// user's system is never written to: no installs, no PATH edits, no admin —
-// the managed runtime is invisible outside the child process. Everything
-// else about the agent (its own state dirs, auth, sessions) stays wherever
-// the agent puts it; only the interpreter is ours.
+// own storage and PATH-prepended into that one launch's env — an agent's
+// spawn env at its connect, or a stdio MCP server's entry env, which is
+// what reaches the server whatever environment the agent hands its
+// children. The user's system is never written to: no installs, no PATH
+// edits, no admin — the managed runtime is invisible outside the child
+// process. Everything else about the agent (its own state dirs, auth,
+// sessions) stays wherever the agent puts it; only the interpreter is ours.
 //
 // Registry `binary` distributions: the archive provides the command itself.
 // The spec carries the archive facts; the phase resolves `command` to the
@@ -29,7 +29,7 @@
 // fetch-and-run.
 import { rm } from "node:fs/promises";
 import { basename, delimiter, dirname, join } from "node:path";
-import { launcherKind } from "./launcher-health";
+import { commandName } from "./launcher-health";
 import type { Logger } from "./logger";
 import { nodeDistName, type Platform, platformOf, rustTarget } from "./platform";
 import type { LaunchSpec } from "./pool";
@@ -47,15 +47,25 @@ import { agentErrorText } from "./readers/agent-error";
 
 export type RuntimeKind = "node" | "uv";
 
-/** What interpreter a launch command needs before it can say a byte —
- * a property of the launcher, not the OS: `npx` is a Node.js program,
- * `uvx` is a self-contained binary that provides its own Python. Anything
- * else (binary distributions, user-typed executables) needs nothing. */
+/** The commands a managed runtime equips, each with the runtime whose
+ * archive carries it: Node.js ships node, npm and npx side by side; uv
+ * ships uv and uvx, and provisions its own Python. A bare `python` is
+ * deliberately absent — what it needs is an interpreter with the server's
+ * packages already installed, which a fresh one is not. */
+const RUNTIME_COMMANDS: Readonly<Record<string, RuntimeKind>> = {
+  node: "node",
+  npm: "node",
+  npx: "node",
+  uv: "uv",
+  uvx: "uv",
+};
+
+/** What runtime a launch command needs before it can say a byte — a
+ * property of the command, not the OS. Anything else (binary
+ * distributions, user-typed executables) needs nothing. */
 export function requiredRuntime(command: string): RuntimeKind | null {
-  const kind = launcherKind(command);
-  if (kind === "npx") return "node";
-  if (kind === "uvx") return "uv";
-  return null;
+  const name = commandName(command);
+  return Object.hasOwn(RUNTIME_COMMANDS, name) ? RUNTIME_COMMANDS[name]! : null;
 }
 
 export function runtimeName(kind: RuntimeKind): string {
@@ -226,10 +236,10 @@ export function runtimeInstallSpec(
  * holds it (Windows convention is "Path"). Idempotent — a restart
  * re-resolves the already-resolved snapshot and must not stack the dir. */
 export function prependPath(
-  env: Record<string, string>,
+  env: Readonly<Record<string, string>>,
   dir: string,
   base: NodeJS.ProcessEnv = process.env,
-): Record<string, string> {
+): Readonly<Record<string, string>> {
   const keyOf = (o: Record<string, unknown>) =>
     Object.keys(o).find((k) => k.toUpperCase() === "PATH");
   const key = keyOf(env) ?? keyOf(base) ?? "PATH";
@@ -246,7 +256,7 @@ export type DownloadCheck = "sha256" | "none-published" | "registry-unreachable"
 /** What the user is asked to consent to before a download — a pinned
  * runtime the launcher needs, or a registry agent's own binary archive. */
 export type DownloadAsk =
-  | { kind: "runtime"; runtime: RuntimeKind; version: string; check: DownloadCheck }
+  | { kind: "runtime"; runtime: RuntimeKind; version: string; check: DownloadCheck; for: RuntimeLaunch["subject"]; command: string }
   | { kind: "agent"; name: string; version: string; archiveUrl: string; check: DownloadCheck };
 
 /** A second mismatch, as the connect failure the card shows — `whose`
@@ -267,6 +277,9 @@ export interface LaunchResolveDeps {
    * download would actually happen; a cached artifact never re-asks.
    * Absent → allowed (tests). */
   confirmDownload?: (ask: DownloadAsk) => Promise<boolean>;
+  /** Only a runtime already downloaded is used: a launch that would need a
+   * download fails instead of asking — for launches no one is watching. */
+  cachedOnly?: boolean;
   /** Connect-status label seam, live only while genuinely downloading. */
   onPhase?: (label: string) => void;
   /** The connect's stop: ends the runtime gate's wait on a probe (the
@@ -357,55 +370,70 @@ function installOnce(
   return flight;
 }
 
-/** The launch-phase decision: given the spec about to spawn, return the
- * spec that actually spawns. Non-launcher specs pass through untouched; a
- * launcher whose system runtime passes the gate passes through untouched
- * (reality wins — zero behavior change); only a failed gate provisions the
- * managed runtime and returns a copy with its bin dir PATH-prepended. The
- * command itself is never rewritten — `npx` stays `npx`, findable through
- * the injected PATH, so every downstream spelling (warmup, .cmd shim
- * handling, the cache check) keeps working unchanged. Throws when no runtime
- * can be had; the caller surfaces that as the connect failure it is. */
-export async function resolveRuntime(
-  spec: LaunchSpec,
-  deps: LaunchResolveDeps,
-): Promise<LaunchSpec> {
-  const kind = requiredRuntime(spec.command);
-  if (kind === null) return spec;
+/** A launch that may need a runtime: whose it is (the agent's own, or a
+ * stdio MCP server's the agent spawns), named for the log, its command,
+ * and the env it sets over `base` — the environment it will actually be
+ * spawned in, `process.env` unless said. */
+export interface RuntimeLaunch {
+  subject: "agent" | "MCP server";
+  label: string;
+  command: string;
+  env: Readonly<Record<string, string>>;
+  base?: NodeJS.ProcessEnv;
+}
 
-  const probes = { launcher: deps.probes?.launcher ?? spec.command, interpreter: deps.probes?.interpreter };
-  const system = await gateRuntime(kind, mergeEnv(process.env, spec.env), probes, deps.signal);
+/** The launch-phase decision for any launch: the env it actually spawns
+ * with. A command that needs no runtime keeps its env, the same object; so
+ * does one whose system runtime passes the gate (reality wins — zero
+ * behavior change); only a failed gate provisions the managed runtime and
+ * returns a copy with its bin dir PATH-prepended. The command itself is
+ * never rewritten — `npx` stays `npx`, findable through the injected PATH
+ * (a POSIX npx is a `#!/usr/bin/env node` script, so an absolute path
+ * would still need node there), and every downstream spelling (warmup,
+ * .cmd shim handling, the cache check) keeps working unchanged. Throws
+ * when no runtime can be had; the caller surfaces that as the failure it
+ * is. */
+export async function runtimeEnv(launch: RuntimeLaunch, deps: LaunchResolveDeps): Promise<Readonly<Record<string, string>>> {
+  const kind = requiredRuntime(launch.command);
+  if (kind === null) return launch.env;
+  const base = launch.base ?? process.env;
+  const retry = launch.subject === "agent" ? "reconnect" : "try again";
+  const runtime = runtimeName(kind);
+
+  const probes = { launcher: deps.probes?.launcher ?? launch.command, interpreter: deps.probes?.interpreter };
+  const system = await gateRuntime(kind, mergeEnv(base, launch.env), probes, deps.signal);
   if (system.ok) {
-    deps.log.debug(`${spec.patchbayAgentId}: system runtime OK (${system.detail})`);
-    return spec;
+    deps.log.debug(`${launch.label}: system runtime OK (${system.detail})`);
+    return launch.env;
   }
 
   const catalog = runtimeInstallSpec(kind);
   if (catalog === null) {
     throw new Error(
-      `${spec.command} needs ${runtimeName(kind)} (${system.detail}) and no managed build exists for ${process.platform}-${process.arch} — install ${runtimeName(kind)} manually and reconnect`,
+      `${launch.command} needs ${runtime} (${system.detail}) and no managed build exists for ${process.platform}-${process.arch} — install ${runtime} manually and ${retry}`,
     );
   }
-  deps.log.info(
-    `${spec.patchbayAgentId}: system runtime unusable (${system.detail}) — using managed ${runtimeName(kind)} ${catalog.version}`,
-  );
+  if (deps.cachedOnly === true && !(await isBinaryInstalled(deps.cacheRoot, catalog.distribution, catalog.version, catalog.cmd))) {
+    throw new Error(`${launch.command} needs ${runtime}, and none works on this system (${system.detail})`);
+  }
+  deps.log.info(`${launch.label}: system runtime unusable (${system.detail}) — using managed ${runtime} ${catalog.version}`);
 
-  const label = `${runtimeName(kind)} ${catalog.version}`;
+  const label = `${runtime} ${catalog.version}`;
   const installed = await installOnce(deps, catalog, {
-    ask: (check) => ({ kind: "runtime", runtime: kind, version: catalog.version, check }),
+    ask: (check) => ({ kind: "runtime", runtime: kind, version: catalog.version, check, for: launch.subject, command: launch.command }),
     phase: `downloading ${label}…`,
-    declined: `${runtimeName(kind)} download declined (${system.detail}) — install ${runtimeName(kind)} manually and reconnect`,
+    declined: `${runtime} download declined (${system.detail}) — install ${runtime} manually and ${retry}`,
   }).catch((err: unknown) => {
     if (!(err instanceof ChecksumMismatch)) throw err;
-    throw mismatchFailure(label, catalog.archiveUrl, "its publisher lists", err, `Install ${runtimeName(kind)} manually and reconnect.`);
+    throw mismatchFailure(label, catalog.archiveUrl, "its publisher lists", err, `Install ${runtime} manually and ${retry}.`);
   });
-  const env = prependPath(spec.env, dirname(installed.command));
+  const env = prependPath(launch.env, dirname(installed.command), base);
 
   // The gate that judged the system runtime judges ours too: a managed
   // runtime that can't answer --version (glibc build on musl, truncated
-  // archive) must fail the connect with a real reason, not crash the agent
-  // spawn cryptically.
-  const verified = await gateRuntime(kind, mergeEnv(process.env, env), probes, deps.signal);
+  // archive) must fail the launch with a real reason, not crash its spawn
+  // cryptically.
+  const verified = await gateRuntime(kind, mergeEnv(base, env), probes, deps.signal);
   if (!verified.ok) {
     // Evict only a failure the managed install could own: the bare
     // interpreter, or a bare-name launcher (both resolve through the
@@ -418,15 +446,22 @@ export async function resolveRuntime(
     if (managedAtFault) {
       await rm(join(deps.cacheRoot, catalog.distribution, catalog.version), { recursive: true, force: true });
       throw new Error(
-        `managed ${runtimeName(kind)} ${catalog.version} failed its own gate (${verified.detail}) — cached copy removed; reconnect to retry, or install ${runtimeName(kind)} manually`,
+        `managed ${runtime} ${catalog.version} failed its own gate (${verified.detail}) — cached copy removed; ${retry} to retry, or install ${runtime} manually`,
       );
     }
     throw new Error(
-      `${spec.command} did not answer even with managed ${runtimeName(kind)} ${catalog.version} on PATH (${verified.detail}) — check the agent's command`,
+      `${launch.command} did not answer even with managed ${runtime} ${catalog.version} on PATH (${verified.detail}) — check the ${launch.subject === "agent" ? "agent's" : "server's"} command`,
     );
   }
-  deps.log.info(`${spec.patchbayAgentId}: managed ${runtimeName(kind)} ready (${verified.detail})`);
-  return { ...spec, env };
+  deps.log.info(`${launch.label}: managed ${runtime} ready (${verified.detail})`);
+  return env;
+}
+
+/** The agent's launch through `runtimeEnv` — the spec itself when its env
+ * stands. */
+export async function resolveRuntime(spec: LaunchSpec, deps: LaunchResolveDeps): Promise<LaunchSpec> {
+  const env = await runtimeEnv({ subject: "agent", label: spec.patchbayAgentId, command: spec.command, env: spec.env }, deps);
+  return env === spec.env ? spec : { ...spec, env };
 }
 
 /** A registry `binary` agent's own archive, as the launch phase: the spec

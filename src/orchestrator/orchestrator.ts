@@ -9,7 +9,7 @@
 import { existsSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { RequestError } from "./acp";
 import {
   chatPaneShows,
@@ -61,6 +61,7 @@ import { count } from "../shared/count";
 import type { RequestUserInputParams } from "../mcp/ipc-protocol";
 import { McpServerGates } from "./mcp-server-gates";
 import { McpServersStore, type McpServerLineOperations } from "./mcp-servers-store";
+import { probeMcpServer } from "./mcp-probe";
 import { linkQuery, OAuthCallbackRegistry } from "./oauth-callback";
 import { elicitationResponseOf, formFieldsOf, type ElicitationScope } from "./readers/elicitation";
 import { AgentPool } from "./pool";
@@ -79,7 +80,7 @@ import { AgentConfigStore } from "./stores/agent-configs";
 import { ComposerKnobsStore } from "./stores/composer-knobs";
 import { PreferencesStore } from "./stores/preferences";
 import { SecretEnvStore } from "./stores/secret-env";
-import { resolveLaunch, runtimeName, type DownloadAsk, type DownloadCheck } from "./runtime-resolver";
+import { resolveLaunch, runtimeEnv, runtimeName, type DownloadAsk, type DownloadCheck } from "./runtime-resolver";
 import { DecisionAuditStore } from "./stores/decision-audit";
 import { McpServerConfigStore } from "./stores/mcp-server-configs";
 import { McpServerTokenStore } from "./stores/mcp-server-tokens";
@@ -362,6 +363,17 @@ export class Orchestrator {
         deliver: (query) => this.oauthCallbacks.handle(query),
       },
       log,
+      probeMcpServer,
+      // A stdio server's runtime, as an agent's: the same gate, the same
+      // cache, the same ask before any download.
+      (launch, { cachedOnly, signal }) =>
+        runtimeEnv(launch, {
+          cacheRoot: this.binaryCacheDir,
+          log,
+          cachedOnly,
+          signal,
+          confirmDownload: (ask) => this.confirmDownload(ask),
+        }),
     );
     this.mcpServers = mcpServers;
     this.mcpServerGates = new McpServerGates(mcpServers, serverLine, connectLine);
@@ -558,7 +570,7 @@ export class Orchestrator {
     }, log, {
       // Launch prerequisites (runtime-resolver.ts), as phases of the
       // connect on the agent's card: a registry binary agent's own archive,
-      // and — detect-first, sandbox-fallback — the interpreter an npx/uvx
+      // and — detect-first, sandbox-fallback — the runtime its command
       // launcher needs, downloaded into bin-cache only on a failed gate.
       // Every download passes the same explicit confirmation.
       resolveLaunch: (spec, onPhase, signal) =>
@@ -1365,7 +1377,7 @@ export class Orchestrator {
   private async confirmDownload(ask: DownloadAsk): Promise<boolean> {
     const message =
       ask.kind === "runtime"
-        ? `This agent is launched with ${ask.runtime === "node" ? "npx, which needs Node.js" : "uvx, which needs uv"} — and no usable install was found on this system. Download ${runtimeName(ask.runtime)} ${ask.version} into the extension's own storage? ${DOWNLOAD_CHECK_TEXT[ask.check]} Nothing is installed system-wide, and removing the extension removes it.`
+        ? `${ask.for === "agent" ? "This agent" : "This MCP server"} is launched with ${basename(ask.command)}, which needs ${runtimeName(ask.runtime)} — and no usable install was found on this system. Download ${runtimeName(ask.runtime)} ${ask.version} into the extension's own storage? ${DOWNLOAD_CHECK_TEXT[ask.check]} Nothing is installed system-wide, and removing the extension removes it.`
         : `${ask.name} ${ask.version} is distributed as a binary. Download it from ${new URL(ask.archiveUrl).host} into the extension's own storage and run it? ${DOWNLOAD_CHECK_TEXT[ask.check]} Once per version; nothing is installed system-wide, and removing the extension removes it.`;
     return this.ports.confirm(message, "Download");
   }

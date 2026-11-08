@@ -50,6 +50,7 @@ import type { PatchbayAgentId, PatchbayMcpServerId } from "../shared/ids";
 import { ownReach, reaches, type Reach } from "../shared/reach";
 import type { WorkspaceId } from "../shared/workspace";
 import { agentErrorText } from "./readers/agent-error";
+import type { RuntimeLaunch } from "./runtime-resolver";
 
 type Env = Record<string, string>;
 
@@ -137,6 +138,21 @@ export function bridgeServer(
     { name: IPC_ENV.serverId, value: server.id },
     { name: IPC_ENV.serverUrl, value: server.url },
   ]);
+}
+
+/** The runtime step a stdio server's launch passes before it spawns: the
+ * env it spawns with — its own when its system runtime works, else with a
+ * managed runtime on its PATH. `cachedOnly` launches never download: a
+ * runtime missing there is the launch's failure. */
+export type McpRuntimeFn = (
+  launch: RuntimeLaunch,
+  opts: { cachedOnly: boolean; signal?: AbortSignal },
+) => Promise<Readonly<Record<string, string>>>;
+
+/** A stdio server's launch as the runtime step reads it — named for the
+ * log by its command alone: its args and env may carry secrets. */
+function stdioLaunch(command: string, env: Readonly<Record<string, string>>): RuntimeLaunch {
+  return { subject: "MCP server", label: `MCP server ${command}`, command, env };
 }
 
 /** The operations that take time — an add, an edit, a probe, a remove —
@@ -304,6 +320,9 @@ export class McpServersStore {
     /** The connect-time tool probe (mcp-probe.ts) — injected so
      * tests fake the handshake instead of hitting network/spawning. */
     private readonly probeFn: ProbeFn = probeMcpServer,
+    /** The runtime step (runtime-resolver.ts runtimeEnv) — injected so
+     * tests run without one: every env stands as it is. */
+    private readonly runtimeFn: McpRuntimeFn = async (launch) => launch.env,
   ) {
     this.env = secrets.env;
     this.headerStore = secrets.headers;
@@ -508,7 +527,7 @@ export class McpServersStore {
     const d = filled.draft;
     if (d.type === "stdio") {
       if (!reaches(reach.workspaces, this.here)) return null;
-      return this.check({ kind: "stdio", command: d.command, args: d.args, env: d.env, cwd: this.workspaceCwd }, signal);
+      return this.check(await this.stdioTarget(d, signal), signal);
     }
     const headers = bearer === null ? d.headers : { ...d.headers, Authorization: `Bearer ${bearer}` };
     return this.check({ kind: "http", url: d.url, headers }, signal);
@@ -981,7 +1000,7 @@ export class McpServersStore {
       return;
     }
     try {
-      const target = config !== undefined ? await this.probeTargetFor(config) : this.editorProbeTarget();
+      const target = config !== undefined ? await this.probeTargetFor(config, signal) : this.editorProbeTarget();
       if (target === null) {
         // Nothing reachable to probe (no endpoint / missing credential) —
         // the card's connected flag already tells that story.
@@ -1015,15 +1034,21 @@ export class McpServersStore {
     };
   }
 
-  private async probeTargetFor(config: McpServerConfig): Promise<ProbeTarget | null> {
+  /** A configured stdio server as patchbay's own check spawns it — its
+   * runtime set up first, a download asked for where it needs one: the
+   * user is acting on this server now (an add, an edit, a probe). */
+  private async stdioTarget(d: { command: string; args: readonly string[]; env: Env }, signal: AbortSignal | undefined): Promise<ProbeTarget> {
+    const env = await this.runtimeFn(stdioLaunch(d.command, d.env), { cachedOnly: false, signal });
+    return { kind: "stdio", command: d.command, args: d.args, env, cwd: this.workspaceCwd };
+  }
+
+  private async probeTargetFor(config: McpServerConfig, signal: AbortSignal | undefined): Promise<ProbeTarget | null> {
     const draft = await this.draftOf(config);
     const live = await this.liveDraft(config, draft === undefined ? process.env : await this.checkEnv(draft, config.routing));
     if (live === null) return null;
     if ("unset" in live) throw new Error(unsetSaid(live.unset));
     const d = live.draft;
-    return d.type === "stdio"
-      ? { kind: "stdio", command: d.command, args: d.args, env: d.env, cwd: this.workspaceCwd }
-      : { kind: "http", url: d.url, headers: d.headers };
+    return d.type === "stdio" ? this.stdioTarget(d, signal) : { kind: "http", url: d.url, headers: d.headers };
   }
 
   /** A server as it is handed over now: its draft — a curated one's, its
@@ -1173,13 +1198,24 @@ export class McpServersStore {
       }
       const d = live.draft;
       if (d.type === "stdio") {
+        // The runtime rides the entry's own env — what reaches the server
+        // whatever environment the agent hands its children. Only one
+        // already downloaded: an attach runs unwatched (a background probe
+        // opens sessions too), so it never asks; its check in Settings does.
+        let serverEnv: Readonly<Record<string, string>>;
+        try {
+          serverEnv = await this.runtimeFn({ ...stdioLaunch(d.command, d.env), base: env }, { cachedOnly: true });
+        } catch (err) {
+          withheld.push(`MCP server "${config.name}" wasn't given to the agent: ${agentErrorText(err)} — check it in Settings › MCP Servers to set one up.`);
+          continue;
+        }
         // No cwd travels: the entry has no such field, so the server runs
         // wherever the agent does — the same workspaceCwd the probe uses.
         servers.push({
           name: config.name,
           command: d.command,
           args: [...d.args],
-          env: Object.entries(d.env).map(([name, value]) => ({ name, value })),
+          env: Object.entries(serverEnv).map(([name, value]) => ({ name, value })),
         });
         given.push({ id: config.id, delivery: "stdio" });
       } else if (declaresHttp && config.transport === "auto") {

@@ -12,7 +12,7 @@ import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamable
 import { lastEvent } from "./support/transcript";
 import { SETTLE } from "./support/wait-for";
 import { McpServerGates } from "../src/orchestrator/mcp-server-gates";
-import { McpServersStore, type SignInAgent } from "../src/orchestrator/mcp-servers-store";
+import { McpServersStore, type McpRuntimeFn, type SignInAgent } from "../src/orchestrator/mcp-servers-store";
 import { Queue } from "../src/orchestrator/queue";
 import type { ProbeFn, ProbeTarget } from "../src/orchestrator/mcp-probe";
 import { McpServerConfigStore } from "../src/orchestrator/stores/mcp-server-configs";
@@ -85,6 +85,8 @@ function harness(
     secrets?: MemorySecrets;
     /** The agents by id, each with its own configured env. */
     agents?: Record<string, Record<string, string>>;
+    /** The runtime step — absent, every env stands. */
+    runtime?: McpRuntimeFn;
   } = {},
 ) {
   const events: SettingsEvent[] = [];
@@ -132,6 +134,7 @@ function harness(
     { deliver: () => "not waiting", ...(opts.userAgent ?? fakeUserAgent()) },
     undefined,
     (target, signal) => probeFn(target, signal),
+    opts.runtime,
   );
   const gates = new McpServerGates(manager, serverLine, connectLine);
   /** An add card's add — the card named after the server. */
@@ -528,6 +531,82 @@ describe("McpServersStore — your own server, checked before it is stored", () 
     expect(h.configs.list()).toEqual([]);
     expect(await h.envStore.get(local)).toEqual({});
     expect(await h.headerStore.get(remote)).toEqual({});
+  });
+});
+
+describe("McpServersStore — a stdio server's runtime", () => {
+  /** A runtime step that finds none on the system for npx: a check may
+   * set one up, an attach only finds one already there. */
+  function managedNode(cached: { yes: boolean }) {
+    const calls: { command: string; cachedOnly: boolean }[] = [];
+    const runtime: McpRuntimeFn = async (launch, { cachedOnly }) => {
+      calls.push({ command: launch.command, cachedOnly });
+      if (launch.command !== "npx") return launch.env;
+      if (cachedOnly && !cached.yes) throw new Error("npx needs Node.js, and none works on this system (node did not answer --version)");
+      cached.yes = true;
+      return { ...launch.env, PATH: "/managed/node/bin:/usr/bin" };
+    };
+    return { runtime, calls };
+  }
+
+  it("its check runs with the runtime set up — asked for, since the user is acting on it", async () => {
+    const { runtime, calls } = managedNode({ yes: false });
+    const h = harness([], { runtime });
+    await h.add("Odoo", stdio("npx", ["-y", "@suco/odoo-surface-mcp@latest"], { ODOO_URL: "http://odoo" }));
+    expect(calls).toEqual([{ command: "npx", cachedOnly: false }]);
+    expect(h.probed).toEqual([
+      expect.objectContaining({ command: "npx", env: { ODOO_URL: "http://odoo", PATH: "/managed/node/bin:/usr/bin" } }),
+    ]);
+  });
+
+  it("the entry an agent gets carries the runtime in its own env — the PATH is never stored", async () => {
+    const { runtime, calls } = managedNode({ yes: true });
+    const h = harness([], { runtime });
+    const id = await h.add("Odoo", stdio("npx", ["-y", "pkg"], { ODOO_URL: "http://odoo" }));
+    calls.length = 0;
+    const { servers, withheld } = await configuredFor(h, "agent-a" as PatchbayAgentId);
+    expect(withheld).toEqual([]);
+    expect(servers.map(envOf)).toEqual([{ ODOO_URL: "http://odoo", PATH: "/managed/node/bin:/usr/bin" }]);
+    expect(calls).toEqual([{ command: "npx", cachedOnly: true }]);
+    expect(await h.envStore.get(id)).toEqual({ ODOO_URL: "http://odoo" });
+  });
+
+  it("an attach never asks for a download: no runtime there, the server isn't given, and the session says why", async () => {
+    const cached = { yes: true };
+    const { runtime } = managedNode(cached);
+    const h = harness([], { runtime });
+    await h.add("Odoo", stdio("npx", ["-y", "pkg"]));
+    cached.yes = false;
+    const { servers, withheld } = await configuredFor(h, "agent-a" as PatchbayAgentId);
+    expect(servers).toEqual([]);
+    expect(withheld).toEqual([
+      'MCP server "Odoo" wasn\'t given to the agent: npx needs Node.js, and none works on this system (node did not answer --version) — check it in Settings › MCP Servers to set one up.',
+    ]);
+  });
+
+  it("a configured server's probe sets its runtime up; patchbay's own servers never pass the step — their node is the host's", async () => {
+    const { runtime, calls } = managedNode({ yes: false });
+    const h = harness([], { runtime });
+    const id = await h.add("Odoo", stdio("npx", ["-y", "pkg"]));
+    calls.length = 0;
+    await h.gates.probe(id);
+    await h.gates.checkBuiltin();
+    await configuredFor(h, "agent-a" as PatchbayAgentId);
+    expect(calls).toEqual([
+      { command: "npx", cachedOnly: false },
+      { command: "npx", cachedOnly: true },
+    ]);
+  });
+
+  it("a declined runtime stores nothing — the card keeps the reason", async () => {
+    const h = harness([], {
+      runtime: async () => {
+        throw new Error("Node.js download declined (node did not answer --version) — install Node.js manually and try again");
+      },
+    });
+    await expect(h.add("Odoo", stdio("npx", ["-y", "pkg"]))).rejects.toThrow(/Node\.js download declined/);
+    expect(h.probed).toEqual([]);
+    expect(h.configs.list()).toEqual([]);
   });
 });
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **A local MCP server launched with npx or uvx can be added on a machine
+  without Node.js or uv.** Patchbay offers to download the runtime into its own
+  storage, as it already did for agents, and hands it to the server when a
+  session opens. Servers and agents launched with `node`, `npm` or `uv` get the
+  same offer. (#153)
+
 ## 0.90.2 — 2026-11-07
 
 A failed action now says what didn't happen and why, and one failure no longer

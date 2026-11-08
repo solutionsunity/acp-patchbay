@@ -534,9 +534,12 @@ flowchart TD
   bytes regardless adds them as a custom command). No digest: the prompt
   says the download can't be checked. A cached binary is never re-judged:
   what the cache holds passed the check on its way in. Then **runtime
-  resolution**: an `npx` agent needs Node.js, a
-  `uvx` agent needs uv (which provisions its own Python) — neither is
-  guaranteed on the machine, and Windows is where the gap bites.
+  resolution**: a launch by `node`, `npm` or `npx` needs Node.js, one by
+  `uv` or `uvx` needs uv (which provisions its own Python) — neither is
+  guaranteed on the machine, and Windows is where the gap bites. A bare
+  `python` is out by decision: it needs an interpreter with the server's
+  packages already installed, which a fresh one is not — a Python server
+  runs through `uvx` or `uv run`.
   **Detect-first, sandbox-fallback**, decided over always-sandboxing (Zed
   manages its own Node unconditionally): a working system runtime *is*
   reality, and shadowing it would fork behavior from the user's terminal.
@@ -564,6 +567,15 @@ flowchart TD
   managed runtime changes which interpreter runs, never where the agent
   keeps sessions, auth, or config, so terminal and patchbay copies stay
   one history.
+  **Stdio MCP servers** pass the same gate, cache and confirmation — but
+  the agent spawns them, not patchbay, so the managed dir rides the
+  server's mcpServers entry: a `PATH` in its own `env` (the managed dir
+  over the agent's spawn environment), never stored, the one thing that
+  reaches the server whatever environment the agent hands its children.
+  Patchbay's own check of a server — every add, edit and probe, the user
+  acting on it — may ask for the download; a session's attach never does
+  (a background probe opens sessions too): with no runtime there, the
+  server is withheld and the session says why.
 - **An agent's version** — one model, three facts and nothing between
   them. An agent added from the registry has an **origin** (the registry
   id, kept for good) and a **link** (the pinned version and the

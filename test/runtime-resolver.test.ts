@@ -26,6 +26,7 @@ import {
   resolveBinaryLaunch,
   resolveLaunch,
   resolveRuntime,
+  runtimeEnv,
   runtimeInstallSpec,
   type DownloadAsk,
 } from "../src/orchestrator/runtime-resolver";
@@ -47,6 +48,13 @@ describe("requiredRuntime", () => {
     expect(requiredRuntime("/usr/local/bin/npx")).toBe("node");
     expect(requiredRuntime("npx.CMD")).toBe("node");
     expect(requiredRuntime("uvx")).toBe("uv");
+    expect(requiredRuntime("node")).toBe("node");
+    expect(requiredRuntime("C:/Program Files/nodejs/node.exe")).toBe("node");
+    expect(requiredRuntime("npm")).toBe("node");
+    expect(requiredRuntime("uv")).toBe("uv");
+    // a bare python needs its packages installed — a fresh one has none
+    expect(requiredRuntime("python")).toBeNull();
+    expect(requiredRuntime("python3")).toBeNull();
     expect(requiredRuntime("kiro-cli")).toBeNull();
     expect(requiredRuntime("/opt/bin/some-agent")).toBeNull();
   });
@@ -261,6 +269,49 @@ describe("resolveRuntime", () => {
     expect(asks).toEqual([expect.objectContaining({ kind: "runtime", check: "sha256" })]);
     expect(held).toHaveLength(2); // one retry, same pinned digest
     expect(held[0]).toBe(held[1]);
+  });
+
+  it("an MCP server's launch: the same gate, its env given back with the managed dir over the env it spawns in", async () => {
+    const managed = join(tmp, "managed-node-mcp");
+    const asks: DownloadAsk[] = [];
+    const install = async (): Promise<InstalledBinary> => {
+      await mkdir(managed, { recursive: true });
+      await answering(managed, "pb-mcp-node", "v22.0.0");
+      await answering(managed, "pb-mcp-npx", "10.0.0");
+      return { command: join(managed, "pb-mcp-node"), args: [], env: {}, cwd: managed };
+    };
+    const env = await runtimeEnv(
+      { subject: "MCP server", label: "MCP server npx", command: "npx", env: { ODOO_URL: "u" }, base: { ...process.env, PATH: "/agent/bin" } },
+      { ...deps, probes: { interpreter: "pb-mcp-node", launcher: "pb-mcp-npx" }, install, confirmDownload: async (ask) => (asks.push(ask), true) },
+    );
+    expect(env).toEqual({ ODOO_URL: "u", PATH: `${managed}${delimiter}/agent/bin` });
+    expect(asks).toEqual([expect.objectContaining({ kind: "runtime", runtime: "node", for: "MCP server", command: "npx" })]);
+  });
+
+  it("cachedOnly never downloads: nothing cached, it fails naming the runtime, nothing asked", async () => {
+    let asked = false;
+    await expect(
+      runtimeEnv(
+        { subject: "MCP server", label: "MCP server npx", command: "npx", env: {} },
+        {
+          ...deps,
+          cacheRoot: join(tmp, "empty-cache"),
+          cachedOnly: true,
+          probes: { interpreter: "pb-none-node", launcher: "pb-none-npx" },
+          confirmDownload: async () => ((asked = true), true),
+        },
+      ),
+    ).rejects.toThrow(/^npx needs Node\.js, and none works on this system \(node did not answer --version\)$/);
+    expect(asked).toBe(false);
+  });
+
+  it("an MCP server's declined download says to try again, not to reconnect", async () => {
+    await expect(
+      runtimeEnv(
+        { subject: "MCP server", label: "MCP server npx", command: "npx", env: {} },
+        { ...deps, probes: { interpreter: "pb-none-node", launcher: "pb-none-npx" }, confirmDownload: async () => false },
+      ),
+    ).rejects.toThrow(/download declined .* — install Node\.js manually and try again$/);
   });
 
   it("a declined download fails the connect honestly", async () => {
