@@ -300,7 +300,8 @@ deliverable.
   it sits (`sudo`, `--watch`); a rejected word rejects the line, the order
   rules were added in decides nothing, and a line whose commands can't be
   seen from its text asks. A rule's decision shows its card, settled, naming
-  the rule.
+  the rule; an agent a rule denies is told it was the rule, by name, not the
+  user.
 - User can test a command line against the rules before an agent runs it:
   which rules matched, which one decided each command, and the line's verdict —
   with a rule being typed counted as added. Each rule list shows how many rules

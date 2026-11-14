@@ -15,6 +15,7 @@
 // tells the two apart.
 import { RequestError } from "./acp";
 import type { GateOutcome } from "./broker";
+import { ruleLabel } from "../shared/command-rules";
 
 /** ACP's error codes are open (any integer), but none means "refused".
  * `-32803` is LSP's RequestFailed — a well-formed request the receiver
@@ -34,13 +35,17 @@ export function isRefusal(err: unknown): boolean {
 }
 
 /** A gate's answer other than yes, as the agent's reply. `what` names the
- * request in the user's terms ("write to /a/b.ts", "command `rm -rf x`"). */
+ * request in the user's terms ("write to /a/b.ts", "command `rm -rf x`").
+ * A rule's deny names its rules, each once and without its layer, which
+ * means nothing to an agent: told which rule stopped it, an agent can say
+ * so and stop retrying what the rule matches. */
 export function gateRefusal(outcome: Exclude<GateOutcome, "accepted">, what: string): RequestError {
-  return refusal(
-    outcome === "cancelled"
-      ? RequestError.requestCancelled(undefined, `the turn was stopped before the user decided on the ${what}`)
-      : new RequestError(REQUEST_FAILED, `The user rejected the ${what}`),
-  );
+  if (outcome === "cancelled") {
+    return refusal(RequestError.requestCancelled(undefined, `the turn was stopped before the user decided on the ${what}`));
+  }
+  if (outcome === "rejected") return refusal(new RequestError(REQUEST_FAILED, `The user rejected the ${what}`));
+  const labels = [...new Set(outcome.denied.map((rule) => `\`${ruleLabel(rule)}\``))];
+  return refusal(new RequestError(REQUEST_FAILED, `A rule denies the ${what} (${labels.length === 1 ? "rule" : "rules"}: ${labels.join(", ")})`));
 }
 
 /** A read failure as the agent's reply: a missing file is `-32002` for that

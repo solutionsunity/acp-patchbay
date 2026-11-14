@@ -1709,9 +1709,16 @@ supplies each agent in its own standard — and ACP carries no channel for it
   an allow rule for each command no rule answered, exactly as it reads, and
   is offered only where that says it: none for a part that can't be seen, a
   command an ask rule holds (the user's own rule says ask), or a `*` a
-  pattern would read as a wildcard.
+  pattern would read as a wildcard. The agent's reply names the rule too
+  (refined 2026-11-14, #157): a deny reaches it as "A rule denies the
+  command `fortune -s` (rule: `fortune *`)", each deciding rule once and
+  without its layer, which means nothing to an agent — told which rule
+  stopped it, an agent can say so and stop retrying what the rule matches.
+  The user's Reject on the card stays "The user rejected the command …".
 - **A rule answers as the user; the mode is the agent's** (decided
-  2026-10-08). An agent's mode decides when it asks — Codex's
+  2026-10-08; refined 2026-11-14, #157: a rule keeps the user's authority,
+  but the agent is told a rule answered, not the user — see the bullet
+  above). An agent's mode decides when it asks — Codex's
   approval presets, Claude's Default vs Accept Edits. Whether the user
   answers that ask by hand or by a rule they set is patchbay's side, and a
   rule wins: it is what the user configured. The workspace stays in the

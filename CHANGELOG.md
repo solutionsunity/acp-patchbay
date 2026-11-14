@@ -4,6 +4,11 @@
 
 - **Clicking a row in the @ or / picker inserts it.** A click used to insert
   nothing, and only Enter or Tab picked a row. (#158)
+- **A command a rule denies is reported to the agent as the rule's answer.**
+  The agent used to hear "The user rejected the command …" whether you
+  clicked Reject or a deny rule stopped it. It now hears "A rule denies the
+  command … (rule: …)", naming the rule, so it can tell you why and stop
+  retrying what the rule matches. Your own Reject still reads as yours. (#157)
 
 ## 0.90.3 — 2026-11-08
 

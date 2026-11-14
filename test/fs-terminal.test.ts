@@ -320,7 +320,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const patchbaySessionId = await h.gates.create("c2" as PatchbayAgentId, "Fake Agent", workspaceRoot);
     await h.gates.prompt(patchbaySessionId, { text: "go" });
     expect(streamedText(patchbaySessionId, h.state())).toContain(
-      `command: rejected (-32803 The user rejected the command \`${formatCommandLine(process.execPath, ["-e", "1"])}\`)`,
+      `command: rejected (-32803 A rule denies the command \`${formatCommandLine(process.execPath, ["-e", "1"])}\` (rule: \`*\`))`,
     );
     expect(h.evidence()).toContain("terminal:used");
     expect(assertKind(h.state().transcripts[patchbaySessionId]?.find((b) => b.kind === "permission"), "permission").resolution).toEqual({ label: "Rejected", auto: true });

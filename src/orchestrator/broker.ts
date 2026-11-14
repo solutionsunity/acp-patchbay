@@ -45,8 +45,10 @@ import type { PatchbayAgentId, PatchbayAskId } from "../shared/ids";
 
 /** How one of patchbay's own gates settled. `cancelled` is the turn
  * stopping under an open card — the user never decided, which is not the
- * same as rejecting. */
-export type GateOutcome = "accepted" | "rejected" | "cancelled";
+ * same as rejecting. `denied` is a standing rule saying no before anyone
+ * was asked, carrying the rules that decided it — not the same as the user
+ * rejecting on the card. */
+export type GateOutcome = "accepted" | "rejected" | "cancelled" | { denied: readonly CommandRule[] };
 
 const ALLOW_ONCE: PermissionOptionView = { optionId: "allow_once", label: "Allow once", kind: "allow_once" };
 const ALLOW_ALWAYS: PermissionOptionView = { optionId: "allow_always", label: "Always allow", kind: "allow_always" };
@@ -328,7 +330,11 @@ export class PermissionBroker {
     };
     this.asks.show(id, card, judgement.verdict === "ask" ? undefined : judgement.verdict);
     const ended = await ending;
-    if (ended.end === "rule") return ended.allowed ? "accepted" : "rejected";
+    if (ended.end === "rule") {
+      if (ended.allowed) return "accepted";
+      // a command's deny verdict is always a rule's: no rule matched asks
+      return { denied: judgement.commands.flatMap((c) => (c.verdict === "deny" && c.by !== null ? [c.by.rule] : [])) };
+    }
     if (ended.end !== "user" || ended.choice.kind !== "option") return "cancelled";
     const picked = ended.choice.option.kind;
     if (picked === "allow_always" && always !== null) await this.persistAllowRules(always);

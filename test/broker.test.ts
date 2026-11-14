@@ -379,7 +379,7 @@ describe("PermissionBroker audit trail", () => {
     const { broker, rules, audit } = harness();
     await rules.set({ commandRules: [deny("rm -rf *")], writeScope: [] });
     const result = await broker.gateCommand({ patchbaySessionId: "s1" as PatchbaySessionId }, run("rm -rf /"));
-    expect(result).toBe("rejected");
+    expect(result).toEqual({ denied: [deny("rm -rf *")] });
     const tail = await audit.tail(10);
     expect(tail[0]).toMatchObject({ kind: "auto-deny", command: "rm -rf /" });
   });
@@ -545,7 +545,7 @@ describe("PermissionBroker.gateCommand — a rule's verdict shows its card", () 
     await expect(broker.gateCommand({ patchbaySessionId: "s1" as PatchbaySessionId }, run('bash -c "ls && sudo rm x"'))).resolves.toBe("accepted");
     events.length = 0;
     await rules.set({ commandRules: [allow("ls"), word("sudo")], writeScope: [] });
-    await expect(broker.gateCommand({ patchbaySessionId: "s1" as PatchbaySessionId }, run('bash -c "ls && sudo rm x"'))).resolves.toBe("rejected");
+    await expect(broker.gateCommand({ patchbaySessionId: "s1" as PatchbaySessionId }, run('bash -c "ls && sudo rm x"'))).resolves.toEqual({ denied: [word("sudo")] });
     expect(events.find((e) => e.kind === "permissionRequested")).toMatchObject({
       facts: [
         { label: "cwd", value: workspaceRoot },
