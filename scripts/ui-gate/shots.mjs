@@ -1096,6 +1096,29 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] opening the registry search asks for a fresh read`, (await p.evaluate(() => window.__actions.some((a) => a.kind === "browseRegistry"))));
   await p.screenshot({ path: `${OUT}/settings-combobox-${theme}.png` });
   await p.keyboard.press("Escape");
+  // #156: a failed registry read says so under the card's freshness line,
+  // with its reason, until a read confirms the registry current
+  const registryAgents = settingsState().registryAgents;
+  const registryRead = (fetchedAt, failure, reading = false) =>
+    p.evaluate(([agents, f, at, r]) => window.__patch([{ kind: "registryChanged", agents, fetchedAt: at, reading: r, failure: f }]), [registryAgents, failure, fetchedAt, reading]);
+  // while a read is on its way, Refresh spins and takes no click
+  await registryRead("", null, true);
+  const refresh = p.getByRole("button", { name: "Refresh registry" });
+  check(
+    `[${theme}] a read on its way: Refresh spins, disabled`,
+    (await refresh.locator(".codicon-modifier-spin").waitFor({ timeout: 3000 }).then(() => true, () => false)) && (await refresh.isDisabled()),
+  );
+  await refresh.screenshot({ path: `${OUT}/settings-registry-reading-${theme}.png` });
+  await registryRead("", { at: "2026-11-11T07:00:00.000Z", reason: "network error — read ECONNRESET" });
+  check(`[${theme}] the read ended: Refresh takes a click again`, (await refresh.locator(".codicon-modifier-spin").waitFor({ state: "detached", timeout: 3000 }).then(() => true, () => false)) && (await refresh.isEnabled()));
+  check(
+    `[${theme}] a failed registry read says so, with its reason, even before any read landed`,
+    await p.waitForSelector("[data-registry-failure]:has-text('network error — read ECONNRESET')", { timeout: 3000 }).then(() => true, () => false),
+  );
+  // the check above already failed when there is no line to shoot
+  await p.locator("[data-registry-failure]").screenshot({ path: `${OUT}/settings-registry-failure-${theme}.png`, timeout: 3000 }).catch(() => {});
+  await registryRead("2026-11-11T08:00:00.000Z", null);
+  check(`[${theme}] a read that lands clears the failure`, await p.waitForSelector("[data-registry-failure]", { state: "detached", timeout: 3000 }).then(() => true, () => false));
 
   await p.click("text=Capability matrix");
   const cell = await p.waitForSelector('[data-slot="table"] .st-v');

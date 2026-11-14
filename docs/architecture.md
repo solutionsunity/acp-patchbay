@@ -1514,7 +1514,14 @@ mechanism — MCP servers routed to agents:
   One read at a time,
   conditionally by its ETag (an unchanged registry costs a
   bodiless 304). Between reads the copy is shown with the date it was last
-  confirmed. The disk cache holds
+  confirmed, and a read that failed says so beside it — when, and why —
+  until a read confirms the registry current (decided 2026-11-14, #156: a
+  failed Refresh used to change nothing on screen, the old date reading
+  as a fresh check). The failure is held in memory only — the window's
+  first read says it again — and moves only that line: no update notice
+  rides it. A moment switched off reads nothing and so fails nothing. A
+  read on its way is the store's fact too, told when it starts and cleared
+  before its outcome is: Refresh spins for any read, a click joins it. The disk cache holds
   the registry *as served*, never patchbay's parse of it: a build that
   reads more of the format sees everything, where a parsed copy would keep
   what an older build dropped. Each agent entry is read on its own (many

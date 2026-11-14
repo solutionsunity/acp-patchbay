@@ -201,7 +201,7 @@ describe("AcpRegistryStore", () => {
     let updates = 0;
     const infos: string[] = [];
     const log: Logger = { trace: () => {}, debug: () => {}, info: (m) => infos.push(m), warn: () => {}, error: () => {} };
-    const store = new AcpRegistryStore(dir, () => updates++, () => DEFAULT_PREFERENCES, log);
+    const store = new AcpRegistryStore(dir, (change) => change === "moved" && updates++, () => DEFAULT_PREFERENCES, log);
     await store.read("manual");
     const before = store.current();
     expect(await store.read("manual")).toMatchObject({ ok: true });
@@ -223,6 +223,46 @@ describe("AcpRegistryStore", () => {
     expect(outcome).toMatchObject({ ok: false, reason: expect.stringContaining("network error") });
     expect(store.current().agents.map((a) => a.id)).toEqual(["bin-agent"]);
     expect(lines.some((l) => l.startsWith("ACP registry: read failed (Refresh registry) — network error"))).toBe(true);
+  });
+
+  it("a failed read is the store's to say until a read confirms the registry current (#156)", async () => {
+    await fresh();
+    const changes: string[] = [];
+    const store = new AcpRegistryStore(dir, (moved) => changes.push(moved), () => DEFAULT_PREFERENCES);
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("fetch failed"))));
+    const failed = await store.read("manual");
+    // said even when no read ever landed — nothing else would show
+    expect(store.current().fetchedAt).toBe("");
+    expect(store.lastFailure()).toEqual({ at: failed.at, reason: expect.stringContaining("network error") });
+    expect(changes).toEqual(["reading", "failed"]);
+    vi.stubGlobal("fetch", vi.fn(async () => json(payload)));
+    await store.read("manual");
+    expect(store.lastFailure()).toBeNull();
+    expect(changes).toEqual(["reading", "failed", "reading", "moved"]);
+  });
+
+  it("a read on its way is the store's to say, ended before its outcome is told", async () => {
+    await fresh();
+    let release!: (r: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => (release = resolve))));
+    const seen: [string, boolean][] = [];
+    const store: AcpRegistryStore = new AcpRegistryStore(dir, (change) => seen.push([change, store.reading()]), () => DEFAULT_PREFERENCES);
+    const first = store.read("startup");
+    const joined = store.read("manual"); // a click while a read is on its way joins it
+    expect(store.reading()).toBe(true);
+    await vi.waitFor(() => expect(release).toBeDefined());
+    release(json(payload));
+    expect(await joined).toBe(await first);
+    expect(seen).toEqual([["reading", true], ["moved", false]]);
+  });
+
+  it("a moment switched off reads nothing, and fails nothing", async () => {
+    await fresh();
+    const changes: string[] = [];
+    const store = new AcpRegistryStore(dir, (moved) => changes.push(moved), () => ({ ...DEFAULT_PREFERENCES, checkAgentUpdates: false }));
+    expect(await store.read("startup")).toMatchObject({ ok: false });
+    expect(store.lastFailure()).toBeNull();
+    expect(changes).toEqual([]);
   });
 
   it("the update-notice moments read only while their switch is on; a moment the user acts in always reads", async () => {

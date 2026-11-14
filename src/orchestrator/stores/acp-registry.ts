@@ -15,7 +15,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { count } from "../../shared/count";
-import type { PreferencesView, RegistryAgentView } from "../../shared/protocol";
+import type { PreferencesView, RegistryAgentView, RegistryFailureView } from "../../shared/protocol";
 import { type RegistryReadMoment, REGISTRY_READS } from "../../shared/registry-reads";
 import { type Logger, nullLogger } from "../logger";
 import { describeNetFailure, type NetClass, readBytes, readJson, switchedOn } from "../net";
@@ -235,12 +235,17 @@ export class AcpRegistryStore {
    * ledger behind `AcpRegistryData.icons`; persisted in the one cache file. */
   private iconCache: Record<string, { version: string; dataUri: string }> = {};
   private inflight: Promise<RegistryRead> | null = null;
+  /** Held in memory only: after a restart the window's first read says
+   * again whether the registry can be reached. */
+  private failure: RegistryFailureView | null = null;
 
   constructor(
     private readonly cacheDir: string,
-    /** The registry moved (read and confirmed current) — read it from
-     * `current()`; the store is its one holder, so no copy travels. */
-    private readonly onUpdated: () => void,
+    /** What the store answers changed — read it from `current()`,
+     * `reading()` and `lastFailure()`; the store is its one holder, so no
+     * copy travels. `reading`: a read started; `moved`: a read confirmed the
+     * registry current; `failed`: a read failed, the copy held as it was. */
+    private readonly onChanged: (change: "reading" | "moved" | "failed") => void,
     /** Read at each moment: an optional moment reads only while its switch is on. */
     private readonly preferences: () => PreferencesView,
     private readonly log: Logger = nullLogger,
@@ -259,6 +264,17 @@ export class AcpRegistryStore {
     return this.cache;
   }
 
+  /** Why the copy held may be stale: the last read failed, and none since
+   * confirmed the registry current. Null once one has. */
+  lastFailure(): RegistryFailureView | null {
+    return this.failure;
+  }
+
+  /** Whether a read is on its way — whichever moment started it. */
+  reading(): boolean {
+    return this.inflight !== null;
+  }
+
   /** The one way to the registry: reads it now, at `moment` — the log line
    * names it — and what it held becomes what it answered. Overlapping
    * moments share one read (named by the first). An optional moment whose
@@ -268,10 +284,21 @@ export class AcpRegistryStore {
     if (!switchedOn(why, this.preferences())) {
       return Promise.resolve({ ok: false, at: new Date().toISOString(), reason: "switched off in Preferences" });
     }
-    this.inflight ??= this.doRead(REGISTRY_READS[moment].said, why).finally(() => {
-      this.inflight = null;
-    });
+    if (this.inflight === null) {
+      this.inflight = this.readOnce(REGISTRY_READS[moment].said, why);
+      this.onChanged("reading");
+    }
     return this.inflight;
+  }
+
+  /** One read, start to end: what it ended in is said once it no longer
+   * reads, so a change never shows a read both ended and on its way. */
+  private async readOnce(when: string, why: NetClass): Promise<RegistryRead> {
+    const read = await this.doRead(when, why);
+    this.inflight = null;
+    this.failure = read.ok ? null : { at: read.at, reason: read.reason };
+    this.onChanged(read.ok ? "moved" : "failed");
+    return read;
   }
 
   private async doRead(when: string, why: NetClass): Promise<RegistryRead> {
@@ -289,7 +316,7 @@ export class AcpRegistryStore {
         this.cache = { ...this.cache, fetchedAt: at };
         await this.writeCacheFile();
         this.log.info(`ACP registry: up to date — ${count(this.cache.agents.length, "agent")} (${when})`);
-        this.onUpdated(); // confirmed current: "last checked" moves with it
+        // confirmed current is news too: "last checked" moves with it
         return { ok: true, at };
       }
       const reading = readRegistry(read.value.json);
@@ -300,7 +327,6 @@ export class AcpRegistryStore {
       this.adopt(reading, at);
       await this.writeCacheFile();
       this.log.info(`ACP registry: fetched — ${count(reading.agents.length, "agent")} (${when})`);
-      this.onUpdated();
       return { ok: true, at };
     } catch (err) {
       return fail(agentErrorText(err));

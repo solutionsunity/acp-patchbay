@@ -235,7 +235,11 @@ card; adding one collapses it back.
 Add Agent card: one mode at a time behind a toggle, never a registry field and a
 command field half-filled together — a searchable combobox (type to filter, click
 to pick, ✕ to clear; opening it reads the registry fresh, the list updating as the
-read lands) or a custom command line. Buttons in order: `Add` (submits
+read lands) or a custom command line. Under the card's title, the registry's
+freshness: how many agents it lists and when it was last confirmed, and,
+after a read that failed, when and why — until a read lands. While any read is
+on its way, whichever moment started it, `Refresh registry` spins and takes no
+click. Buttons in order: `Add` (submits
 whichever mode is active) · the mode toggle itself (`Add custom…` in registry
 mode, `Add from list` in custom mode). A
 registry agent already added is listed with `— added`; adding it again adds a

@@ -9,6 +9,12 @@
   clicked Reject or a deny rule stopped it. It now hears "A rule denies the
   command … (rule: …)", naming the rule, so it can tell you why and stop
   retrying what the rule matches. Your own Reject still reads as yours. (#157)
+- **A registry check that fails now says so in Settings.** Refresh registry, and
+  every other read of the ACP registry, used to fail with only a line in the log,
+  leaving the old "last checked" date looking current. The Add Agent card now
+  shows when the read failed and why (a proxy refusing the connection, an HTTP
+  error), until a read succeeds. While a read is on its way, Refresh registry
+  spins and waits for it. (#156)
 
 ## 0.90.3 — 2026-11-08
 

@@ -849,6 +849,13 @@ export interface DeclaredCapabilities {
 
 // ── agent-view channel ───────────────────────────────────────────────────────
 
+/** Why the registry copy shown may be stale: the last read failed, and
+ * none since confirmed the registry current — when, and why. */
+export interface RegistryFailureView {
+  at: string;
+  reason: string;
+}
+
 /** One agent of the official ACP registry, as patchbay presents it — the
  * registry record enriched with platform launch resolution and patchbay's
  * own code-table curation (asset locations, bypass-bridge observations).
@@ -2217,8 +2224,15 @@ export type AgentViewEvent =
       plan?: Readonly<Record<string, PlanUsageInfo>>;
     }
   /** Full replace — what the registry store holds changed: its copy loaded
-   * at start, or a read landed. `fetchedAt` dates it. */
-  | { kind: "registryChanged"; agents: readonly RegistryAgentView[]; fetchedAt: string }
+   * at start, a read started, landed, or failed. `fetchedAt` dates it. */
+  | {
+      kind: "registryChanged";
+      agents: readonly RegistryAgentView[];
+      fetchedAt: string;
+      /** A read is on its way, whichever moment started it. */
+      reading: boolean;
+      failure: RegistryFailureView | null;
+    }
   /** The complete stored preferences (never a patch) — one event, both
    * channels: the Preferences page renders it, the agent view gates its
    * composer stats on it. */
@@ -2483,7 +2497,8 @@ export function reduceAgentView(
       return { ...state, agents: reduceAgents(state.agents, event) };
     case "registryChanged":
       // The agent view needs only the list; the settings channel also keeps
-      // the snapshot's fetchedAt for the Add Agent card's freshness line.
+      // the snapshot's fetchedAt, reading and failure for the Add Agent
+      // card's freshness line and its Refresh button.
       return { ...state, registryAgents: event.agents };
     case "chatConnectStarted":
       return { ...state, chatConnect: { patchbayAgentId: event.patchbayAgentId, forPatchbaySessionId: event.forPatchbaySessionId } };
@@ -3142,6 +3157,8 @@ export interface SettingsState {
   agentQuestions: Readonly<Record<string, readonly ElicitationBlock[]>>;
   /** ISO time of the last successful ACP registry fetch; "" = never. */
   registryFetchedAt: string;
+  registryReading: boolean;
+  registryFailure: RegistryFailureView | null;
   /** Wire log (Audit page): live state of the raw-frame tap. Never
    * persisted — debugging is a session act, a reload always starts clean. */
   wireLog: { active: boolean; until: string | null };
@@ -3196,6 +3213,8 @@ export const initialSettingsState: SettingsState = {
   agentKnobs: {},
   agentQuestions: {},
   registryFetchedAt: "",
+  registryReading: false,
+  registryFailure: null,
   wireLog: { active: false, until: null },
   dataInventory: null,
   configImport: null,
@@ -3278,7 +3297,7 @@ export function reduceSettings(
       };
     }
     case "registryChanged":
-      return { ...state, registryAgents: event.agents, registryFetchedAt: event.fetchedAt };
+      return { ...state, registryAgents: event.agents, registryFetchedAt: event.fetchedAt, registryReading: event.reading, registryFailure: event.failure };
     case "permissionRulesChanged":
       return {
         ...state,

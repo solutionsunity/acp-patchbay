@@ -340,7 +340,7 @@ export function settingsState() {
         origin: "aug", link: null, previousVersion: null, lastSeenVersion: "0.36.0 (commit 7c61e5bb)",
       },
     ],
-    sessionsActiveToday: 7, agentKnobs: {}, agentQuestions: {}, registryFetchedAt: "",
+    sessionsActiveToday: 7, agentKnobs: {}, agentQuestions: {}, registryFetchedAt: "", registryReading: false, registryFailure: null,
     wireLog: { active: false, until: null }, dataInventory: null, configImport: null, commandTest: null,
     preferences, workspace: "file:///ws", savedRoots: { entries: [], missing: [] },
   };

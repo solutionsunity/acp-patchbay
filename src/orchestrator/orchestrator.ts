@@ -419,10 +419,11 @@ export class Orchestrator {
     this.acpRegistry = new AcpRegistryStore(
       join(place.globalStoragePath, "registry"),
       // A fetch that landed is the registry's fresh word — the moment a
-      // newer version becomes news (the cached copy at start is not).
-      () => {
+      // newer version becomes news (the cached copy at start is not). A
+      // read starting or failing moves only the line that says so.
+      (change) => {
         this.publishRegistry();
-        void this.ports.announceUpdates().catch(this.logCatch("announce updates"));
+        if (change === "moved") void this.ports.announceUpdates().catch(this.logCatch("announce updates"));
       },
       () => this.preferences.get(),
       log,
@@ -1362,6 +1363,8 @@ export class Orchestrator {
       kind: "registryChanged",
       agents: data.agents.map((a) => registryAgentView(a, data.icons)),
       fetchedAt: data.fetchedAt,
+      reading: this.acpRegistry.reading(),
+      failure: this.acpRegistry.lastFailure(),
     } as const;
     this.agentView.emit(event);
     this.settings.emit(event);

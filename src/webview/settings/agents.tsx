@@ -193,15 +193,22 @@ function AddAgentRow(props: {
         <Button
           variant="outline" size="sm"
           onClick={props.onRefreshRegistry}
-          title="Re-check the official ACP registry for new agents and versions"
+          disabled={props.state.registryReading}
+          title={props.state.registryReading ? "Reading the ACP registry…" : "Re-check the official ACP registry for new agents and versions"}
         >
-          <Icon name="refresh" /> Refresh registry
+          <Icon name={props.state.registryReading ? "loading" : "refresh"} spin={props.state.registryReading} /> Refresh registry
         </Button>
       </div>
       {props.state.registryFetchedAt !== "" && (
         <div className="note mx-0 mb-0 mt-1">
           {count(registryCount, "agent")} in the ACP registry · last
           checked {new Date(props.state.registryFetchedAt).toLocaleString()}
+        </div>
+      )}
+      {props.state.registryFailure !== null && (
+        <div className="note mx-0 mb-0 mt-1 text-warn" data-registry-failure>
+          The ACP registry couldn't be read at {new Date(props.state.registryFailure.at).toLocaleString()}:{" "}
+          {props.state.registryFailure.reason}
         </div>
       )}
       <div className="connect-form mt-2">
