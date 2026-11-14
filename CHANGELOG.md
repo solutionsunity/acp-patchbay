@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.90.4 — 2026-11-15
+
+Bug fixes: local-file links in agent answers open in the editor, picker rows
+insert on click, rule denials and failed registry reads say what happened.
 
 - **A link to a local file in an agent's answer opens it.** Clicking one used
   to do nothing. A file now opens in the editor, at the line `#L42` or `:42`
