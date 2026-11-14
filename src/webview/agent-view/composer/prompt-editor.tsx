@@ -448,9 +448,11 @@ function EditorCore(props: PromptEditorProps & { history: HistoryState }) {
   const menuStyle = isPositioned ? floatingStyles : { ...floatingStyles, visibility: "hidden" as const };
 
   /** Splits the typed trigger token out of its text node and swaps it for
-   * `replacement` + a trailing space (null: just removes it — the fixed
-   * mention rows resolve to chips, nothing stays inline). */
-  const replaceTrigger = (length: number, replacement: TextNode | null) => {
+   * the node `create` builds + a trailing space (null: just removes it — the
+   * fixed mention rows resolve to chips, nothing stays inline). A factory,
+   * not a node: Lexical builds a node only inside an update, and a row's
+   * click arrives outside one. */
+  const replaceTrigger = (length: number, create: (() => TextNode) | null) => {
     editor.update(() => {
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
@@ -464,10 +466,11 @@ function EditorCore(props: PromptEditorProps & { history: HistoryState }) {
       const pieces = start === 0 ? node.splitText(end) : node.splitText(start, end);
       const token = pieces[start === 0 ? 0 : 1];
       if (token === undefined) return;
-      if (replacement === null) {
+      if (create === null) {
         token.remove();
         return;
       }
+      const replacement = create();
       token.replace(replacement);
       const space = $createTextNode(" ");
       replacement.insertAfter(space);
@@ -477,13 +480,13 @@ function EditorCore(props: PromptEditorProps & { history: HistoryState }) {
   };
 
   const pickCommand = (name: string) => {
-    replaceTrigger(active!.token.length, $createCommandNode(`/${name}`));
+    replaceTrigger(active!.token.length, () => $createCommandNode(`/${name}`));
   };
   const pickMention = (entry: MentionEntry) => {
     const length = active!.token.length;
     if (entry.kind === "file" || entry.kind === "dir") {
       const label = `@${basename(entry.path)}${entry.kind === "dir" ? "/" : ""}`;
-      replaceTrigger(length, $createMentionNode(entry.path, label));
+      replaceTrigger(length, () => $createMentionNode(entry.path, label));
       return;
     }
     replaceTrigger(length, null);

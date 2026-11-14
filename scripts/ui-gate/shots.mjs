@@ -691,7 +691,18 @@ for (const theme of Object.keys(THEMES)) {
   // slash triggers mid-text too, not just at the prompt start
   await p.keyboard.type(" and /cre");
   check(`[${theme}] slash menu opens mid-text`, (await p.waitForSelector('.pop .it:has-text("create-plan")', { timeout: 3000 })) !== null);
-  await p.keyboard.press("Escape");
+  // a click on a row picks it as Enter does: the token is built inside the
+  // editor's update, never before it
+  await p.click('.pop .it:has-text("create-plan")');
+  check(`[${theme}] a clicked command row lands as inline token`, await p.waitForSelector('.input-shell .command-token:has-text("/create-plan")', { timeout: 3000 }).then(() => true, () => false));
+  await p.keyboard.type("@ap");
+  await p.click('.pop .it:has-text("app.ts")');
+  check(`[${theme}] a clicked file row lands as inline mention token`, await p.waitForFunction(() => document.querySelectorAll(".input-shell .mention-token").length === 2, null, { timeout: 3000 }).then(() => true, () => false));
+  await p.evaluate(() => window.__patch([{ kind: "workspaceFilesListed", query: "lib", files: [], dirs: ["/ws/lib"] }]));
+  await p.keyboard.type("@lib");
+  await p.click('.pop .it:has-text("lib")');
+  check(`[${theme}] a clicked folder row lands as inline mention token`, await p.waitForSelector('.input-shell .mention-token:has-text("@lib/")', { timeout: 3000 }).then(() => true, () => false));
+  await p.evaluate(() => window.__patch([{ kind: "workspaceFilesListed", query: "", files: [], dirs: [] }]));
 
   // ── context adder: a real popover — opens, and closes on outside click ──
   await p.click(".ctx-add");

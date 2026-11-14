@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Clicking a row in the @ or / picker inserts it.** A click used to insert
+  nothing, and only Enter or Tab picked a row. (#158)
+
 ## 0.90.3 — 2026-11-08
 
 A local MCP server launched with npx or uvx can now be added on a machine
