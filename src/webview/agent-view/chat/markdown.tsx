@@ -5,8 +5,11 @@
 // (message and thought chunks only; tool calls, diffs, and plans never
 // enter the markdown parser) renders through here, so rendering policy has
 // exactly one home.
-import { Streamdown, type ThemeInput } from "streamdown";
+import { createContext, useContext, type MouseEvent } from "react";
+import { defaultRehypePlugins, Streamdown, type ThemeInput } from "streamdown";
+import type { Plugin, PluggableList } from "unified";
 import { Icon } from "../../shared/icon";
+import { driveHrefAsFileUrl, isLocalHref } from "../../../shared/local-link";
 import { cjkPlugin } from "../cjk-plugin";
 import { shikiPlugin, SHIKI_THEMES, SUPPORTED } from "../highlighter";
 import { katexPlugin } from "../math-plugin";
@@ -39,8 +42,51 @@ const RENDERERS = [
   { language: [...SUPPORTED], component: ChatCodeBlock },
 ];
 
+type HastNode = { tagName?: string; properties?: Record<string, unknown>; children?: HastNode[] };
+
+/** A Windows drive path in a link is taken by every URL reader for a `C:`
+ * scheme — sanitize would strip it — so it is carried as its file: URI. */
+function driveLinks() {
+  const visit = (node: HastNode): void => {
+    const href = node.tagName === "a" ? node.properties?.href : undefined;
+    const url = typeof href === "string" ? driveHrefAsFileUrl(href) : null;
+    if (url !== null) node.properties!.href = url;
+    node.children?.forEach(visit);
+  };
+  return visit;
+}
+
+const [sanitize, schema] = defaultRehypePlugins.sanitize as [Plugin, { protocols?: Record<string, string[]> }];
+
+/** Streamdown's own steps less `harden`: as Streamdown configures it, it
+ * allows every prefix and protocol, so it guards nothing sanitize doesn't —
+ * yet it resolves each relative link against a placeholder origin, turning
+ * `../ui/a.ts` into `/ui/a.ts` and dropping a bare `a.ts`. Sanitize
+ * stays the guard (no script, no handler, no scheme off its list), its list
+ * widened by `file` — a local link is opened by the host, never the page. */
+const REHYPE: PluggableList = [
+  defaultRehypePlugins.raw!,
+  driveLinks,
+  [sanitize, { ...schema, protocols: { ...schema.protocols, href: [...(schema.protocols?.href ?? []), "file"] } }],
+];
+
+/** Opens a local link (a path, a file: URI) for the transcript it sits in —
+ * the host resolves it against where that agent works. Null outside one. */
+export const LocalLinks = createContext<((href: string) => void) | null>(null);
+
 export function AgentMarkdown({ text, live }: { text: string; live: boolean }) {
+  const openLocal = useContext(LocalLinks);
+  // VS Code opens a webview's web links itself and drops every other
+  // scheme silently — a local link is taken here and handed to the host.
+  // The href is read as written, never as the page resolved it.
+  const onClick = (e: MouseEvent) => {
+    const href = (e.target as Element).closest("a[href]")?.getAttribute("href");
+    if (openLocal === null || href == null || !isLocalHref(href)) return;
+    e.preventDefault();
+    openLocal(href);
+  };
   return (
+    <div className="contents" onClick={onClick}>
     <Streamdown
       // Always block mode ("streaming"), even after the turn ends: static
       // mode renders ONE wrapper whose dir="auto" is detected over the
@@ -67,6 +113,7 @@ export function AgentMarkdown({ text, live }: { text: string; live: boolean }) {
       // the accountants/operations half of the audience
       icons={SD_ICONS}
       lineNumbers={false}
+      rehypePlugins={REHYPE}
       // VS Code's workbench already interposes its own trusted-domain
       // prompt on every external link a webview opens — Streamdown's
       // link-safety modal would double-gate the same click (and renders
@@ -75,5 +122,6 @@ export function AgentMarkdown({ text, live }: { text: string; live: boolean }) {
     >
       {text}
     </Streamdown>
+    </div>
   );
 }

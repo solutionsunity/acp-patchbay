@@ -1920,6 +1920,12 @@ export class SessionsStore {
     return { workspace: [cwd, ...rest].filter(isFolder), added: rest.filter((p) => !isFolder(p)) };
   }
 
+  /** Where a transcript's agent works: a sub-agent's reported directory —
+   * its parent's where unreported — or the session's cwd. */
+  cwdOf(patchbaySessionId: PatchbaySessionId, subagent?: PatchbaySessionId): string {
+    return (subagent === undefined ? undefined : this.subagentRoots(patchbaySessionId, subagent)[0]) ?? this.rootsOf(patchbaySessionId)[0]!;
+  }
+
   /** A sub-agent's root set: the directory its agent reported for it, then
    * the additional ones — each, where unreported, its parent's, so one
    * placed in a worktree of its own reaches only what it was given there.

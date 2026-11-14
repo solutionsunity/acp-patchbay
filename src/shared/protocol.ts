@@ -341,6 +341,10 @@ export type Action =
    * files-panel rows (the view never touches fs). `line` is the location's
    * 1-based line — absent opens at the top. */
   | { kind: "openFile"; path: string; line?: number }
+  /** Open a local link in agent text — a path or a file: URI, as the agent
+   * wrote it. The host resolves it against where that transcript's agent
+   * works (a sub-agent's when `subagentId`), which the view doesn't know. */
+  | { kind: "openLink"; patchbaySessionId: PatchbaySessionId; subagentId?: PatchbaySessionId; href: string }
   /** Open a rendered mermaid SVG as an editor-area panel — the in-chat
    * fullscreen maxes out at the sidebar column; the files area is where a
    * big diagram can breathe. */

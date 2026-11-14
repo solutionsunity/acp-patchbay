@@ -39,6 +39,7 @@ import { sameRule, withRule } from "./stores/permission-rules";
 import { recoverLegacyGlobalState } from "./stores/vscdb-recovery";
 import { statusBarContent } from "./status-bar";
 import { editorLineOf } from "./tool-locations";
+import { localLinkTarget } from "./local-link";
 import type { PatchbayAskId, PatchbayMcpServerId, PatchbaySessionId } from "../shared/ids";
 import { isFolder, Orchestrator } from "./orchestrator";
 
@@ -1016,6 +1017,12 @@ export class OrchestratorHost {
         // files panel rows and tool-call locations — absolute paths
         await this.openFileAt(action.path, action.line);
         break;
+      case "openLink": {
+        const target = localLinkTarget(action.href, this.orchestrator.sessions.cwdOf(action.patchbaySessionId, action.subagentId));
+        if (target === null) throw new Error(`${action.href} names no file on this machine`);
+        await this.openFileAt(target.path, target.line);
+        break;
+      }
       case "addOrUpdateAgentConfig":
         await this.orchestrator.agents.save(action.config, action.commandLine);
         break;

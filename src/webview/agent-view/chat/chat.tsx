@@ -41,7 +41,7 @@ import {
   ToolRunCard,
   UserMessage,
 } from "./blocks";
-import { AgentMarkdown } from "./markdown";
+import { AgentMarkdown, LocalLinks } from "./markdown";
 import { DiffCard, PermissionCard, TerminalCard } from "./cards";
 import { ElicitationCard } from "../../shared/question-card";
 import { StatePage } from "./state-page";
@@ -317,6 +317,14 @@ export function Chat(props: {
   // The transcript on view — a sub-agent's, or the session's: where its
   // blocks' actions go, and what its reading position is kept under.
   const activePatchbaySessionId = props.subagent?.view.id ?? active?.id;
+  const subagentId = props.subagent?.view.id;
+  const openLocalLink = useCallback(
+    (href: string) => {
+      if (active === null) return;
+      send(subagentId === undefined ? { kind: "openLink", patchbaySessionId: active.id, href } : { kind: "openLink", patchbaySessionId: active.id, subagentId, href });
+    },
+    [send, active?.id, subagentId],
+  );
   const chatRef = useRef<HTMLDivElement>(null);
   const { blocks, derived } = props;
   const terminalBlocks = useMemo(
@@ -606,6 +614,7 @@ export function Chat(props: {
     <TerminalBlocks.Provider value={terminalBlocks}>
     <ToolDisplayPrefs.Provider value={props.state.preferences}>
     <PromptNav.Provider value={promptNav}>
+    <LocalLinks.Provider value={openLocalLink}>
     {props.subagent !== undefined && (
       <div className="subagent-bar">
         {props.subagent.path.map((id) => (
@@ -707,6 +716,7 @@ export function Chat(props: {
         </div>
       )}
     </div>
+    </LocalLinks.Provider>
     </PromptNav.Provider>
     </ToolDisplayPrefs.Provider>
     </TerminalBlocks.Provider>,

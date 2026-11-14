@@ -550,6 +550,37 @@ for (const theme of Object.keys(THEMES)) {
   await p.waitForSelector(".files-panel", { state: "detached", timeout: 3000 });
   await p.evaluate(() => window.__patch([{ kind: "contextRootsChanged", patchbaySessionId: "s1", roots: [] }]));
 
+  // ── links in agent text (#159): a local one goes to the host as written —
+  // a sibling project's, a bare name, a Windows drive path (as its file:
+  // URI) — for the host to resolve against where the agent works; a web
+  // link is VS Code's own, left alone ──
+  await p.evaluate(() =>
+    window.__patch([
+      {
+        kind: "agentTextDelta",
+        patchbaySessionId: "s1",
+        blockId: "sep0",
+        text: " — see [the plan](../ui/my%20plan.md#L3), [notes](notes.md), [the log](C:\\Users\\me\\my%20log.md:12) and [the site](https://example.com).",
+      },
+    ]),
+  );
+  await p.waitForSelector('a:text-is("the site")', { timeout: 3000 });
+  const clickLink = (selector) =>
+    p.$eval(selector, (a) => {
+      const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+      a.dispatchEvent(click);
+      return click.defaultPrevented;
+    }).catch(() => null);
+  const linksSent = () => p.evaluate(() => window.__actions.filter((a) => a.kind === "openLink").map((a) => a.href));
+  const localHrefs = ["../ui/my%20plan.md#L3", "notes.md", "file:///C:/Users/me/my%20log.md:12"];
+  for (const href of localHrefs) check(`[${theme}] the local link ${href} is on the page, its click taken from it`, (await clickLink(`a[href="${href}"]`)) === true);
+  check(
+    `[${theme}] each local link goes to the host as written, with its session (${JSON.stringify(await linksSent())})`,
+    JSON.stringify(await linksSent()) === JSON.stringify(localHrefs) &&
+      (await p.evaluate(() => window.__actions.filter((a) => a.kind === "openLink").every((a) => a.patchbaySessionId === "s1"))),
+  );
+  check(`[${theme}] a web link's click is VS Code's, untouched`, (await clickLink('a:text-is("the site")')) === false && (await linksSent()).length === localHrefs.length);
+
   // ── prompts chip (#59): the human's prompts, newest first — the words go
   // to the prompt in the transcript, Copy takes them, Reuse puts them back
   // in an empty composer; each bubble steps to its neighbours ──

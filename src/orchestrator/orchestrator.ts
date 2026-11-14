@@ -566,7 +566,7 @@ export class Orchestrator {
           const owner = this.ownerOf(patchbayAgentId, sessionId);
           return owner.kind === "user" ? this.requesterOf(owner) : undefined;
         },
-        ({ patchbaySessionId, subagent }) => this.sessions.subagentRoots(patchbaySessionId, subagent.id)[0] ?? this.sessions.rootsOf(patchbaySessionId)[0]!,
+        ({ patchbaySessionId, subagent }) => this.sessions.cwdOf(patchbaySessionId, subagent.id),
       ),
     }, log, {
       // Launch prerequisites (runtime-resolver.ts), as phases of the

@@ -222,9 +222,22 @@ The concrete rendering architecture of the chat/agent view: how ACP
 **Streamdown** (MIT, Vercel AI SDK team) as a drop-in `react-markdown`
 replacement. It handles unterminated/incomplete markdown gracefully (unclosed code
 fences, unclosed bold/links) during streaming, Shiki syntax highlighting, GFM, and
-built-in security hardening (`harden-react-markdown` + `rehype-sanitize`, allowed
-image/link origin prefixes) — load-bearing, not optional, since agent output is
-attacker-controllable content rendered into a webview with real DOM access.
+`rehype-sanitize` — load-bearing, not optional, since agent output is
+attacker-controllable content rendered into a webview with real DOM access: no
+script, no event handler, no link scheme off its list. *(Refined 2026-11-15, #159,
+from "built-in security hardening (`harden-react-markdown` + `rehype-sanitize`,
+allowed image/link origin prefixes)": Streamdown runs `harden` allowing every
+prefix and protocol, so it guarded nothing sanitize doesn't, while it resolved
+each relative link against a placeholder origin — `../ui/plan.md` became
+`/ui/plan.md`, a bare `plan.md` was dropped. The chat runs Streamdown's steps
+less `harden`; sanitize's link schemes gain `file`, and a Windows drive path
+(`C:\…`, a `C:` scheme to any URL reader) is carried as its `file:` URI. A
+local link is opened by the extension host, never by the page; VS Code itself
+opens a webview's http, https, mailto and `vscode:` links only, so a local one
+is never opened twice. Two smaller differences: links lose `harden`'s
+`target="_blank"`, which VS Code's own click handling never read; and a bare
+relative image (`![x](a.png)`) no longer shows the "Image blocked" placeholder,
+but fails to load like `../a.png` already did.)*
 Memoized block-level re-rendering so only the actively-streaming tail re-parses per
 update. Tree-shakeable plugins as needed: GFM, Mermaid, KaTeX math, CJK.
 

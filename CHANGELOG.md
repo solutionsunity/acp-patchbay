@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A link to a local file in an agent's answer opens it.** Clicking one used
+  to do nothing. A file now opens in the editor, at the line `#L42` or `:42`
+  names; a directory is revealed in the Explorer; a link that names nothing
+  on this machine says why. Relative paths resolve against where the agent
+  works, a sibling project's included, and absolute paths, Windows drive
+  paths and `file:` links work too. Web links open as before. (#159)
 - **Clicking a row in the @ or / picker inserts it.** A click used to insert
   nothing, and only Enter or Tab picked a row. (#158)
 - **A command a rule denies is reported to the agent as the rule's answer.**
