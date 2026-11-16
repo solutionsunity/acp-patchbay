@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Installing OpenCode V2 on Windows stops failing at `tar exited 128`.** The
+  installer asked PATH for `tar`, and an editor started from a Git Bash shell
+  hands its extension host a PATH where GNU tar comes first: it read the
+  staging path `C:\…\download.zip` as `host:path` and died. It now names
+  System32's `tar.exe` — bsdtar, which reads `.zip` and takes Windows paths —
+  and a tool that won't start reports the path it tried.
+
 ## 0.90.4 — 2026-11-15
 
 Bug fixes: local-file links in agent answers open in the editor, picker rows

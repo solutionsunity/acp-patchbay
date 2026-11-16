@@ -107,13 +107,35 @@ export function isBinaryInstalled(
   return pathExists(resolvedBinaryPath(cacheRoot, distribution, version, cmd));
 }
 
-/** Shells out to the system `tar` — GNU tar (Linux) / bsdtar (macOS, and
- * Windows 10 1803+ ships tar.exe as bsdtar too, which also reads .zip) —
- * rather than adding a zip/tar dependency for a format set every platform
- * this extension targets already covers natively. */
+/** Which archive tool to run, rather than adding a zip/tar dependency for a
+ * format set every platform this extension targets covers natively: GNU tar
+ * on Linux, bsdtar on macOS.
+ *
+ * On Windows the bare name is not enough — it resolves to whichever tar the
+ * process that started the editor happened to put first on PATH. A shell
+ * like Git Bash puts its own GNU tar there, and GNU tar reads a Windows
+ * path's drive letter as a remote host (`Cannot connect to C: resolve
+ * failed`, exit 128) and cannot open a .zip at all, which is the format the
+ * Windows runtime archives are served as (runtime-resolver.ts). System32's
+ * tar is bsdtar — it reads .zip and .tar.gz and takes Windows paths — and
+ * Windows 10 1803+ ships it, so name it outright.
+ *
+ * Built with backslashes, not `join`: this names a Windows path whatever
+ * host runs the code that asks. */
+export function tarCommand(
+  platform: NodeJS.Platform = process.platform,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  if (platform !== "win32") return "tar";
+  const root = (env.SystemRoot ?? `${env.SystemDrive ?? "C:"}\\Windows`).replace(/[\\/]+$/, "");
+  return `${root}\\System32\\tar.exe`;
+}
+
+/** Extracts into the staging dir with `tarCommand`'s tool. */
 async function extractArchive(archivePath: string, destDir: string): Promise<void> {
-  const answer = await runToExit("tar", ["-xf", archivePath, "-C", destDir], { env: process.env });
-  if (answer === null) throw new Error("tar could not be run");
+  const tar = tarCommand();
+  const answer = await runToExit(tar, ["-xf", archivePath, "-C", destDir], { env: process.env });
+  if (answer === null) throw new Error(`${tar} could not be run`);
   if (answer.code !== 0) throw new Error(`tar exited ${answer.code}: ${answer.stderr.trim()}`);
 }
 

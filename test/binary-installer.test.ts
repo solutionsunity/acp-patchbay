@@ -11,8 +11,10 @@ import {
   ChecksumMismatch,
   installBinary,
   parseSha256,
+  tarCommand,
   type BinaryInstallSpec,
 } from "../src/orchestrator/stores/binary-installer";
+import { runToExit } from "../src/orchestrator/process-tree";
 
 const BYTES = Buffer.from("#!/bin/sh\necho agent\n");
 const DIGEST = createHash("sha256").update(BYTES).digest("hex");
@@ -50,6 +52,41 @@ describe("parseSha256", () => {
       expect(parseSha256(raw)).toBeNull();
     }
   });
+});
+
+describe("tarCommand — which tar the extract runs", () => {
+  // What this pins: an editor started from a shell that put its own GNU tar
+  // (Git Bash) ahead of System32 extracted nothing at all. GNU tar reads a
+  // Windows path's drive letter as a remote host — `Cannot connect to C:
+  // resolve failed`, exit 128 — and cannot open the .zip a Windows runtime
+  // archive is served as.
+  it("on Windows it is System32's tar, named outright so PATH cannot beat it", () => {
+    expect(tarCommand("win32", { SystemRoot: "C:\\Windows" })).toBe("C:\\Windows\\System32\\tar.exe");
+  });
+
+  it("it follows the Windows root the environment names, never a hardcoded C:", () => {
+    expect(tarCommand("win32", { SystemRoot: "D:\\win" })).toBe("D:\\win\\System32\\tar.exe");
+    expect(tarCommand("win32", { SystemDrive: "E:" })).toBe("E:\\Windows\\System32\\tar.exe");
+    expect(tarCommand("win32", {})).toBe("C:\\Windows\\System32\\tar.exe");
+  });
+
+  it("a root that already ends in a separator does not double it", () => {
+    expect(tarCommand("win32", { SystemRoot: "C:\\Windows\\" })).toBe("C:\\Windows\\System32\\tar.exe");
+  });
+
+  it("elsewhere the bare name is enough — there is one tar per platform", () => {
+    for (const platform of ["linux", "darwin", "freebsd"] as const) {
+      expect(tarCommand(platform, {})).toBe("tar");
+    }
+  });
+
+  it.runIf(process.platform === "win32")(
+    "what this host resolves really is bsdtar — the tool that reads .zip",
+    async () => {
+      const answer = await runToExit(tarCommand(), ["--version"], { env: process.env });
+      expect(answer?.stdout).toMatch(/bsdtar/);
+    },
+  );
 });
 
 describe("installBinary — the published digest", () => {
