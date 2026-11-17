@@ -11,6 +11,11 @@
 // user's call, made with Copy — and the button says so rather than hiding.
 // A cut turn's words (QueuedPrompt.cut) wait on the user in front: they say
 // why, and send only by the row's own Send.
+// The band is bounded: past its cap the rows scroll inside it, so no depth of
+// queue takes the chat or the composer. It follows its tail — the prompt just
+// held is the one the user looks for, and the only one that edits — and
+// stays put when the head fires or a cut turn's words join in front.
+import { useEffect, useRef } from "react";
 import type { QueuedPrompt } from "../../shared/protocol";
 import { useActions } from "../shared/actions";
 import { Icon } from "../shared/icon";
@@ -30,9 +35,15 @@ export function QueueBand({
   /** The durable draft is empty — the only state a take-back lands in. */
   composerEmpty: boolean;
 }) {
+  const bandRef = useRef<HTMLDivElement>(null);
+  const tailId = queued.at(-1)?.id;
+  useEffect(() => {
+    const band = bandRef.current;
+    if (band !== null) band.scrollTop = band.scrollHeight;
+  }, [tailId]);
   if (queued.length === 0) return null;
   return (
-    <div className="queue-band">
+    <div className="queue-band" ref={bandRef}>
       {queued.map((q, i) => (
         <QueueRow
           key={q.id}

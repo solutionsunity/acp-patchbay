@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A long queue of held prompts no longer takes the panel.** Each prompt
+  sent while a turn runs added a row above the composer with no limit, so a
+  deep queue pushed the chat and the composer out of view. The band now
+  takes at most a quarter of the panel and scrolls inside it, the newest
+  prompt in view. (#166)
 - **Installing OpenCode V2 on Windows stops failing at `tar exited 128`.** The
   installer asked PATH for `tar`, and an editor started from a Git Bash shell
   hands its extension host a PATH where GNU tar comes first: it read the

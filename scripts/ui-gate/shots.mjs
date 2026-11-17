@@ -1913,6 +1913,38 @@ for (const theme of Object.keys(THEMES)) {
   await p.close();
 }
 
+// ── a deep queue stays inside its band (#166): the rows scroll there, the
+// newest in view, and the chat and composer keep their room. Theme-independent. ──
+{
+  const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 600 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".prompt-editor");
+  await p.evaluate(() =>
+    window.__patch(
+      Array.from({ length: 100 }, (_, i) => ({ kind: "promptQueued", patchbaySessionId: "s1", prompt: { id: `deep${i}`, text: `held prompt ${i}` } })),
+    ),
+  );
+  await p.waitForFunction(() => document.querySelectorAll(".queue-row").length > 100);
+  const deep = await p.evaluate(() => {
+    const band = document.querySelector(".queue-band").getBoundingClientRect();
+    const tail = [...document.querySelectorAll(".queue-row")].at(-1).getBoundingClientRect();
+    return {
+      band: Math.round(band.height),
+      cap: Math.round(window.innerHeight / 4),
+      tailInBand: tail.top >= band.top && tail.bottom <= band.bottom,
+      chat: Math.round(document.querySelector(".chat").getBoundingClientRect().height),
+      editorBottom: Math.round(document.querySelector(".prompt-editor").getBoundingClientRect().bottom),
+      height: window.innerHeight,
+    };
+  });
+  check(
+    `a deep queue scrolls inside its band, newest in view, chat and composer in the panel (${JSON.stringify(deep)})`,
+    deep.band <= deep.cap && deep.tailInBand && deep.chat > 0 && deep.editorBottom <= deep.height,
+  );
+  await p.screenshot({ path: `${OUT}/queue-deep.png` });
+  await p.close();
+}
+
 // ── a cut turn's held words say why and send only by their own Send
 // (#120) — at the narrowest panel, every control in view. Theme-independent. ──
 {

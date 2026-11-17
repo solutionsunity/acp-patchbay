@@ -139,7 +139,8 @@ removes; the tail row takes back into the composer, its words and its chips
 together. A message an agent crash cut off mid-answer comes back in front,
 marked **cut off** (warning border): it sends only by its own Send again —
 the agent may already have acted on it — and the rows behind it wait on it;
-removing it lets them go.
+removing it lets them go. The band takes at most a quarter of the panel: a deeper
+queue scrolls inside it, the newest row in view.
 
 Binding rule: **above the input = what the agent will see (context, nouns); below
 the input = how the turn fires (dials + dispatch).**
