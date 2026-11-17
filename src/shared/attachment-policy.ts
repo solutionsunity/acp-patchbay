@@ -50,3 +50,12 @@ export function refusalMessage(name: string, size: number, maxBytes: number): st
   const mb = (n: number) => (n / (1024 * 1024)).toFixed(1);
   return `${name}: ${mb(size)} MB exceeds the ${mb(maxBytes)} MB attachment limit (Settings → Preferences)`;
 }
+
+/** Where a folder goes instead: the composer takes one only by picking it. */
+export const FOLDER_PICK_HINT = "A folder is attached with + › Attach folder…";
+
+/** An item the platform handed over but can't read — a folder pasted from
+ * the file manager is one: its item is there, reading it fails. */
+export function unreadableMessage(name: string): string {
+  return `${name} wasn't attached: it couldn't be read. ${FOLDER_PICK_HINT}`;
+}

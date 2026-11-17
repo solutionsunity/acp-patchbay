@@ -918,6 +918,32 @@ for (const theme of Object.keys(THEMES)) {
     return { over, dropped, name: action?.name, base64: action?.base64 };
   });
   check(`[${theme}] dropped file leaves as an attachment action with its bytes`, drop.over && drop.dropped && drop.name === "note.txt" && drop.base64 === "aGVsbG8=");
+  // #172: a pasted item that can't be read — a folder copied in the file
+  // manager reads as a failure — is named in a notice, and the rest of the
+  // same paste is attached. The read failure is the platform's, stood in
+  // for here by a FileReader that fails on that one name.
+  const pastedFolder = await p.evaluate(async () => {
+    const read = FileReader.prototype.readAsDataURL;
+    FileReader.prototype.readAsDataURL = function (blob) {
+      if (blob.name === "research") {
+        queueMicrotask(() => this.onerror?.(new ProgressEvent("error")));
+        return;
+      }
+      read.call(this, blob);
+    };
+    const dt = new DataTransfer();
+    dt.items.add(new File([""], "research"));
+    dt.items.add(new File(["hi"], "kept.txt", { type: "text/plain" }));
+    document.querySelector(".prompt-editor").focus();
+    document.querySelector(".prompt-editor").dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 300));
+    FileReader.prototype.readAsDataURL = read;
+    return {
+      notice: document.querySelector(".toast")?.textContent ?? "",
+      kept: window.__actions.some((a) => a.kind === "addDroppedFileContext" && a.name === "kept.txt"),
+    };
+  });
+  check(`[${theme}] a pasted folder is named in a notice, and the rest of the paste is attached (${JSON.stringify(pastedFolder)})`, pastedFolder.notice.includes("research wasn't attached") && pastedFolder.notice.includes("Attach folder") && pastedFolder.kept);
   await p.close();
 
   // ── chat at the narrowest side-panel width: unbreakable tokens (a URL as

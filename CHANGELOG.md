@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Pasting a folder says it wasn't attached.** A folder copied in the file
+  manager and pasted into the composer attached nothing and said nothing,
+  and any files pasted with it were lost too. It is now named in a notice
+  that points to **+** › **Attach folder…**, and the rest of the paste is
+  attached. A dropped folder's notice points there as well. (#172)
 - **A link to a folder outside the workspace opens it.** Clicking one did
   nothing and said nothing: VS Code's Explorer shows only workspace
   folders. Such a folder now opens in your system's file manager; in a

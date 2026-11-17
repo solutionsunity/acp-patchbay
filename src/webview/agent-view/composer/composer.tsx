@@ -22,6 +22,7 @@ import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import type { SessionTotals } from "../chat/view-model";
 import { ingestFiles } from "./ingress";
+import { FOLDER_PICK_HINT } from "../../../shared/attachment-policy";
 import { COMPOSER_HAS_TEXT, composerControls } from "./composer-controls";
 import type { RootsControls } from "./roots-controls";
 import { Knobs } from "./knobs";
@@ -147,7 +148,7 @@ export function Composer(props: {
     // entry API is the only place a dropped directory is distinguishable.
     const items = [...e.dataTransfer.items];
     const dirs = items.filter((it) => it.webkitGetAsEntry?.()?.isDirectory === true).length;
-    if (dirs > 0) props.onNotice("Folders can't be attached — drop files individually");
+    if (dirs > 0) props.onNotice(`Folders can't be dropped here. ${FOLDER_PICK_HINT}`);
     // Bytes are the only thing a drop can carry here. An OS file drop
     // reaches this handler only while Shift is held: without it, VS Code's
     // webview host hands the drag to the workbench before the drop lands

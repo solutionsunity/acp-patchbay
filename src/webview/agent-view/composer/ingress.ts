@@ -11,7 +11,7 @@
 // the image chip's mimeType be a required field with no defaults anywhere:
 // type and bytes are proven to match at the moment they enter, and
 // nowhere later.
-import { classify, refusalMessage } from "../../../shared/attachment-policy";
+import { classify, refusalMessage, unreadableMessage } from "../../../shared/attachment-policy";
 
 export interface IngestedImage {
   base64: string;
@@ -34,7 +34,9 @@ export interface IngressOutcome {
 }
 
 /** Run every candidate through the decision table. Never throws — each
- * file lands in exactly one of the three outcome buckets. */
+ * file lands in exactly one of the three outcome buckets: one whose bytes
+ * can't be read (a pasted folder) is refused, by name, and the rest of the
+ * batch goes on. */
 export async function ingestFiles(
   files: readonly File[],
   maxBytes: number,
@@ -42,40 +44,44 @@ export async function ingestFiles(
   const out: IngressOutcome = { images: [], files: [], refusals: [] };
   for (const file of files) {
     const name = file.name !== "" ? file.name : "pasted image";
-    switch (classify(file.type, file.size, maxBytes)) {
-      case "refuse-size":
-        out.refusals.push(refusalMessage(name, file.size, maxBytes));
-        break;
-      case "image-passthrough":
-        out.images.push({
-          base64: await toBase64(file),
-          mimeType: file.type,
-          label: file.name !== "" ? `Image: ${file.name}` : `Image (${file.type})`,
-        });
-        break;
-      case "image-reencode": {
-        // Type and bytes move together: after the re-encode, image/png
-        // genuinely describes the payload. When the platform can't decode
-        // it (Chromium's createImageBitmap — svg blobs notably fail), or
-        // the PNG blows past the cap the original fit under, the bytes are
-        // still honestly attachable — just not as an image block: degrade
-        // to the file lane with the ORIGINAL bytes and type (the agent
-        // reads it itself). Refusal stays size-only.
-        const png = await reencodeToPng(file);
-        if (png === null || png.size > maxBytes) {
-          out.files.push({ name, mimeType: file.type, base64: await toBase64(file) });
-        } else {
+    try {
+      switch (classify(file.type, file.size, maxBytes)) {
+        case "refuse-size":
+          out.refusals.push(refusalMessage(name, file.size, maxBytes));
+          break;
+        case "image-passthrough":
           out.images.push({
-            base64: await toBase64(png),
-            mimeType: "image/png",
-            label: file.name !== "" ? `Image: ${file.name}` : "Image (image/png)",
+            base64: await toBase64(file),
+            mimeType: file.type,
+            label: file.name !== "" ? `Image: ${file.name}` : `Image (${file.type})`,
           });
+          break;
+        case "image-reencode": {
+          // Type and bytes move together: after the re-encode, image/png
+          // genuinely describes the payload. When the platform can't decode
+          // it (Chromium's createImageBitmap — svg blobs notably fail), or
+          // the PNG blows past the cap the original fit under, the bytes are
+          // still honestly attachable — just not as an image block: degrade
+          // to the file lane with the ORIGINAL bytes and type (the agent
+          // reads it itself). Refusal stays size-only.
+          const png = await reencodeToPng(file);
+          if (png === null || png.size > maxBytes) {
+            out.files.push({ name, mimeType: file.type, base64: await toBase64(file) });
+          } else {
+            out.images.push({
+              base64: await toBase64(png),
+              mimeType: "image/png",
+              label: file.name !== "" ? `Image: ${file.name}` : "Image (image/png)",
+            });
+          }
+          break;
         }
-        break;
+        case "file":
+          out.files.push({ name, mimeType: file.type, base64: await toBase64(file) });
+          break;
       }
-      case "file":
-        out.files.push({ name, mimeType: file.type, base64: await toBase64(file) });
-        break;
+    } catch {
+      out.refusals.push(unreadableMessage(name));
     }
   }
   return out;

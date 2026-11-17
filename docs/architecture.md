@@ -1503,8 +1503,13 @@ nothing). None of it can make an agent call the tool.
   the inline text chip is for the editor buffer, which may be dirty. Paste and
   drop carry bytes only (browsers hide paths; a client path means nothing to a
   remote host), so non-images are written to the session's own folder at add
-  time and linked from there. Directory drops are refused in the current release — a deliberate scope decision:
-  expanding a tree is policy (depth, excludes), not a default. What a
+  time and linked from there. A dropped or pasted folder is refused, by
+  name, pointing to **Attach folder…** — a deliberate scope decision: these
+  lanes carry bytes, and a folder's are a tree to expand, which is policy
+  (depth, excludes), not a default; the picker links the folder instead. A
+  drop is told a folder by the entry API; a paste only by its read failing,
+  so any item that can't be read is refused the same way and the rest of
+  the batch is attached (#172). What a
   webview can receive, as observed 2026-09-19 on VS Code 1.10x–1.138 and
   verified in its sources: an OS file drop reaches the composer only while
   **Shift** is held — without it the webview host page hands a file drag to
