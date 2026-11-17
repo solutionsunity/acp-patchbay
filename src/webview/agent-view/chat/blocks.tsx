@@ -656,7 +656,7 @@ export function ToolCallCard({
           rows={listFiles ? rows : []}
           patchbaySessionId={patchbaySessionId}
           roots={roots}
-          rawOpen={false}
+          rawPreview={false}
         />
       )}
       {terminals.map((id) => (
@@ -677,14 +677,15 @@ export function CallDetails({
   rows,
   patchbaySessionId,
   roots,
-  rawOpen,
+  rawPreview,
 }: {
   call: { id: string; content: readonly ToolContentPart[]; input: string | null; output: string | null };
   rows: readonly ToolFileRow[];
   patchbaySessionId: PatchbaySessionId;
   roots: readonly string[];
-  /** The raw payload starts open — where it is what the user decides on. */
-  rawOpen: boolean;
+  /** The raw toggle shows the input's first line while folded — where the
+   * call is what the user decides on, and a title may name only the tool. */
+  rawPreview: boolean;
 }) {
   const send = useActions();
   const shown = call.content.filter((p) => p.kind !== "terminal");
@@ -738,7 +739,7 @@ export function CallDetails({
       {shown.map((part, i) => (
         <ContentPartView key={i} part={part} />
       ))}
-      {(call.input !== null || call.output !== null) && <RawSection input={call.input} output={call.output} initiallyOpen={rawOpen} />}
+      {(call.input !== null || call.output !== null) && <RawSection input={call.input} output={call.output} preview={rawPreview} />}
     </div>
   );
 }
@@ -770,18 +771,23 @@ export function ContentPartView({ part }: { part: ContentPart }) {
 
 /** The call's wire payload — the exact arguments that ran and the tool's
  * unformatted result. Kept for transparency and debugging, one click away
- * and never the main view: what the agent meant to show is its content. */
-function RawSection({ input, output, initiallyOpen }: { input: string | null; output: string | null; initiallyOpen: boolean }) {
-  const [open, setOpen] = useState(initiallyOpen);
+ * and never the main view: what the agent meant to show is its content.
+ * It starts folded on every card, pending or answered, so one first seen
+ * pending reads the same once it is answered or reloaded. */
+function RawSection({ input, output, preview }: { input: string | null; output: string | null; preview: boolean }) {
+  const [open, setOpen] = useState(false);
+  // the input on one line, cut where the card ends
+  const line = preview && !open && input !== null ? input.replace(/\s+/g, " ").trim() : "";
   return (
-    <div>
+    <div className="flex min-w-0">
       <Disclosure
         open={open}
         onToggle={() => setOpen((v) => !v)}
         label={open ? "Hide the raw wire payload" : "Show the raw wire payload"}
-        className={SECTION_LABEL}
+        className={`min-w-0 max-w-full ${SECTION_LABEL}`}
       >
         raw
+        {line !== "" && <span className="raw-preview min-w-0 truncate font-mono normal-case tracking-normal">{line}</span>}
       </Disclosure>
       {open && (
         <div className="mt-1 flex flex-col gap-1.5">

@@ -241,6 +241,17 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] Open diff left the file header`, (await p.$(".card .diff-file button")) === null);
   check(`[${theme}] small changes show every row (write + request)`, (await p.$$(".card .diff-body:not(.too-large)")).length === 2);
   check(`[${theme}] a request showing its change keeps its raw input closed`, (await p.$('.perm button[title="Show the raw wire payload"][aria-expanded="false"]')) !== null);
+  // #170: every permission card's raw input starts folded, its first line
+  // showing — and stays one line inside the card
+  const rawRows = await p.$$eval(".perm", (cards) =>
+    cards.flatMap((card) => {
+      const toggle = card.querySelector('button[title$="raw wire payload"]');
+      if (toggle === null) return [];
+      const line = toggle.querySelector(".raw-preview");
+      return [{ open: toggle.getAttribute("aria-expanded"), line: line !== null && line.textContent.length > 0, inside: toggle.getBoundingClientRect().right <= card.getBoundingClientRect().right + 1, oneLine: line === null || line.getClientRects().length === 1 }];
+    }),
+  );
+  check(`[${theme}] every permission card's raw input starts folded, its first line showing on one line (${JSON.stringify(rawRows)})`, rawRows.length > 0 && rawRows.every((r) => r.open === "false" && r.line && r.inside && r.oneLine));
   // one rendering of a count everywhere: only the sides that moved
   const proposalCounts = await p.$$eval(".card .diff-file .diff-stat", (els) => els.map((el) => el.textContent.replace(/\s+/g, " ").trim()));
   check(`[${theme}] decision cards count like tool cards (${JSON.stringify(proposalCounts)})`, JSON.stringify(proposalCounts) === JSON.stringify(["+60", "+2 −1", "+1 −1"]));
@@ -922,12 +933,14 @@ for (const theme of Object.keys(THEMES)) {
   // Measured on the rendered text itself (Range rects), not on boxes or
   // scrollWidth: an ancestor's overflow:hidden clips the symptom out of
   // every box metric, which is exactly why it shipped unseen. Fences,
-  // diagrams, and tables scroll on purpose and are excluded.
+  // diagrams, and tables scroll on purpose and are excluded, and a raw
+  // input's one-line preview is cut with an ellipsis on purpose (its own
+  // check holds it inside its card).
   const narrow = await p.evaluate(() => {
     const walker = document.createTreeWalker(document.querySelector(".chat"), NodeFilter.SHOW_TEXT);
     let textRight = 0;
     for (let n; (n = walker.nextNode()); ) {
-      if (n.parentElement.closest('pre, svg, [data-streamdown="table-wrapper"]')) continue;
+      if (n.parentElement.closest('pre, svg, [data-streamdown="table-wrapper"], .raw-preview')) continue;
       const range = document.createRange();
       range.selectNodeContents(n);
       const box = range.getBoundingClientRect();

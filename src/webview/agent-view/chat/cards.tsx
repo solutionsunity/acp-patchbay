@@ -67,7 +67,7 @@ export function PermissionCard({
           rows={toolFileRows(block.call).flatMap((r) => (r.diff === null ? [r] : r.lines.length > 0 ? [{ ...r, diff: null }] : []))}
           patchbaySessionId={patchbaySessionId}
           roots={roots}
-          rawOpen={pending && changes.length === 0}
+          rawPreview
         />
       )}
       {block.resolution === null ? (

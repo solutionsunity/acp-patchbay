@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A permission card's raw input starts folded, with its first line
+  showing.** It used to start open on a pending card with no diff, and
+  stay open after you answered, so a long input filled the transcript; the
+  same card reloaded started folded. Every card now starts folded, and the
+  folded row shows the input on one line, so a card whose title names only
+  a tool still shows what it asks for. (#170)
 - **Everything you attach sits in the prompt, where you put it.** A
   selection, the current file, the problems, a pasted or dropped image or
   file: each is now a token in the text at the cursor (`@xyz.go:12-34`),
