@@ -38,7 +38,7 @@ import { FileKV } from "./stores/file-kv";
 import { sameRule, withRule } from "./stores/permission-rules";
 import { recoverLegacyGlobalState } from "./stores/vscdb-recovery";
 import { statusBarContent } from "./status-bar";
-import { editorLineOf } from "./tool-locations";
+import { editorLineOf, folderShownIn } from "./tool-locations";
 import { localLinkTarget } from "./local-link";
 import type { PatchbayAskId, PatchbayMcpServerId, PatchbaySessionId } from "../shared/ids";
 import { isFolder, Orchestrator } from "./orchestrator";
@@ -424,12 +424,28 @@ export class OrchestratorHost {
    * …). A location line puts the cursor on that line's first non-blank
    * character, scrolled into view; a file with no text to land in (binary)
    * opens without one. A directory — some agents report a shell command's
-   * working directory as its location — is revealed in the Explorer, never
-   * opened as a folder. */
+   * working directory as its location — is shown where it can be
+   * (`folderShownIn`), never opened as a folder. */
   private async openFileAt(path: string, line: number | undefined): Promise<void> {
     const uri = vscode.Uri.file(path);
     if ((await vscode.workspace.fs.stat(uri)).type & vscode.FileType.Directory) {
-      await vscode.commands.executeCommand("revealInExplorer", uri);
+      switch (folderShownIn(vscode.workspace.getWorkspaceFolder(uri) !== undefined, vscode.env.remoteName !== undefined)) {
+        case "explorer":
+          await vscode.commands.executeCommand("revealInExplorer", uri);
+          break;
+        case "file-manager":
+          await vscode.commands.executeCommand("revealFileInOS", uri);
+          break;
+        case "message": {
+          const copy = "Copy path";
+          const chosen = await vscode.window.showInformationMessage(
+            `${path} is outside this window's workspace, on the remote host — the Explorer shows only workspace folders, and no file manager here can open it.`,
+            copy,
+          );
+          if (chosen === copy) await vscode.env.clipboard.writeText(path);
+          break;
+        }
+      }
       return;
     }
     let selection: vscode.Range | undefined;

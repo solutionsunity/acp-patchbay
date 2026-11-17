@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A link to a folder outside the workspace opens it.** Clicking one did
+  nothing and said nothing: VS Code's Explorer shows only workspace
+  folders. Such a folder now opens in your system's file manager; in a
+  remote window (WSL, SSH), where no file manager here can reach it, a
+  message names the folder and offers to copy its path. A folder inside
+  the workspace is revealed in the Explorer, as before. (#171)
 - **Settings no longer promises that every write asks.** An agent whose
   mode decides for itself — Claude in Auto, its default since adapter
   0.101.0 — sends no ask, so no rule or approved place sees what it does,

@@ -89,15 +89,32 @@ suite("open a tool-call location (issue #41)", () => {
     }, WINDOW_SETTLE);
   });
 
-  test("a directory is revealed, never opened as a folder or an editor", async () => {
+  // #171: the folder is outside the test window's workspace (it has none),
+  // so it goes to the system's file manager. The command is recorded, not
+  // run — the test window's display may be the user's own desktop, where a
+  // file manager opened by a test would be theirs to close. Pinned: the
+  // file manager is asked, and the window neither opens the folder as a
+  // folder nor as an editor.
+  test("a directory outside the workspace goes to the file manager, never opened as a folder or an editor", async () => {
     const pb = await Patchbay.open();
     const folders = vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath);
     const sub = join(dir, "sub");
     await mkdir(sub);
-    pb.act({ kind: "openFile", path: sub });
-    // The action is fire-and-forget; give its stat + reveal time to land. A
-    // race here can only make this pass vacuously, never fail wrongly.
-    await new Promise((r) => setTimeout(r, 500));
+    const commands = vscode.commands as { executeCommand: (command: string, ...rest: unknown[]) => Thenable<unknown> };
+    const original = commands.executeCommand;
+    const revealed: string[] = [];
+    commands.executeCommand = (command: string, ...rest: unknown[]) => {
+      if (command !== "revealFileInOS" && command !== "revealInExplorer") return original.call(vscode.commands, command, ...rest);
+      revealed.push(`${command} ${(rest[0] as vscode.Uri).fsPath}`);
+      return Promise.resolve(undefined);
+    };
+    try {
+      pb.act({ kind: "openFile", path: sub });
+      await waitFor(() => revealed.length > 0, WINDOW_SETTLE, "the folder handed to a reveal");
+    } finally {
+      commands.executeCommand = original;
+    }
+    assert.deepStrictEqual(revealed, [`revealFileInOS ${sub}`]);
     assert.deepStrictEqual(vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath), folders);
     assert.ok(
       vscode.window.tabGroups.all.flatMap((g) => g.tabs).every((t) => {
