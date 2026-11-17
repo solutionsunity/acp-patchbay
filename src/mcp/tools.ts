@@ -19,39 +19,54 @@ export interface McpToolDef {
   name: string;
   description: string;
   inputSchema: { type: "object"; properties?: Record<string, unknown>; required?: string[] };
+  /** What the tool does to the world, stated rather than left to MCP's
+   * defaults — an unannotated tool reads as one that may write, destroy and
+   * reach outside, and an agent in a read-only mode refuses it unasked.
+   * Required, so a new tool states its own. */
+  annotations: { readOnlyHint: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint: boolean };
 }
+
+/** Changes nothing and reaches nothing beyond the editor: the tool reads
+ * editor state, or asks the user and hands back the answer. */
+const READS_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
 
 export const TOOL_DEFS: McpToolDef[] = [
   {
     name: "get_selection",
     description: "The user's current editor selection: file, line range, and text. Empty if nothing is selected.",
     inputSchema: { type: "object" },
+    annotations: READS_ONLY,
   },
   {
     name: "get_current_file",
     description: "The active editor's file path and live content (including unsaved changes).",
     inputSchema: { type: "object" },
+    annotations: READS_ONLY,
   },
   {
     name: "get_diagnostics",
     description: "Current problems (errors, warnings) across the workspace.",
     inputSchema: { type: "object" },
+    annotations: READS_ONLY,
   },
   {
     name: "get_open_editors",
     description: "Paths of all currently open editor tabs, with unsaved-changes status.",
     inputSchema: { type: "object" },
+    annotations: READS_ONLY,
   },
   {
     name: "get_workspace_state",
     description: "A combined snapshot: open editors, diagnostics, and current selection.",
     inputSchema: { type: "object" },
+    annotations: READS_ONLY,
   },
   {
     name: "get_roots",
     description:
       "The folders this session works in, as absolute paths: the workspace folders and any extra roots the user added to the session.",
     inputSchema: { type: "object" },
+    annotations: READS_ONLY,
   },
   {
     name: "request_user_input",
@@ -83,6 +98,7 @@ export const TOOL_DEFS: McpToolDef[] = [
       },
       required: ["message"],
     },
+    annotations: READS_ONLY,
   },
 ];
 

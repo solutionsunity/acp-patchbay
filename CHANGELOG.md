@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Patchbay's own tools say they only read.** An agent in a read-only mode
+  (an ask mode) refused `get_roots` and the other editor tools unasked,
+  because they carried no `readOnlyHint` and MCP treats a silent tool as one
+  that may write. Every tool now states that it changes nothing and stays
+  inside the editor. (#162)
 - **A long queue of held prompts no longer takes the panel.** Each prompt
   sent while a turn runs added a row above the composer with no limit, so a
   deep queue pushed the chat and the composer out of view. The band now

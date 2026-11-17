@@ -76,9 +76,9 @@ class McpTestClient {
     this.child.stdin.write(line + "\n");
   }
 
-  async listTools(): Promise<{ name: string }[]> {
+  async listTools(): Promise<{ name: string; annotations?: Record<string, unknown> }[]> {
     const resp = await this.send("tools/list");
-    return (resp.result as { tools: { name: string }[] }).tools;
+    return (resp.result as { tools: { name: string; annotations?: Record<string, unknown> }[] }).tools;
   }
 
   async callTool(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
@@ -163,6 +163,16 @@ describe("local MCP server (real bundled subprocess)", () => {
         "get_workspace_state",
         "request_user_input",
       ].sort(),
+    );
+  });
+
+  // An agent in a read-only mode refuses a tool that doesn't say it only
+  // reads: MCP's defaults for a silent tool are "may write, may destroy".
+  it("every tool says it changes nothing and stays inside the editor", async () => {
+    await client.initialize();
+    const tools = await client.listTools();
+    expect(tools.map((t) => [t.name, t.annotations])).toEqual(
+      tools.map((t) => [t.name, { readOnlyHint: true, openWorldHint: false }]),
     );
   });
 
