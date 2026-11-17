@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Settings no longer promises that every write asks.** An agent whose
+  mode decides for itself — Claude in Auto, its default since adapter
+  0.101.0 — sends no ask, so no rule or approved place sees what it does,
+  yet Settings › Trust › Edits said writes "anywhere else ask". The texts
+  now say that rules answer what the agent asks about, and the agent's
+  mode decides what that is. Patchbay doesn't override the mode: choose
+  Manual with the session's mode chip or the agent's default mode. (#169)
 - **A permission card's raw input starts folded, with its first line
   showing.** It used to start open on a pending card with no diff, and
   stay open after you answered, so a long input filled the transcript; the

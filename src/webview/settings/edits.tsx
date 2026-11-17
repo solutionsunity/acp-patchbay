@@ -104,7 +104,7 @@ function WriteScopeCards(props: {
           </Button>
         </div>
         <div className="note mx-0 mb-0 mt-2">
-          {muted ? "Always ask is on: every write asks, and the places below wait as you set them. " : ""}
+          {muted ? "Always ask is on: no place approves a write the agent asks about, and the places below wait as you set them. " : ""}
           Workspace means every workspace folder; session roots, the folders added to a session —
           the saved roots it started with and any added since. A write is judged by where it lands
           — links and <code>..</code> followed — and surfaces as a diff either way: auto-approve
@@ -206,7 +206,9 @@ export function EditsSection(props: {
       <div className="sub">
         File writes an agent makes — through patchbay&apos;s own write gate, or the edit asks it
         sends itself — are approved without asking in the places below; anywhere else they ask.
-        Every write shows as a diff either way.
+        An agent whose own mode decides for itself sends no ask at all, so a write it makes
+        that way reaches neither these places nor you — the agent&apos;s mode chooses what it
+        asks about. Every write it asks about shows as a diff either way.
       </div>
 
       <WriteScopeCards

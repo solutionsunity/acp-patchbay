@@ -551,7 +551,9 @@ screen.
 Command rules in **two layers**, one card each, identical shape: *this workspace*
 (evaluated first — the repo's own tightening or loosening) and *this machine* (the
 fallback floor for every workspace — consulted only where the workspace layer stays
-silent; no rule anywhere means ask). Each card opens on its counts — a grid of kind
+silent; no rule anywhere means ask — for what the agent asks about: an agent
+whose mode decides for itself asks about nothing, and no rule sees its
+actions). Each card opens on its counts — a grid of kind
 (command, word, total) × verdict (deny, ask, allow, total; a word never allows) —
 then the list, deny first, then ask, then allow, by pattern within each: the order
 rules were added in decides nothing, so the list doesn't pretend it does. A row is

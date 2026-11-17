@@ -299,7 +299,10 @@ deliverable.
   one rule set for everything patchbay gates, never scoped per agent.
 - Command rules layer: machine-level defaults (every workspace on this machine)
   with per-workspace rules evaluated first — a workspace can tighten or loosen
-  its own floor, and no rule anywhere means ask. Neither layer ever rides the
+  its own floor, and no rule anywhere means ask. Rules answer what the agent
+  asks about; the agent's own mode decides what that is. A mode that decides
+  for itself asks about nothing, so no rule or write place sees its actions —
+  Claude in Auto, its default since adapter 0.101.0, is one (#169). Neither layer ever rides the
   repo.
 - Every command a line runs is judged — inside a chain, a pipeline, a loop,
   a `bash -c` script — by a pattern over the command or by a word wherever

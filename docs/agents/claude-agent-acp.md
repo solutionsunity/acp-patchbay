@@ -126,6 +126,30 @@ github.com/agentclientprotocol/claude-agent-acp (public issues).
   counts each entry only against its own counterpart (issue #48, where a
   region taken for a whole file inflated every count).
 
+### Auto mode asks nothing (v0.101.0)
+
+- **Observed:** 2026-11-07, v0.101.0, raw ACP client declaring Patchbay's
+  capabilities, default model, a clean Claude configuration (no allow
+  rules), scratch folders. A session starts in Auto unless a default mode
+  is configured — deliberate, matching Claude Code (agentclientprotocol/claude-agent-acp#1533).
+  Five explicit requests — a write in the workspace, `touch`, a write
+  outside it, `rm -rf` outside it, `git push --force` to a local bare
+  repository: Auto sent `session/request_permission` 0 times of 5 and did
+  all five; Manual (via `session/set_mode`) asked 5 of 5. No `fs/*` or
+  `terminal/*` client call in either.
+- **Repro:** the five requests above in a new session, with and without
+  `session/set_mode` to `default` first. A user's own allow rules (for
+  example `Bash(*)` in `~/.claude/settings.json`) confound the shell rows.
+- **Impact:** for Claude the permission request is patchbay's only view of a
+  write or a command (they run inside the CLI), so in Auto no card appears,
+  no command rule applies and the write scope is never consulted.
+- **Patchbay:** no override — the mode is the agent's. Settings › Trust ›
+  Edits and the rules texts say that rules answer what the agent asks
+  about, and the agent's mode decides what that is (#169). Manual comes
+  back with the session's mode chip or the agent's default mode in
+  Settings › Agents, or `permissions.defaultMode` in Claude's settings;
+  `disableAutoMode: "disable"` removes Auto.
+
 ### Sub-agents in the RFD form (v0.100.0)
 
 Observed 2026-11-02 (published package read, and seven recorded stress runs
