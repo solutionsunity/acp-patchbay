@@ -35,6 +35,7 @@ const ROWS: Record<StorageKey, { label: string; scope: "machine" | "workspace"; 
   [STORAGE_KEYS.usedCapabilities]: { label: "Used-capability cache", scope: "machine", detail: counted("agent record") },
   [STORAGE_KEYS.authLocks]: { label: "Sign-outs witnessed", scope: "machine", detail: counted("agent") },
   [STORAGE_KEYS.sessionContinuity]: { label: "Sessions' saved state", scope: "machine", detail: counted("session") },
+  [STORAGE_KEYS.sessionContinuityBefore092]: { label: "Sessions' saved state — as 0.90 kept it", scope: "machine", detail: counted("session") },
   [STORAGE_KEYS.spawnRegistry]: { label: "Spawn registry", scope: "machine", detail: counted("process record") },
   [STORAGE_KEYS.defaultAgentFolded]: {
     label: "Old default-agent setting",

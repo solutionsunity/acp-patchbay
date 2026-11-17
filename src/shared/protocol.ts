@@ -260,8 +260,9 @@ export type Action =
   | { kind: "reopenElicitationLink"; patchbayAskId: PatchbayAskId }
   | { kind: "addSelectionContext"; patchbaySessionId: PatchbaySessionId }
   | { kind: "addFileContext"; patchbaySessionId: PatchbaySessionId }
+  /** A prompt box gave these staged chips their tokens (`ContextChip.placed`). */
+  | { kind: "markChipsPlaced"; patchbaySessionId: PatchbaySessionId; chipIds: readonly string[] }
   | { kind: "addDiagnosticsContext"; patchbaySessionId: PatchbaySessionId }
-  | { kind: "removeContextChip"; patchbaySessionId: PatchbaySessionId; chipId: string }
   | { kind: "reloadSession"; patchbaySessionId: PatchbaySessionId }
   /** One action for every knob — the UI never knows
    * whether a knob rides ACP's config-option surface or the legacy modes
@@ -391,7 +392,12 @@ export type Action =
    * the chip rides the prompt as a resource_link to it. Empty mimeType =
    * the platform didn't know; it stays unknown, never guessed. */
   | { kind: "addDroppedFileContext"; patchbaySessionId: PatchbaySessionId; name: string; mimeType: string; base64: string }
-  | { kind: "addFilePickerContext"; patchbaySessionId: PatchbaySessionId }
+  /** The composer's "Attach files…" and "Attach folder…": what is picked
+   * is linked where it is, a folder as a folder and an image as a file —
+   * a pick is always a link; paste or drop is how bytes are sent. Two
+   * picks because the platform's dialog selects files or folders, never
+   * both at once. */
+  | { kind: "addFilePickerContext"; patchbaySessionId: PatchbaySessionId; pick: "files" | "folder" }
   /** The `@` mention picker's workspace tier: the webview never touches the
    * filesystem — it asks, the orchestrator runs
    * `workspace.findFiles` and answers with workspaceFilesListed. */
@@ -413,10 +419,9 @@ export interface QueuedPrompt {
    * into the composer exactly, tokens and all. Absent on rows held before
    * the composer started sending it; those copy and fire, never reclaim. */
   draft?: string;
-  /** The chips staged with these words, taken off the session when they
-   * were held — a held prompt sends its own, never what is staged when it
-   * fires. Absent on direct words (a turn takes what is staged) and on
-   * rows held before held prompts carried chips (those send none). */
+  /** The chips these words place (`parts`), taken off the session when
+   * they were held — a held prompt sends its own, never what is staged
+   * when it fires. Absent on direct words: a turn takes what is staged. */
   chips?: readonly PersistedChip[];
   /** The words of a turn its agent's death cut off, after they were sent —
    * the agent may or may not have them. They wait at the front for the
@@ -430,10 +435,11 @@ export interface QueuedPrompt {
  * own folder at ingress, and the row carries the path; a picked file is
  * linked where it is. A path whose file is gone drops on rehydration,
  * logged, never an error. */
-export type PersistedChip =
+export type PersistedChip = { placed?: true } & (
   | { kind: "selection" | "file" | "diagnostics"; id: string; label: string; content: string; sourceUri?: string }
   | { kind: "image"; id: string; label: string; mimeType: string; path: string }
-  | { kind: "attachment"; id: string; label: string; name: string; path: string; mimeType?: string };
+  | { kind: "attachment"; id: string; label: string; name: string; path: string; mimeType?: string }
+);
 
 /** The survives-reload family: session-scoped state the wire cannot
  * re-report (agents reset knobs on load; roots are the list this client
@@ -461,7 +467,11 @@ export type PromptPart =
   | { kind: "text"; text: string }
   /** An inline `@file` mention — sent as a `resource_link` content block at
    * this position; the agent reads it through the brokered fs path itself. */
-  | { kind: "fileRef"; path: string };
+  | { kind: "fileRef"; path: string }
+  /** A staged attachment's place: the chip of this id, sent at this
+   * position in the form its kind takes. One that names no chip the words
+   * carry sends nothing. */
+  | { kind: "chip"; id: string };
 
 // ── Settings Agents — agent launch config (add, edit, and
 // remove agents, including launch configuration per agent). Agents are
@@ -1935,6 +1945,11 @@ export interface PlanUsageInfo {
 interface ContextChipBase {
   id: string;
   label: string;
+  /** A prompt box gave the chip its token. Said once and kept with the
+   * chip: a box gives a token only to a chip without it, so one whose
+   * token the user deleted is not handed another — in this box, in
+   * another view's, or after a reload. */
+  placed?: true;
 }
 
 /** Discriminated by kind so each arm carries exactly what its prompt form
@@ -2184,6 +2199,7 @@ export type AgentViewEvent =
   | (QuestionEvent & { patchbaySessionId: PatchbaySessionId })
   | { kind: "contextChipAdded"; patchbaySessionId: PatchbaySessionId; chip: ContextChip }
   | { kind: "contextChipRemoved"; patchbaySessionId: PatchbaySessionId; chipId: string }
+  | { kind: "contextChipsPlaced"; patchbaySessionId: PatchbaySessionId; chipIds: readonly string[] }
   /** Words held at the turn-start door (mid-turn, auth lock, or behind
    * other held words) — or rehydrated from the continuity row after a
    * reload, or re-emitted in a drain-failure resync. Queued, not refused. */
@@ -2832,6 +2848,16 @@ export function reduceAgentView(
           ...state.contextChips,
           [event.patchbaySessionId]: (state.contextChips[event.patchbaySessionId] ?? []).filter(
             (c) => c.id !== event.chipId,
+          ),
+        },
+      };
+    case "contextChipsPlaced":
+      return {
+        ...state,
+        contextChips: {
+          ...state.contextChips,
+          [event.patchbaySessionId]: (state.contextChips[event.patchbaySessionId] ?? []).map((c) =>
+            event.chipIds.includes(c.id) ? { ...c, placed: true as const } : c,
           ),
         },
       };

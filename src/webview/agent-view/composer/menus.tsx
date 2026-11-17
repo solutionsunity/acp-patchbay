@@ -44,14 +44,15 @@ export function filterCommands(
 }
 
 /** One row of the `@` mention picker — file and dir rows insert an inline
- * mention token; the fixed rows resolve to context chips like the adder's
- * entries. */
+ * mention token; the fixed rows stage a chip like the adder's entries,
+ * whose token lands where the `@` was typed. */
 export type MentionEntry =
   | { kind: "file"; path: string; dirty: boolean; open: boolean }
   | { kind: "dir"; path: string }
   | { kind: "selection" }
   | { kind: "problems" }
-  | { kind: "attach" };
+  | { kind: "attach" }
+  | { kind: "attachFolder" };
 
 /** Tiers, one list: open editors first (instant, already in state), then
  * the orchestrator's workspace answer — directories, then files, both
@@ -85,7 +86,7 @@ export function buildMentionEntries(
     entries.push({ kind: "file", path, dirty: false, open: false });
   }
   if (hasSelection) entries.push({ kind: "selection" });
-  entries.push({ kind: "problems" }, { kind: "attach" });
+  entries.push({ kind: "problems" }, { kind: "attach" }, { kind: "attachFolder" });
   return entries;
 }
 
@@ -124,7 +125,7 @@ export function SlashMenu(props: {
 
 /** The `@` context mention picker: file rows become
  * inline mention tokens sent as `resource_link` blocks — the baseline every
- * agent MUST accept; fixed rows resolve to standard context chips. */
+ * agent MUST accept; fixed rows stage a chip, placed in the words like any other. */
 export function MentionMenu(props: {
   entries: readonly MentionEntry[];
   selected: number;
@@ -198,10 +199,18 @@ export function MentionMenu(props: {
             case "attach":
               return row(
                 <>
-                  <Icon name="attach" /> Attach file…
+                  <Icon name="attach" /> Attach files…
                 </>,
-                "pick any file",
+                "link any files, where they are",
                 "attach",
+              );
+            case "attachFolder":
+              return row(
+                <>
+                  <Icon name="folder" /> Attach folder…
+                </>,
+                "link any folder, where it is",
+                "attachFolder",
               );
           }
         })}

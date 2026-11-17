@@ -3,7 +3,7 @@
 
 // Per-session continuity — what the user staged and steered on a session,
 // in one row: the last agent-confirmed knob combination, user-added context
-// roots and MCP servers given to the session alone, the held prompt queue, prepared-but-unsent context chips (an
+// roots and MCP servers given to the session alone, the held prompt queue, staged context chips (an
 // image's or a dropped file's bytes live in the session's own folder,
 // stores/session-files.ts; the row carries the path), and the composer
 // draft. None of it is a cache of readable reality: agents
@@ -23,7 +23,7 @@
 // them again. A zero-turn re-mint moves the row to the session's new id.
 import { basename, join } from "node:path";
 import { z } from "zod";
-import type { SessionContinuity } from "../../shared/protocol";
+import type { PersistedChip, PromptPart, SessionContinuity } from "../../shared/protocol";
 import { ATTACHMENTS_DIR, fileChipLabel } from "../attachments";
 import { RecordStore } from "./global-record-store";
 import { type KV, rewriteAtOpen } from "./kv";
@@ -33,6 +33,9 @@ import { STORAGE_KEYS } from "./storage-keys";
 
 const knobSeedSchema = z.record(z.string(), z.union([z.string(), z.boolean()]));
 
+// a prompt box gave the chip its token — said once, kept with the chip
+const placed = z.literal(true).optional();
+
 const persistedChipSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.enum(["selection", "file", "diagnostics"]),
@@ -40,6 +43,7 @@ const persistedChipSchema = z.discriminatedUnion("kind", [
     label: z.string(),
     content: z.string(),
     sourceUri: z.string().optional(),
+    placed,
   }),
   z.object({
     kind: z.literal("image"),
@@ -47,6 +51,7 @@ const persistedChipSchema = z.discriminatedUnion("kind", [
     label: z.string(),
     mimeType: z.string(),
     path: z.string(),
+    placed,
   }),
   z.object({
     kind: z.literal("attachment"),
@@ -55,8 +60,9 @@ const persistedChipSchema = z.discriminatedUnion("kind", [
     name: z.string(),
     path: z.string(),
     mimeType: z.string().optional(),
+    placed,
   }),
-]);
+]) satisfies z.ZodType<PersistedChip>;
 
 const queuedPromptSchema = z.object({
   id: z.string().min(1),
@@ -66,12 +72,13 @@ const queuedPromptSchema = z.object({
       z.discriminatedUnion("kind", [
         z.object({ kind: z.literal("text"), text: z.string() }),
         z.object({ kind: z.literal("fileRef"), path: z.string() }),
-      ]),
+        z.object({ kind: z.literal("chip"), id: z.string().min(1) }),
+      ]) satisfies z.ZodType<PromptPart>,
     )
     .optional(),
   // the composer's own form of the words — opaque here, like `draft` below
   draft: z.string().optional(),
-  // the chips staged with these words — theirs, whatever is staged after
+  // the chips these words place — theirs, whatever is staged after
   chips: z.array(persistedChipSchema).optional(),
   // a cut turn's words, waiting on the user — never fired on their own
   cut: z.literal(true).optional(),
@@ -128,20 +135,25 @@ const isRow = (row: SessionContinuityEntry, patchbayAgentId: PatchbayAgentId, se
   row.patchbayAgentId === patchbayAgentId && row.sessionId === sessionId;
 
 export class SessionContinuityStore extends RecordStore<SessionContinuityEntry> {
-  constructor(kv: KV) {
-    super(kv, KEY, sessionContinuityEntrySchema);
-    // Once, at construction, older shapes are rewritten — read as they
-    // were, the rows would fail their schema and be dropped. A row stored
+  constructor(private readonly machine: KV) {
+    super(machine, KEY, sessionContinuityEntrySchema);
+    const kv = machine;
+    // Once, at construction, where this key holds nothing yet: the rows an
+    // earlier version kept under its own key are copied, never moved — a
+    // window still on that version keeps reading and writing its key, and
+    // a row in this one's shape would fail its schema there and be dropped
+    // with everything it holds. Copied in today's shape: a row stored
     // before the pair had fields of its own carries it as one composite
     // `id` — the agent, a NUL, the agent's id for the session — next to an
-    // `agentId`: rewritten as `patchbayAgentId` and `sessionId`. Two chip
-    // shapes are rewritten wherever a row holds chips — staged, or held
-    // with a queued prompt: an image chip stored before a session kept its
-    // own files names its file in the temp stash (`file`), rewritten as
-    // that file's `path`; an attached file stored before a chip kept the
-    // file's own name has none, and takes it from its label, which every
-    // such chip spelled "File: <name>". Every other field as stored.
-    const stored = kv.get<unknown>(KEY);
+    // `agentId`, and becomes `patchbayAgentId` and `sessionId`; an image
+    // chip stored before a session kept its own files names its file in
+    // the temp stash (`file`), and takes that file's `path`; an attached
+    // file stored before a chip kept the file's own name takes it from its
+    // label, which every such chip spelled "File: <name>"; and a held
+    // prompt's chips, which had no place in its words and were sent ahead
+    // of them, are placed there — in front. Every other field as stored.
+    const earlier = kv.get<unknown>(STORAGE_KEYS.sessionContinuityBefore092);
+    if (kv.get<unknown>(KEY) !== undefined || !Array.isArray(earlier)) return;
     const composite = (r: unknown): r is { id: string; agentId: string } =>
       typeof r === "object" &&
       r !== null &&
@@ -162,42 +174,54 @@ export class SessionContinuityStore extends RecordStore<SessionContinuityEntry> 
       typeof c.label === "string" &&
       "path" in c &&
       typeof c.path === "string";
-    const stale = (c: unknown) => stashedImage(c) || unnamedFile(c);
-    const chipsOf = (r: unknown): unknown[] =>
-      typeof r === "object" && r !== null && "chips" in r && Array.isArray(r.chips) ? r.chips : [];
-    const queueOf = (r: unknown): unknown[] =>
-      typeof r === "object" && r !== null && "queue" in r && Array.isArray(r.queue) ? r.queue : [];
+    const listOf = (r: unknown, field: "chips" | "queue" | "parts"): unknown[] => {
+      const list = typeof r === "object" && r !== null ? (r as Record<string, unknown>)[field] : undefined;
+      return Array.isArray(list) ? list : [];
+    };
     const fileLabel = fileChipLabel("");
-    const rewrite = (c: unknown): unknown => {
+    const chip = (c: unknown): unknown => {
       if (stashedImage(c)) {
-        const { file, ...chip } = c;
-        return { ...chip, path: join(ATTACHMENTS_DIR, file) };
+        const { file, ...rest } = c;
+        return { ...rest, path: join(ATTACHMENTS_DIR, file) };
       }
       if (unnamedFile(c)) {
         return { ...c, name: c.label.startsWith(fileLabel) ? c.label.slice(fileLabel.length) : basename(c.path) };
       }
       return c;
     };
-    const holdsStale = (r: unknown) => chipsOf(r).some(stale) || queueOf(r).some((q) => chipsOf(q).some(stale));
-    if (Array.isArray(stored) && stored.some((r) => composite(r) || holdsStale(r))) {
-      rewriteAtOpen(kv.update(
-        KEY,
-        stored.map((r: unknown) => {
-          let row = r;
-          if (composite(row)) {
-            const { id, agentId, ...rest } = row;
-            row = { patchbayAgentId: agentId, sessionId: id.slice(agentId.length + 1), ...rest };
-          }
-          if (!holdsStale(row)) return row;
-          const queue = queueOf(row).map((q) => (chipsOf(q).some(stale) ? { ...(q as object), chips: chipsOf(q).map(rewrite) } : q));
-          return {
-            ...(row as object),
-            ...(chipsOf(row).some(stale) ? { chips: chipsOf(row).map(rewrite) } : {}),
-            ...(queue.length > 0 ? { queue } : {}),
-          };
-        }),
-      ));
-    }
+    const held = (q: unknown): unknown => {
+      const chips = listOf(q, "chips").map(chip);
+      if (chips.length === 0) return q;
+      const ids = chips.flatMap((c) =>
+        typeof c === "object" && c !== null && "id" in c && typeof c.id === "string" ? [{ kind: "chip", id: c.id }] : [],
+      );
+      const words = listOf(q, "parts");
+      const text = (q as { text?: unknown }).text;
+      return { ...(q as object), chips, parts: [...ids, ...(words.length > 0 ? words : [{ kind: "text", text }])] };
+    };
+    rewriteAtOpen(kv.update(
+      KEY,
+      earlier.map((r: unknown) => {
+        let row = r;
+        if (composite(row)) {
+          const { id, agentId, ...rest } = row;
+          row = { patchbayAgentId: agentId, sessionId: id.slice(agentId.length + 1), ...rest };
+        }
+        const chips = listOf(row, "chips");
+        const queue = listOf(row, "queue");
+        return {
+          ...(row as object),
+          ...(chips.length > 0 ? { chips: chips.map(chip) } : {}),
+          ...(queue.length > 0 ? { queue: queue.map(held) } : {}),
+        };
+      }),
+    ));
+  }
+
+  /** Every row goes — the earlier version's copies with them. */
+  override async wipe(): Promise<void> {
+    await super.wipe();
+    await this.machine.update(STORAGE_KEYS.sessionContinuityBefore092, undefined);
   }
 
   read(patchbayAgentId: PatchbayAgentId, sessionId: string): SessionContinuity | undefined {

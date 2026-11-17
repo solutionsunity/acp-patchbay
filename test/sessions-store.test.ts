@@ -45,6 +45,13 @@ beforeEach(async () => {
 
 const spec = (script: FakeAgentScript, patchbayAgentId = "fake"): LaunchSpec => fakeAgent(script, patchbayAgentId, cwd);
 
+/** Words that place the staged chips of these ids ahead of them — the way
+ * the composer sends a prompt whose tokens sit in front of its text. */
+const placing = (text: string, ...chipIds: string[]) => ({
+  text,
+  parts: [...chipIds.map((id) => ({ kind: "chip" as const, id })), { kind: "text" as const, text }],
+});
+
 /** The window's orchestrator, its sessions side under the names these
  * tests read. `machineKV` is shared to play a window reload; `pinned` are
  * the sessions shown in their own panels. */
@@ -1437,7 +1444,7 @@ describe("SessionsStore", () => {
     await h.pool.stop("sm8" as PatchbayAgentId);
   });
 
-  it("attached context rides in as its own labeled blocks, ahead of the user's words, then clears (P7)", async () => {
+  it("attached context rides in as its own labeled blocks, where the words place it, then clears (P7)", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "echoBlocks" }] }, "sm9"));
     const patchbaySessionId = await h.gates.create("sm9" as PatchbayAgentId, "Fake Agent", cwd);
@@ -1452,7 +1459,7 @@ describe("SessionsStore", () => {
       { id: "chip-1", kind: "selection", label: "Selection: a.ts:1-2", content: "const x = 1;" },
     ]);
 
-    await h.gates.prompt(patchbaySessionId, { text: "what does this do?" });
+    await h.gates.prompt(patchbaySessionId, placing("what does this do?", "chip-1"));
 
     // chip cleared from state after being consumed by the prompt
     expect(h.state().contextChips[patchbaySessionId]).toEqual([]);
@@ -1484,7 +1491,7 @@ describe("SessionsStore", () => {
       content: Buffer.from("fake-png-bytes").toString("base64"),
       mimeType: "image/png",
     });
-    await h.gates.prompt(patchbaySessionId, { text: "what is this?" });
+    await h.gates.prompt(patchbaySessionId, placing("what is this?", "chip-img"));
 
     const kinds = echoed(h.state(), patchbaySessionId) as Array<Record<string, string>>;
     expect(kinds).toEqual([{ type: "image", mimeType: "image/png" }, { type: "text" }]);
@@ -1514,7 +1521,7 @@ describe("SessionsStore", () => {
       content: "a.ts:3 [error] boom",
       // no single source — the chip itself is named (uri is wire-required)
     });
-    await h.gates.prompt(patchbaySessionId, { text: "context please" });
+    await h.gates.prompt(patchbaySessionId, placing("context please", "chip-sel", "chip-diag"));
 
     const kinds = echoed(h.state(), patchbaySessionId) as Array<Record<string, string>>;
     expect(kinds).toEqual([
@@ -1537,7 +1544,7 @@ describe("SessionsStore", () => {
       content: bytes.toString("base64"),
       mimeType: "image/jpeg",
     });
-    await h.gates.prompt(patchbaySessionId, { text: "and this?" });
+    await h.gates.prompt(patchbaySessionId, placing("and this?", "chip-img-fb"));
 
     const kinds = echoed(h.state(), patchbaySessionId) as Array<Record<string, string>>;
     expect(kinds).toHaveLength(2);
@@ -1570,7 +1577,7 @@ describe("SessionsStore", () => {
       path: "/ws/blob.bin",
       // no mimeType: the producer didn't know one — absent stays absent
     });
-    await h.gates.prompt(patchbaySessionId, { text: "what are these?" });
+    await h.gates.prompt(patchbaySessionId, placing("what are these?", "chip-att", "chip-att-2"));
 
     const kinds = echoed(h.state(), patchbaySessionId) as Array<Record<string, string>>;
     expect(kinds).toEqual([
@@ -1596,30 +1603,69 @@ describe("SessionsStore", () => {
     expect(h.state().contextChips[patchbaySessionId]).toMatchObject([{ id: "late-chip" }]);
 
     await h.connect(spec(script, "sm-late-chip"));
-    await h.gates.prompt(patchbaySessionId, { text: "with the chip" });
+    await h.gates.prompt(patchbaySessionId, placing("with the chip", "late-chip"));
     const reply = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(textOf(reply)).toContain("const late = 1;");
     expect(h.state().contextChips[patchbaySessionId]).toEqual([]);
     await h.pool.stop("sm-late-chip" as PatchbayAgentId);
   });
 
-  it("removeContext drops a chip before it's ever sent", async () => {
+  // The box gives a chip its token once: that it did is said on the chip
+  // and kept with it, so a token the user deleted is not handed out again.
+  it("a chip a box placed says so — on its row, and again after a reload", async () => {
+    const machineKV = new MemoryKV();
+    const h = harness({ machineKV });
+    await h.connect(spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "ok" }] }, "pl1"));
+    const patchbaySessionId = await h.gates.create("pl1" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.sessions.addContext(patchbaySessionId, { id: "a", kind: "selection", label: "Selection a", content: "x" });
+    await h.sessions.addContext(patchbaySessionId, { id: "b", kind: "selection", label: "Selection b", content: "y" });
+    h.sessions.markPlaced(patchbaySessionId, ["a", "not staged"]);
+    expect(h.state().contextChips[patchbaySessionId]!.map((c) => [c.id, c.placed])).toEqual([["a", true], ["b", undefined]]);
+    const stored = new SessionContinuityStore(machineKV).read("pl1" as PatchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!);
+    expect(stored?.chips?.map((c) => [c.id, c.placed])).toEqual([["a", true], ["b", undefined]]);
+    await h.pool.stop("pl1" as PatchbayAgentId);
+  });
+
+  // #163: an attachment is sent where its part places it in the words —
+  // between them, not ahead of them.
+  it("a chip rides at its place in the words, and one no part places is not sent", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "echoBlocks" }] }, "sm10"));
     const patchbaySessionId = await h.gates.create("sm10" as PatchbayAgentId, "Fake Agent", cwd);
+    const stage = (id: string, content: string) =>
+      h.sessions.addContext(patchbaySessionId, { id, kind: "selection", label: `Selection: ${id}`, content });
+    await stage("first", "const a = 1;");
+    await stage("deleted", "never sent");
+    await stage("second", "const b = 2;");
 
-    await h.sessions.addContext(patchbaySessionId, {
-      id: "chip-1",
-      kind: "file",
-      label: "File: a.ts",
-      content: "export const a = 1;",
+    await h.gates.prompt(patchbaySessionId, {
+      text: "@a needs abc @b needs def",
+      parts: [
+        { kind: "chip", id: "first" },
+        { kind: "text", text: " needs abc " },
+        { kind: "chip", id: "second" },
+        { kind: "text", text: " needs def" },
+        { kind: "chip", id: "nothing staged" },
+      ],
     });
-    h.sessions.removeContext(patchbaySessionId, "chip-1");
+    // every staged chip left the session: the placed ones with the words,
+    // the one whose token was deleted to nowhere
     expect(h.state().contextChips[patchbaySessionId]).toEqual([]);
-
-    await h.gates.prompt(patchbaySessionId, { text: "hello" });
     const reply = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
-    expect(reply?.kind === "text" && reply.text).toBe("hello"); // the removed chip never appears
+    expect(reply?.kind === "text" && reply.text.split("\n---BLOCK---\n")).toEqual([
+      "[Selection: first]\nconst a = 1;",
+      " needs abc ",
+      "[Selection: second]\nconst b = 2;",
+      " needs def",
+    ]);
+    // the bubble reads in the same order
+    const user = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "user");
+    expect(user?.kind === "user" && user.parts.map((p) => (p.kind === "context" ? p.label : p.kind === "text" ? p.text : p.kind))).toEqual([
+      "Selection: first",
+      " needs abc ",
+      "Selection: second",
+      " needs def",
+    ]);
     await h.pool.stop("sm10" as PatchbayAgentId);
   });
 
@@ -2123,7 +2169,7 @@ describe("SessionsStore", () => {
       content: "const x = 1;",
     });
     logOut(h1, "smq6");
-    await h1.gates.prompt(patchbaySessionId, { text: "held words" }); // → held row, carrying chip-1
+    await h1.gates.prompt(patchbaySessionId, placing("held words", "chip-1")); // → held row, carrying chip-1
     await h1.sessions.addContext(patchbaySessionId, {
       kind: "selection",
       id: "chip-2",
@@ -2197,7 +2243,7 @@ describe("SessionsStore", () => {
         await h.gates.addRoot(patchbaySessionId, at("/repo/extra"));
         await h.sessions.addContext(patchbaySessionId, { kind: "selection", id: `${patchbayAgentId}-chip`, label: "a.ts:1", content: "x" });
         logOut(h, patchbayAgentId);
-        await h.gates.prompt(patchbaySessionId, { text: "held words" }); // carries the chip staged with it
+        await h.gates.prompt(patchbaySessionId, placing("held words", `${patchbayAgentId}-chip`)); // carries the chip staged with it
         await h.sessions.addContext(patchbaySessionId, { kind: "selection", id: `${patchbayAgentId}-staged`, label: "b.ts:2", content: "y" });
         h.sessions.saveDraft(patchbaySessionId, "half a thought");
         return patchbaySessionId;
@@ -2511,9 +2557,9 @@ describe("held prompts and their chips", () => {
     const first = h.gates.prompt(id, { text: "first" }); // a turn underway
     await untilTurnOnWire(h, id);
     await h.sessions.addContext(id, selection("A"));
-    await h.gates.prompt(id, { text: "second" }); // held, with A
+    await h.gates.prompt(id, placing("second", "A")); // held, with A
     await h.sessions.addContext(id, selection("B"));
-    await h.gates.prompt(id, { text: "third" }); // held, with B
+    await h.gates.prompt(id, placing("third", "B")); // held, with B
     expect(h.state().promptQueue[id]!.map((q) => q.chips?.map((c) => c.id))).toEqual([["A"], ["B"]]);
     expect(h.state().contextChips[id]).toEqual([]);
     await first;
@@ -2532,7 +2578,7 @@ describe("held prompts and their chips", () => {
     const first = h.gates.prompt(id, { text: "first" });
     await untilTurnOnWire(h, id);
     await h.sessions.addContext(id, selection("A"));
-    await h.gates.prompt(id, { text: "second", draft: "the second, as typed" });
+    await h.gates.prompt(id, { ...placing("second", "A"), draft: "the second, as typed" });
     const held = h.state().promptQueue[id]![0]!;
     h.sessions.takeBack(id, held.id);
     expect(h.state().promptQueue[id] ?? []).toEqual([]);
@@ -3784,7 +3830,7 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
       label: "Selection: a.ts:1-2",
       content: "const x = 1;",
     });
-    await h.gates.prompt(patchbaySessionId, { text: "what is this?" });
+    await h.gates.prompt(patchbaySessionId, placing("what is this?", "img-1", "att-1", "sel-1"));
     const user = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "user");
     expect(user?.kind === "user" && user.parts).toEqual([
       { kind: "image", mimeType: "image/png", file: "img-1.png" },
@@ -4052,7 +4098,7 @@ describe("a session's files live with the session", () => {
     // the OS empties its temp directory while the chip waits
     await rm(join(ATTACHMENTS_DIR, imageFileName(chipId, "image/png")), { force: true });
 
-    await h.gates.prompt(patchbaySessionId, { text: "what is this?" });
+    await h.gates.prompt(patchbaySessionId, placing("what is this?", chipId));
     expect(echoedKinds(h, patchbaySessionId)).toEqual([{ type: "image", mimeType: "image/png" }, { type: "text" }]);
     await h.pool.stop("f78a" as PatchbayAgentId);
   });
@@ -4064,7 +4110,7 @@ describe("a session's files live with the session", () => {
     await h.sessions.addContext(patchbaySessionId, { id: "chip-f78b", kind: "image", label: "Image", content: PNG, mimeType: "image/png" });
     const path = join(h.files.dirOf("f78b" as PatchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!, cwd), "chip-f78b.png");
 
-    await h.gates.prompt(patchbaySessionId, { text: "look" });
+    await h.gates.prompt(patchbaySessionId, placing("look", "chip-f78b"));
     expect(echoedKinds(h, patchbaySessionId)[0]).toMatchObject({ type: "resource_link", uri: pathToFileURL(path).toString() });
     expect(existsSync(path)).toBe(true);
     await h.pool.stop("f78b" as PatchbayAgentId);
@@ -4086,7 +4132,7 @@ describe("a session's files live with the session", () => {
       { id: "chip-f78c", kind: "attachment", label: "File: my notes.txt", name: "my notes.txt", path, mimeType: "text/plain" },
     ]);
 
-    await h.gates.prompt(patchbaySessionId, { text: "read it" });
+    await h.gates.prompt(patchbaySessionId, placing("read it", "chip-f78c"));
     // the copy's name keeps two drops apart; the prompt and the agent read
     // the file's own
     expect(echoedKinds(h, patchbaySessionId)[0]).toMatchObject({ type: "resource_link", uri: pathToFileURL(path).toString(), name: "my notes.txt" });
@@ -4106,7 +4152,7 @@ describe("a session's files live with the session", () => {
     await h.sessions.addContext(patchbaySessionId, { id: "chip-f59a-file", kind: "attachment", label: "File: notes", name: basename(notes), path: notes });
     await h.sessions.addContext(patchbaySessionId, { id: "chip-f59a-gone", kind: "attachment", label: "File: gone", name: basename(gonePath), path: gonePath });
     await h.sessions.addContext(patchbaySessionId, { id: "chip-f59a-sel", kind: "selection", label: "a.ts:1-2", content: "x" });
-    await h.gates.prompt(patchbaySessionId, { text: "look" });
+    await h.gates.prompt(patchbaySessionId, placing("look", "chip-f59a-img", "chip-f59a-file", "chip-f59a-gone", "chip-f59a-sel"));
     expect(h.state().contextChips[patchbaySessionId] ?? []).toEqual([]);
     const prompt = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "user")!;
 

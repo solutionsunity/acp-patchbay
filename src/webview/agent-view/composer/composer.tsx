@@ -120,7 +120,8 @@ export function Composer(props: {
   /** The adder's entries — also reused by the `@` mention picker's fixed rows. */
   const addSelection = () => send({ kind: "addSelectionContext", patchbaySessionId });
   const addDiagnostics = () => send({ kind: "addDiagnosticsContext", patchbaySessionId });
-  const addFilePicker = () => send({ kind: "addFilePickerContext", patchbaySessionId });
+  const addFilePicker = () => send({ kind: "addFilePickerContext", patchbaySessionId, pick: "files" });
+  const addFolderPicker = () => send({ kind: "addFilePickerContext", patchbaySessionId, pick: "folder" });
 
   /** Byte-carrying attachments (paste, external drop) → the one ingress
    * processor; admitted images/files go up as actions, refusals surface as
@@ -197,7 +198,7 @@ export function Composer(props: {
         {/* the grabber pill — the visible "hold here" affordance */}
         <div className="h-[3px] w-10 rounded-full bg-border transition-colors group-hover:bg-muted-foreground group-active:bg-muted-foreground" />
       </div>
-      {(props.contextChips.length > 0 || props.contextRoots.length > 0 || enabled) && (
+      {(props.contextRoots.length > 0 || enabled) && (
         <div className="ctx-row">
           {enabled && (
             <RootsChip
@@ -229,33 +230,6 @@ export function Composer(props: {
                 : ""}
             </span>
           )}
-          {props.contextChips.map((c) => (
-            <span
-              className="ctx-chip"
-              key={c.id}
-              title={
-                c.kind === "image" ? c.label : c.kind === "attachment" ? c.path : c.content.slice(0, 300)
-              }
-            >
-              <Icon
-                name={
-                  c.kind === "selection"
-                    ? "target"
-                    : c.kind === "file"
-                      ? "file"
-                      : c.kind === "image"
-                        ? "file-media"
-                        : c.kind === "attachment"
-                          ? "attach"
-                          : "warning"
-                }
-              />
-              <span className="label">{c.label}</span>
-              <span className="x" onClick={() => send({ kind: "removeContextChip", patchbaySessionId, chipId: c.id })}>
-                ×
-              </span>
-            </span>
-          ))}
           {enabled && (
             // A real Popover (like the roots chip): closes on outside click
             // and Escape, panel style shared with every other popover.
@@ -271,7 +245,8 @@ export function Composer(props: {
                     { icon: "target", label: "Selection", hint: "current editor selection", run: addSelection },
                     { icon: "file", label: "Current file", hint: "active editor", run: () => send({ kind: "addFileContext", patchbaySessionId }) },
                     { icon: "warning", label: "Problems", hint: "workspace diagnostics", run: addDiagnostics },
-                    { icon: "attach", label: "Attach file…", hint: "pick any file", run: addFilePicker },
+                    { icon: "attach", label: "Attach files…", hint: "link any files, where they are", run: addFilePicker },
+                    { icon: "folder", label: "Attach folder…", hint: "link any folder, where it is", run: addFolderPicker },
                   ] as const
                 ).map((entry) => (
                   <div
@@ -307,11 +282,13 @@ export function Composer(props: {
           openEditors={props.openEditors}
           workspaceFiles={props.workspaceFiles}
           hasSelection={enabled && props.liveSelection !== null}
+          chips={props.contextChips}
           onSubmit={onSubmit}
           onPasteFiles={ingest}
           onPickSelection={addSelection}
           onPickProblems={addDiagnostics}
           onPickAttach={addFilePicker}
+          onPickAttachFolder={addFolderPicker}
           submitRef={submitRef}
           focusRequest={props.focusRequest}
         />

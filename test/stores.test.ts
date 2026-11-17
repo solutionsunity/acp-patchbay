@@ -733,7 +733,7 @@ describe("UsedCapabilityStore.seed — the fresh claim outranks the cache", () =
 describe("SessionContinuityStore", () => {
   it("a row stored under one composite id reads by its pair — nothing dropped, nothing left to fold", async () => {
     const kv = new MemoryKV();
-    await kv.update(STORAGE_KEYS.sessionContinuity, [
+    await kv.update(STORAGE_KEYS.sessionContinuityBefore092, [
       { id: "claude\u0000s1", agentId: "claude", cwd: "/ws", draft: "kept words" },
       { patchbayAgentId: "auggie", sessionId: "s2", draft: "already paired" },
     ]);
@@ -745,7 +745,7 @@ describe("SessionContinuityStore", () => {
 
   it("an image chip stored by its name in the temp stash reads by that file's path — nothing dropped, nothing left to fold", async () => {
     const kv = new MemoryKV();
-    await kv.update(STORAGE_KEYS.sessionContinuity, [
+    await kv.update(STORAGE_KEYS.sessionContinuityBefore092, [
       {
         patchbayAgentId: "claude",
         sessionId: "s1",
@@ -772,7 +772,7 @@ describe("SessionContinuityStore", () => {
   it("an attached file stored without its own name takes it from its label — staged or held, nothing dropped", async () => {
     const kv = new MemoryKV();
     const unnamed = (id: string, label: string, path: string) => ({ kind: "attachment", id, label, path });
-    await kv.update(STORAGE_KEYS.sessionContinuity, [
+    await kv.update(STORAGE_KEYS.sessionContinuityBefore092, [
       {
         patchbayAgentId: "claude",
         sessionId: "s1",
@@ -789,10 +789,59 @@ describe("SessionContinuityStore", () => {
     const s1 = store.read("claude" as PatchbayAgentId, "s1");
     expect(s1?.chips).toEqual([{ ...unnamed("chip-1", "File: my notes.txt", "/s/chip-1-my_notes.txt"), name: "my notes.txt" }]);
     expect(s1?.queue).toEqual([
-      { id: "q1", text: "held", chips: [{ ...unnamed("chip-2", "File: report.pdf", "/s/chip-2-report.pdf"), name: "report.pdf" }] },
+      {
+        id: "q1",
+        text: "held",
+        chips: [{ ...unnamed("chip-2", "File: report.pdf", "/s/chip-2-report.pdf"), name: "report.pdf" }],
+        parts: [{ kind: "chip", id: "chip-2" }, { kind: "text", text: "held" }],
+      },
       { id: "q2", text: "no chips" },
     ]);
     expect(store.read("claude" as PatchbayAgentId, "s2")?.chips).toEqual([{ ...unnamed("chip-3", "Picked", "/home/u/plan.md"), name: "plan.md" }]);
+  });
+
+  // The stored shape changed (a held prompt's chips have a place in its
+  // words), so the rows moved to a new key: a window still on the version
+  // before keeps its own, where a row in today's shape would fail its
+  // schema and be dropped whole.
+  it("rows an earlier version kept are copied once into today's key, their held chips placed ahead of the words — the earlier key untouched", async () => {
+    const kv = new MemoryKV();
+    const chip = (id: string) => ({ kind: "selection", id, label: `Selection ${id}`, content: "x" });
+    const earlier = [
+      {
+        patchbayAgentId: "claude",
+        sessionId: "s1",
+        draft: "kept",
+        chips: [chip("staged")],
+        queue: [
+          { id: "q1", text: "plain words", chips: [chip("a"), chip("b")] },
+          { id: "q2", text: "see @f", parts: [{ kind: "text", text: "see " }, { kind: "fileRef", path: "/ws/f.ts" }], chips: [chip("c")] },
+        ],
+      },
+    ];
+    await kv.update(STORAGE_KEYS.sessionContinuityBefore092, earlier);
+    const store = new SessionContinuityStore(kv);
+    const row = store.read("claude" as PatchbayAgentId, "s1");
+    expect(row?.draft).toBe("kept");
+    expect(row?.chips).toEqual([chip("staged")]);
+    expect(row?.queue?.map((q) => q.parts)).toEqual([
+      [{ kind: "chip", id: "a" }, { kind: "chip", id: "b" }, { kind: "text", text: "plain words" }],
+      [{ kind: "chip", id: "c" }, { kind: "text", text: "see " }, { kind: "fileRef", path: "/ws/f.ts" }],
+    ]);
+    expect(kv.get(STORAGE_KEYS.sessionContinuityBefore092)).toEqual(earlier);
+
+    // once: what the earlier version writes afterwards is not read again
+    await store.patch("claude" as PatchbayAgentId, "s1", "/ws", { draft: "today's" });
+    await kv.update(STORAGE_KEYS.sessionContinuityBefore092, [{ patchbayAgentId: "claude", sessionId: "s1", draft: "the old window's" }]);
+    expect(new SessionContinuityStore(kv).read("claude" as PatchbayAgentId, "s1")?.draft).toBe("today's");
+  });
+
+  it("erasing takes the earlier version's rows too — nothing left to be copied back", async () => {
+    const kv = new MemoryKV();
+    await kv.update(STORAGE_KEYS.sessionContinuityBefore092, [{ patchbayAgentId: "claude", sessionId: "s1", draft: "kept" }]);
+    await new SessionContinuityStore(kv).wipe();
+    expect(kv.get(STORAGE_KEYS.sessionContinuityBefore092)).toBeUndefined();
+    expect(new SessionContinuityStore(kv).read("claude" as PatchbayAgentId, "s1")).toBeUndefined();
   });
 
   const ws = "/ws/a";

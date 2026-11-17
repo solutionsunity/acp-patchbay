@@ -9,7 +9,6 @@ import {
   classify,
   refusalMessage,
   wireImageExtension,
-  wireImageMimeOf,
 } from "../src/shared/attachment-policy";
 
 const MB = 1024 * 1024;
@@ -62,23 +61,5 @@ describe("wire image set ↔ file names", () => {
     expect(wireImageExtension("image/gif")).toBe("gif");
     expect(wireImageExtension("image/webp")).toBe("webp");
     expect(wireImageExtension("image/bmp")).toBeUndefined();
-  });
-
-  it("recognises a wire-set image by its file name — case-blind, jpeg alias included", () => {
-    expect(wireImageMimeOf("shot.png")).toBe("image/png");
-    expect(wireImageMimeOf("SHOT.PNG")).toBe("image/png");
-    expect(wireImageMimeOf("photo.jpg")).toBe("image/jpeg");
-    expect(wireImageMimeOf("photo.jpeg")).toBe("image/jpeg");
-    expect(wireImageMimeOf("anim.gif")).toBe("image/gif");
-    expect(wireImageMimeOf("pic.webp")).toBe("image/webp");
-  });
-
-  it("names no mime for anything outside the set — never a guess", () => {
-    expect(wireImageMimeOf("diagram.svg")).toBeUndefined();
-    expect(wireImageMimeOf("scan.tiff")).toBeUndefined();
-    expect(wireImageMimeOf("report.pdf")).toBeUndefined();
-    expect(wireImageMimeOf("notes.txt")).toBeUndefined();
-    expect(wireImageMimeOf("Makefile")).toBeUndefined();
-    expect(wireImageMimeOf("archive.tar.png.gz")).toBeUndefined();
   });
 });

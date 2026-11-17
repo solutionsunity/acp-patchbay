@@ -1031,20 +1031,15 @@ body {
   margin-bottom: 4px;
 }
 
-/* A removable row — queued prompt, context chip — never outgrows its
- * container: the text truncates and the × keeps its size, so it stays
- * reachable at any panel width. The row's own `title` carries the full
- * text. Queue rows fill their line (flex: 1); chips hug their content. */
-.queue-row .txt,
-.ctx-chip .label {
+/* A queued prompt's row never outgrows its container: the text truncates
+ * and the × keeps its size, so it stays reachable at any panel width. The
+ * row's own `title` carries the full text. */
+.queue-row .txt {
+  flex: 1;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.queue-row .txt {
-  flex: 1;
 }
 
 .queue-row.cut {
@@ -1057,15 +1052,13 @@ body {
   color: var(--pb-warn);
 }
 
-.queue-row .x,
-.ctx-chip .x {
+.queue-row .x {
   flex-shrink: 0;
   cursor: pointer;
   color: var(--pb-text-faint);
 }
 
-.queue-row .x:hover,
-.ctx-chip .x:hover {
+.queue-row .x:hover {
   color: var(--pb-err);
 }
 
@@ -1172,8 +1165,9 @@ body {
   pointer-events: none;
 }
 
-/* Inline tokens (nodes.ts): an accepted `/` command or `@` file mention —
- * chip-like, atomic, visually distinct from prose. */
+/* Inline tokens (nodes.ts): an accepted `/` command, an `@` file mention
+ * or a staged attachment — chip-like, atomic, visually distinct from
+ * prose. */
 .prompt-token {
   background: var(--pb-panel-2);
   border: 1px solid var(--pb-border);
@@ -1181,7 +1175,16 @@ body {
   padding: 0 4px;
 }
 
-.mention-token {
+/* An image token's hover preview: bounded, whatever the image's size. */
+.chip-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 180px;
+  border-radius: 4px;
+}
+
+.mention-token,
+.chip-token {
   color: var(--pb-accent);
   border-color: var(--pb-accent-dim);
 }

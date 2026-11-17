@@ -72,8 +72,7 @@ export const ACTION_FAILURE: Readonly<Record<Action["kind"], string | null>> = {
   addDiagnosticsContext: "The problems weren't added",
   addImageContext: "The image wasn't attached",
   addDroppedFileContext: "The file wasn't attached",
-  addFilePickerContext: "The file wasn't attached",
-  removeContextChip: "The attachment wasn't removed",
+  addFilePickerContext: "Nothing was attached",
   cancelMcpServerConnect: "The add wasn't cancelled",
   pasteSignInLink: "The link wasn't taken",
   setMcpServerWorkspaces: "The server wasn't switched",
@@ -121,6 +120,7 @@ export const ACTION_FAILURE: Readonly<Record<Action["kind"], string | null>> = {
   // Nothing the user asked for as such — a keystroke's save or lookup, a
   // view's own bookkeeping: a warning for it would be noise.
   setSessionDraft: null,
+  markChipsPlaced: null,
   queryWorkspaceFiles: null,
   surfaceActivation: null,
   setSettingsSection: null,

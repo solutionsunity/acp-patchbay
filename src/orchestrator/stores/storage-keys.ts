@@ -31,7 +31,12 @@ export const STORAGE_KEYS = {
   savedRootsBefore090: "acpPatchbay.machineSavedRoots",
   usedCapabilities: "acpPatchbay.usedCapabilities",
   authLocks: "acpPatchbay.authLocks",
-  sessionContinuity: "acpPatchbay.sessionContinuity",
+  sessionContinuity: "acpPatchbay.sessionRows",
+  /** The sessions' rows as 0.90 and before kept them, a held prompt's
+   * attachments without a place in its words — still written by a window
+   * on such a version. Read once, to fill `sessionContinuity` where it is
+   * empty. */
+  sessionContinuityBefore092: "acpPatchbay.sessionContinuity",
   spawnRegistry: "acpPatchbay.spawnRegistry",
   defaultAgentFolded: "acpPatchbay.defaultAgentFolded",
   legacyStateRecovery: "acpPatchbay.legacyStateRecovery",

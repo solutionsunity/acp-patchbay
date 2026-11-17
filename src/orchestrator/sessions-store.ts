@@ -29,6 +29,7 @@ import {
   type ContextChip,
   type KnobSeed,
   type PersistedChip,
+  type PromptPart,
   type QueuedPrompt,
   type SessionContinuity,
   type SessionKnobView,
@@ -196,6 +197,7 @@ function persistChip(chip: Exclude<ContextChip, { kind: "image" }>): PersistedCh
       name: chip.name,
       path: chip.path,
       ...(chip.mimeType !== undefined ? { mimeType: chip.mimeType } : {}),
+      ...placedOf(chip),
     };
   }
   return {
@@ -204,8 +206,12 @@ function persistChip(chip: Exclude<ContextChip, { kind: "image" }>): PersistedCh
     label: chip.label,
     content: chip.content,
     ...(chip.sourceUri !== undefined ? { sourceUri: chip.sourceUri } : {}),
+    ...placedOf(chip),
   };
 }
+
+/** A chip's `placed`, carried between its two encodings — present or not at all. */
+const placedOf = (chip: { placed?: true }): { placed?: true } => (chip.placed === true ? { placed: true } : {});
 
 /** One session patchbay currently knows to exist — created here this
  * window, or reported by the agent's own `session/list` — under patchbay's
@@ -1685,7 +1691,7 @@ export class SessionsStore {
       const name = imageFileName(chip.id, chip.mimeType);
       try {
         const path = await this.files.put(row.patchbayAgentId, row.sessionId, this.cwd(), name, chip.content);
-        persisted = { kind: "image", id: chip.id, label: chip.label, mimeType: chip.mimeType, path };
+        persisted = { kind: "image", id: chip.id, label: chip.label, mimeType: chip.mimeType, path, ...placedOf(chip) };
       } catch (err) {
         this.log.info(`session ${patchbaySessionId}: image not staged — its folder refused it: ${agentErrorText(err)}`);
         return;
@@ -1784,11 +1790,16 @@ export class SessionsStore {
     return missed;
   }
 
-  removeContext(patchbaySessionId: PatchbaySessionId, chipId: string): void {
-    const chips = this.saved(patchbaySessionId).chips ?? [];
-    if (!chips.some((c) => c.id === chipId)) return;
-    this.save(patchbaySessionId, { chips: chips.filter((c) => c.id !== chipId) });
-    this.hooks.emit({ kind: "contextChipRemoved", patchbaySessionId, chipId });
+  /** A prompt box gave these staged chips their tokens: said on the chips,
+   * so no box hands one a second token — the user's deletion of a token
+   * holds in every view and across a reload. Ids staged no more are
+   * nothing to mark. */
+  markPlaced(patchbaySessionId: PatchbaySessionId, chipIds: readonly string[]): void {
+    const staged = this.saved(patchbaySessionId).chips ?? [];
+    const marked = staged.filter((c) => chipIds.includes(c.id) && c.placed !== true).map((c) => c.id);
+    if (marked.length === 0) return;
+    this.save(patchbaySessionId, { chips: staged.map((c) => (marked.includes(c.id) ? { ...c, placed: true as const } : c)) });
+    this.hooks.emit({ kind: "contextChipsPlaced", patchbaySessionId, chipIds: marked });
   }
 
   /** The session's user-added roots — its continuity row's list. */
@@ -2080,19 +2091,23 @@ export class SessionsStore {
    * Ids outlive the window with the row, so they are unique anywhere. */
   hold(patchbaySessionId: PatchbaySessionId, words: Omit<QueuedPrompt, "id">): void {
     if (!this.known.has(patchbaySessionId)) return;
-    const queued: QueuedPrompt = { id: randomUUID(), ...words, chips: words.chips ?? this.takeStaged(patchbaySessionId) };
+    const queued: QueuedPrompt = { id: randomUUID(), ...words, chips: words.chips ?? this.takeStaged(patchbaySessionId, words.parts) };
     this.save(patchbaySessionId, { queue: [...(this.saved(patchbaySessionId).queue ?? []), queued] });
     this.hooks.emit({ kind: "promptQueued", patchbaySessionId, prompt: queued });
   }
 
-  /** The chips staged on the session, taken off it — they go with the
-   * words being held or sent now, whatever is staged after. */
-  private takeStaged(patchbaySessionId: PatchbaySessionId): PersistedChip[] {
-    const chips = [...(this.saved(patchbaySessionId).chips ?? [])];
-    if (chips.length === 0) return chips;
+  /** The chips staged on the session, taken off it — the ones these words
+   * place go with them, held or sent now, whatever is staged after. One
+   * the words don't place had its token deleted from them: it leaves the
+   * session here and goes nowhere. (Not at the deletion: an undo brings
+   * the token back, and must find its chip.) */
+  private takeStaged(patchbaySessionId: PatchbaySessionId, parts: readonly PromptPart[] | undefined): PersistedChip[] {
+    const staged = this.saved(patchbaySessionId).chips ?? [];
+    if (staged.length === 0) return [];
     this.save(patchbaySessionId, { chips: [] });
-    for (const chip of chips) this.hooks.emit({ kind: "contextChipRemoved", patchbaySessionId, chipId: chip.id });
-    return chips;
+    for (const chip of staged) this.hooks.emit({ kind: "contextChipRemoved", patchbaySessionId, chipId: chip.id });
+    const placed = new Set((parts ?? []).flatMap((p) => (p.kind === "chip" ? [p.id] : [])));
+    return staged.filter((c) => placed.has(c.id));
   }
 
   /** Whether words wait on the session's row. */
@@ -2101,8 +2116,7 @@ export class SessionsStore {
   }
 
   /** The held words next in line, taken off the row to start their turn —
-   * with their own chips: none, for a row held before held words carried
-   * them. A cut turn's words in front wait on the user (QueuedPrompt.cut),
+   * with their own chips. A cut turn's words in front wait on the user (QueuedPrompt.cut),
    * and everything behind them waits with them. */
   takeHeld(patchbaySessionId: PatchbaySessionId): QueuedPrompt | undefined {
     const [next, ...rest] = this.saved(patchbaySessionId).queue ?? [];
@@ -2226,34 +2240,25 @@ export class SessionsStore {
     // live ticker exists so a slow response has visible feedback instead of
     // silence, and the silence starts at send.
     const startedAt = new Date().toISOString();
-    // Attached context rides in as its own labeled blocks, ahead of the
-    // user's words — distinguishable to the agent, not merged into prose
+    // Attached context rides in as its own blocks, each where the user put
+    // it in the words — distinguishable to the agent, not merged into prose
     // (explicitly add editor state to the prompt). Held words carry the
-    // chips staged with them; words sent now take what is staged.
-    const chips = words.chips ?? this.takeStaged(patchbaySessionId);
-    // The transcript's copy of the prompt, in the part vocabulary — chips
-    // first, then prose, the same order the wire blocks below carry. An
-    // image is previewed from the copy its chip left in the attachments stash.
-    const userParts: UserPart[] = chips.map((c): UserPart => {
-      if (c.kind === "image") return { kind: "image", mimeType: c.mimeType, file: imageFileName(c.id, c.mimeType) };
-      if (c.kind === "attachment") {
-        return { kind: "attachment", name: c.name, path: c.path };
-      }
-      return { kind: "context", label: c.label, text: boundedText(c.content) };
+    // chips they place; words sent now take what is staged.
+    const chips = new Map((words.chips ?? this.takeStaged(patchbaySessionId, parts)).map((c) => [c.id, c]));
+    // The words in order: a plain prompt is one run of text.
+    const placed: readonly PromptPart[] = parts !== undefined && parts.length > 0 ? parts : [{ kind: "text", text }];
+    // The transcript's copy of the prompt, in the part vocabulary and the
+    // order the wire blocks below carry. An image is previewed from the
+    // copy its chip left in the attachments stash.
+    const userParts = placed.flatMap((p): UserPart[] => {
+      if (p.kind === "text") return [{ kind: "text", text: p.text }];
+      if (p.kind === "fileRef") return [{ kind: "mention", name: basename(p.path), uri: pathToFileURL(p.path).toString() }];
+      const c = chips.get(p.id);
+      if (c === undefined) return [];
+      if (c.kind === "image") return [{ kind: "image", mimeType: c.mimeType, file: imageFileName(c.id, c.mimeType) }];
+      if (c.kind === "attachment") return [{ kind: "attachment", name: c.name, path: c.path }];
+      return [{ kind: "context", label: c.label, text: boundedText(c.content) }];
     });
-    if (parts !== undefined && parts.length > 0) {
-      for (const p of parts) {
-        if (p.kind === "text") userParts.push({ kind: "text", text: p.text });
-        else
-          userParts.push({
-            kind: "mention",
-            name: basename(p.path),
-            uri: pathToFileURL(p.path).toString(),
-          });
-      }
-    } else {
-      userParts.push({ kind: "text", text });
-    }
     events.push(
       { kind: "userMessageAppended", patchbaySessionId, blockId: newBlockId("user"), parts: userParts },
       { kind: "turnStarted", patchbaySessionId, at: startedAt },
@@ -2275,57 +2280,51 @@ export class SessionsStore {
     const declared = this.pool.get(known.patchbayAgentId)?.declared;
     const acceptsImages = declared?.promptImage ?? false;
     const acceptsEmbedded = declared?.promptEmbeddedContext ?? false;
-    const prompt: ContentBlock[] = [];
-    for (const c of chips) {
+    const chipBlock = async (c: PersistedChip): Promise<ContentBlock | null> => {
       if (c.kind === "image") {
-        if (acceptsImages) {
-          // The bytes are the staged file's; one gone since leaves the
-          // prompt without it, said in the log.
-          const data = await readBase64(c.path);
-          if (data === null) {
-            this.log.info(`session ${patchbaySessionId}: pasted image "${c.label}" not sent — its file is gone`);
-          } else {
-            prompt.push({ type: "image", data, mimeType: c.mimeType });
-          }
-        } else {
-          prompt.push(imageAsResourceLink(c));
-        }
-      } else if (c.kind === "attachment") {
-        prompt.push({
+        if (!acceptsImages) return imageAsResourceLink(c);
+        // The bytes are the staged file's; one gone since leaves the
+        // prompt without it, said in the log.
+        const data = await readBase64(c.path);
+        if (data !== null) return { type: "image", data, mimeType: c.mimeType };
+        this.log.info(`session ${patchbaySessionId}: pasted image "${c.label}" not sent — its file is gone`);
+        return null;
+      }
+      if (c.kind === "attachment") {
+        return {
           type: "resource_link",
           uri: pathToFileURL(c.path).toString(),
           name: c.name,
           ...(c.mimeType !== undefined ? { mimeType: c.mimeType } : {}),
-        });
-      } else if (acceptsEmbedded) {
-        prompt.push({
+        };
+      }
+      if (acceptsEmbedded) {
+        return {
           type: "resource",
           // Aggregates without a single source (diagnostics) name the
           // chip itself — the uri field is required on the wire.
           resource: { uri: c.sourceUri ?? `patchbay://context/${c.kind}/${c.id}`, text: c.content },
-        });
+        };
+      }
+      return { type: "text", text: `[${c.label}]\n${c.content}` };
+    };
+    // One block per part, in the words' order: text as text, an inline
+    // `@file` as a resource_link — the baseline block every agent MUST
+    // accept; the agent reads the content itself through the brokered fs
+    // path — and a chip in its own form, at its place.
+    const prompt: ContentBlock[] = [];
+    for (const part of placed) {
+      if (part.kind === "text") {
+        // the one run of a plain prompt is sent as typed, empty or not
+        if (part.text !== "" || placed.length === 1) prompt.push({ type: "text", text: part.text });
+      } else if (part.kind === "fileRef") {
+        prompt.push({ type: "resource_link", uri: pathToFileURL(part.path).toString(), name: basename(part.path) });
       } else {
-        prompt.push({ type: "text", text: `[${c.label}]\n${c.content}` });
+        const chip = chips.get(part.id);
+        const block = chip === undefined ? null : await chipBlock(chip);
+        if (chip === undefined) this.log.info(`session ${patchbaySessionId}: an attachment in the prompt was not sent — nothing is staged for it`);
+        if (block !== null) prompt.push(block);
       }
-    }
-    // Positional prompt parts (composer mentions): each inline `@file`
-    // becomes a resource_link *at its place in the prose* — the baseline
-    // block every agent MUST accept; the agent reads the content itself
-    // through the brokered fs path. Plain prompts ride as one text block.
-    if (parts !== undefined && parts.length > 0) {
-      for (const part of parts) {
-        if (part.kind === "text") {
-          if (part.text !== "") prompt.push({ type: "text", text: part.text });
-        } else {
-          prompt.push({
-            type: "resource_link",
-            uri: pathToFileURL(part.path).toString(),
-            name: basename(part.path),
-          });
-        }
-      }
-    } else {
-      prompt.push({ type: "text", text });
     }
     const endTurn = (stopReason: string, usage: TurnUsage | null, error?: string) => {
       // Whatever the stop reason — cancelled, error, even a claimed clean
@@ -2410,7 +2409,7 @@ export class SessionsStore {
       // sent with, wait at the front of the held ones for the user to send
       // again or drop — the agent may already have acted on them, so they
       // never fire on their own.
-      if (err instanceof ConnectionLost) this.reHold(patchbaySessionId, { ...words, chips, cut: true });
+      if (err instanceof ConnectionLost) this.reHold(patchbaySessionId, { ...words, chips: [...chips.values()], cut: true });
       throw err;
     } finally {
       signal.removeEventListener("abort", cancel);
@@ -2431,7 +2430,7 @@ export class SessionsStore {
   reHold(patchbaySessionId: PatchbaySessionId, words: Omit<QueuedPrompt, "id"> & { id?: string }): void {
     if (!this.known.has(patchbaySessionId)) return;
     // Words sent now that never left take the chips still staged for them.
-    const held = { ...words, id: words.id ?? randomUUID(), chips: words.chips ?? this.takeStaged(patchbaySessionId) };
+    const held = { ...words, id: words.id ?? randomUUID(), chips: words.chips ?? this.takeStaged(patchbaySessionId, words.parts) };
     this.requeue(patchbaySessionId, [held, ...(this.saved(patchbaySessionId).queue ?? [])]);
   }
 
@@ -2476,7 +2475,7 @@ export class SessionsStore {
         void stashPreview(imageFileName(chip.id, chip.mimeType), content).catch((err: Error) =>
           this.log.info(`session ${patchbaySessionId}: image preview not stashed — ${agentErrorText(err)}`),
         );
-        chips.push({ kind: "image", id: chip.id, label: chip.label, mimeType: chip.mimeType, content });
+        chips.push({ kind: "image", id: chip.id, label: chip.label, mimeType: chip.mimeType, content, ...placedOf(chip) });
       } else if (chip.kind === "attachment") {
         chips.push({
           kind: "attachment",
@@ -2485,6 +2484,7 @@ export class SessionsStore {
           name: chip.name,
           path: chip.path,
           ...(chip.mimeType !== undefined ? { mimeType: chip.mimeType } : {}),
+          ...placedOf(chip),
         });
       } else {
         chips.push({
@@ -2493,6 +2493,7 @@ export class SessionsStore {
           label: chip.label,
           content: chip.content,
           ...(chip.sourceUri !== undefined ? { sourceUri: chip.sourceUri } : {}),
+          ...placedOf(chip),
         });
       }
     }

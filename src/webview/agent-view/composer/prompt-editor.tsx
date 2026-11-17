@@ -4,9 +4,11 @@
 // The prompt box, Lexical-backed: typed triggers (`/`
 // commands, `@` context) get real keyboard navigation, and accepted picks
 // become inline tokens (nodes.ts) instead of bare text — a `<textarea>`
-// cannot style ranges, which is what forced the editor swap. Still
-// render-only: the editor state is draft furniture, reset with the webview;
-// every pick and the send itself go up as actions.
+// cannot style ranges, which is what forced the editor swap. Everything
+// attached to a prompt sits in it the same way: a staged chip has one
+// token, at the place in the words where it is sent. Still render-only:
+// the editor state is draft furniture, reset with the webview; every pick
+// and the send itself go up as actions.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { autoUpdate, flip, offset, size, useFloating } from "@floating-ui/react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
@@ -37,7 +39,7 @@ import {
   type TextNode,
   CLEAR_HISTORY_COMMAND,
 } from "lexical";
-import type { AvailableCommand, OpenEditorView, PromptPart, UserBlock } from "../../../shared/protocol";
+import type { AvailableCommand, ContextChip, OpenEditorView, PromptPart, UserBlock } from "../../../shared/protocol";
 import { promptPieces } from "../chat/prompt-pieces";
 import { useActions } from "../../shared/actions";
 import { basename } from "../../shared/path";
@@ -48,12 +50,19 @@ import {
   SlashMenu,
   type MentionEntry,
 } from "./menus";
+import { chipTitle, chipToken } from "./chip-token";
+import { ChipPreview } from "./chip-preview";
 import {
+  $createChipNode,
   $createCommandNode,
   $createMentionNode,
+  $isChipNode,
   $isCommandNode,
   $isMentionNode,
+  ChipNode,
   CommandNode,
+  COPIED_CHIP,
+  COPIED_MENTION,
   MentionNode,
 } from "./nodes";
 import type { PatchbaySessionId } from "../../../shared/ids";
@@ -83,7 +92,11 @@ export interface PromptEditorProps {
   openEditors: readonly OpenEditorView[];
   workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
   hasSelection: boolean;
-  /** `parts` present only when the prompt carries inline file mentions;
+  /** The session's staged chips. Each is given one token in the box, at
+   * the caret, when it arrives not yet `placed`. */
+  chips: readonly ContextChip[];
+  /** `parts` present only when the prompt carries inline tokens that send
+   * something of their own — file mentions, staged chips;
    * `draft` is the buffer's serialized editor state at the moment of send,
    * so a held prompt can be taken back exactly. Always consumes the
    * buffer: Enter during a turn underway queues the prompt (orchestrator-side)
@@ -96,6 +109,7 @@ export interface PromptEditorProps {
   onPickSelection(): void;
   onPickProblems(): void;
   onPickAttach(): void;
+  onPickAttachFolder(): void;
   /** The send button lives outside the editor — it fires through here. */
   submitRef: { current: (() => void) | null };
   /** The host's requests that the composer take the keyboard (the view
@@ -117,7 +131,7 @@ export function PromptEditor(props: PromptEditorProps) {
     <LexicalComposer
       initialConfig={{
         namespace: "composer",
-        nodes: [MentionNode, CommandNode],
+        nodes: [MentionNode, CommandNode, ChipNode],
         editable: props.enabled,
         // the webview's global error hooks (error-collector.ts) are the report path
         onError: (err) => {
@@ -137,6 +151,7 @@ export function PromptEditor(props: PromptEditorProps) {
       />
       <HistoryPlugin externalHistoryState={history} />
       <EditorCore {...props} history={history} />
+      <ChipPreview chips={props.chips} />
     </LexicalComposer>
   );
 }
@@ -152,7 +167,7 @@ function $computeTrigger(): Trigger | null {
   const anchor = selection.anchor;
   if (anchor.type !== "text") return null;
   const node = anchor.getNode();
-  if (!$isTextNode(node) || $isMentionNode(node) || $isCommandNode(node)) return null;
+  if (!$isTextNode(node) || $isMentionNode(node) || $isCommandNode(node) || $isChipNode(node)) return null;
   const caretText = node.getTextContent().slice(0, anchor.offset);
   const slash = /(?:^|\s)(\/\S*)$/.exec(caretText);
   if (slash !== null) return { kind: "slash", token: slash[1]! };
@@ -367,6 +382,41 @@ function EditorCore(props: PromptEditorProps & { history: HistoryState }) {
     loadedFor.current = props.patchbaySessionId;
   }, [editor, props.draft, props.patchbaySessionId]);
 
+  // Every staged chip is given its token, once. One that arrives without
+  // it — just attached, or staged while no box was there to take it — gets
+  // it at the caret, or after the words where the box never had one, and
+  // the chip is told (`placed`): no box gives it another, so a token the
+  // user deleted stays deleted here, in a sibling view and after a reload
+  // (the chip goes nowhere at send), and an undo brings the token back to
+  // a chip still staged. The draft is saved with the token before the chip
+  // is told — a chip marked placed with no token anywhere would be sent
+  // nowhere, unseen. Declared after the draft's own effects: a session's
+  // draft is in the box before its chips are looked for there.
+  useEffect(() => {
+    if (loadedFor.current !== props.patchbaySessionId || props.patchbaySessionId === "") return;
+    const unplaced = props.chips.filter((c) => c.placed !== true);
+    if (unplaced.length === 0) return;
+    let inserted = false;
+    editor.update(
+      () => {
+        const root = $getRoot();
+        const held = new Set(root.getAllTextNodes().flatMap((n) => ($isChipNode(n) ? [n.getChipId()] : [])));
+        const missing = unplaced.filter((c) => !held.has(c.id));
+        if (missing.length === 0) return;
+        if (root.getFirstChild() === null) root.append($createParagraphNode());
+        const at = $getSelection();
+        const selection = $isRangeSelection(at) ? at : root.selectEnd();
+        selection.insertNodes(missing.flatMap((c) => [$createChipNode(c.id, chipToken(c), chipTitle(c)), $createTextNode(" ")]));
+        inserted = true;
+      },
+      { discrete: true },
+    );
+    flushDraft();
+    send({ kind: "markChipsPlaced", patchbaySessionId: props.patchbaySessionId, chipIds: unplaced.map((c) => c.id) });
+    // the words go on from the token, where the view is the one in use
+    if (inserted && document.hasFocus()) takeKeyboard(editor);
+  }, [editor, props.chips, props.patchbaySessionId]);
+
   // Trigger tracking: recomputed on every state/selection change.
   useEffect(
     () =>
@@ -449,7 +499,8 @@ function EditorCore(props: PromptEditorProps & { history: HistoryState }) {
 
   /** Splits the typed trigger token out of its text node and swaps it for
    * the node `create` builds + a trailing space (null: just removes it — the
-   * fixed mention rows resolve to chips, nothing stays inline). A factory,
+   * fixed mention rows stage a chip, whose token lands where the trigger
+   * was). A factory,
    * not a node: Lexical builds a node only inside an update, and a row's
    * click arrives outside one. */
   const replaceTrigger = (length: number, create: (() => TextNode) | null) => {
@@ -492,7 +543,8 @@ function EditorCore(props: PromptEditorProps & { history: HistoryState }) {
     replaceTrigger(length, null);
     if (entry.kind === "selection") props.onPickSelection();
     else if (entry.kind === "problems") props.onPickProblems();
-    else props.onPickAttach();
+    else if (entry.kind === "attach") props.onPickAttach();
+    else props.onPickAttachFolder();
   };
   const pickSelected = () => {
     if (active?.kind === "slash") {
@@ -505,7 +557,8 @@ function EditorCore(props: PromptEditorProps & { history: HistoryState }) {
   };
 
   /** Serializes the draft: readable `text` (tokens contribute their visible
-   * text) plus positional `parts` where mention nodes become fileRefs. */
+   * text) plus positional `parts` where a mention node becomes a fileRef
+   * and a chip node names its chip. */
   const submit = () => {
     const { text, parts } = editor.getEditorState().read(() => {
       const collected: PromptPart[] = [];
@@ -528,6 +581,9 @@ function EditorCore(props: PromptEditorProps & { history: HistoryState }) {
             if ($isMentionNode(child)) {
               flush();
               collected.push({ kind: "fileRef", path: child.getPath() });
+            } else if ($isChipNode(child)) {
+              flush();
+              collected.push({ kind: "chip", id: child.getChipId() });
             } else if ($isLineBreakNode(child)) {
               buffer += "\n";
             } else {
@@ -539,7 +595,7 @@ function EditorCore(props: PromptEditorProps & { history: HistoryState }) {
       return { text: $getRoot().getTextContent(), parts: collected };
     });
     if (text.trim() === "") return;
-    props.onSubmit(text, parts.some((p) => p.kind === "fileRef") ? parts : undefined, serialize());
+    props.onSubmit(text, parts.some((p) => p.kind !== "text") ? parts : undefined, serialize());
     editor.update(() => {
       $getRoot().clear();
     });
@@ -634,6 +690,64 @@ function EditorCore(props: PromptEditorProps & { history: HistoryState }) {
           if (files.length === 0) return false;
           event.preventDefault();
           props.onPasteFiles(files);
+          return true;
+        },
+        COMMAND_PRIORITY_HIGH,
+      ),
+  );
+
+  // A paste of what this box copied keeps its tokens: cut and paste moves
+  // a mention or an attachment within the prompt. They are read from the
+  // clipboard's HTML, where each copied token names itself. A chip's token
+  // stays one only where its chip is staged — this session; pasted into
+  // another it is its text, since what it would send is not there. Any
+  // other paste is plain text, the plugin's own.
+  useEffect(
+    () =>
+      editor.registerCommand(
+        PASTE_COMMAND,
+        (event) => {
+          const html = event instanceof ClipboardEvent ? (event.clipboardData?.getData("text/html") ?? "") : "";
+          if (!html.includes(COPIED_MENTION) && !html.includes(COPIED_CHIP)) return false;
+          const staged = new Map(props.chips.map((c) => [c.id, c]));
+          type Piece = { kind: "text"; text: string } | { kind: "break" } | { kind: "mention"; path: string; text: string } | { kind: "chip"; id: string; text: string };
+          const pieces: Piece[] = [];
+          const read = (node: Node): void => {
+            if (node.nodeType === Node.TEXT_NODE) {
+              const text = node.textContent ?? "";
+              // markup's own line breaks between tags are not the prompt's
+              if (text !== "" && !/^\s*\n\s*$/.test(text)) pieces.push({ kind: "text", text });
+              return;
+            }
+            if (!(node instanceof HTMLElement)) return;
+            const text = node.textContent ?? "";
+            const path = node.getAttribute(COPIED_MENTION);
+            const id = node.getAttribute(COPIED_CHIP);
+            if (path !== null) pieces.push({ kind: "mention", path, text });
+            else if (id !== null) pieces.push(staged.has(id) ? { kind: "chip", id, text } : { kind: "text", text });
+            else if (node.tagName === "BR") pieces.push({ kind: "break" });
+            else {
+              node.childNodes.forEach(read);
+              if (node.tagName === "P" && node.nextElementSibling !== null) pieces.push({ kind: "break" });
+            }
+          };
+          read(new DOMParser().parseFromString(html, "text/html").body);
+          event.preventDefault();
+          editor.update(() => {
+            const selection = $getSelection();
+            if (!$isRangeSelection(selection)) return;
+            selection.insertNodes(
+              pieces.map((piece) =>
+                piece.kind === "text"
+                  ? $createTextNode(piece.text)
+                  : piece.kind === "break"
+                    ? $createLineBreakNode()
+                    : piece.kind === "mention"
+                      ? $createMentionNode(piece.path, piece.text)
+                      : $createChipNode(piece.id, piece.text, chipTitle(staged.get(piece.id)!)),
+              ),
+            );
+          });
           return true;
         },
         COMMAND_PRIORITY_HIGH,

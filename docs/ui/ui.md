@@ -90,7 +90,7 @@ and shown at most three lines long; its words take the chat to that prompt
 **Copy** takes its readable form; **Reuse** puts it back in the composer —
 words, line breaks and `@file` mentions as tokens, the cursor after them,
 **Undo** taking them out again — and stages its images and attached files
-again as chips. Reuse lands only in an empty composer, as taking a held
+again, their tokens after the words. Reuse lands only in an empty composer, as taking a held
 prompt back does, and says so on the button rather than hiding; what can't
 come back is named in a warning: a selection or problems snapshot was of
 its moment (take a fresh one), a file no longer where it was is gone.
@@ -133,10 +133,10 @@ session's worth of change against.
 
 **Held prompts** sit in a band above the composer: prompts sent while a turn
 runs (or while the agent is signed out), in firing order. Each row shows its
-words and, with a 📎 count, the chips staged when it was sent — a held prompt
+words and, with a 📎 count, the attachments its words place — a held prompt
 sends those, never what is staged when it fires. Every row copies and
-removes; the tail row takes back into the composer, its words and its chips
-together. A message an agent crash cut off mid-answer comes back in front,
+removes; the tail row takes back into the composer, its words and its
+attachments together. A message an agent crash cut off mid-answer comes back in front,
 marked **cut off** (warning border): it sends only by its own Send again —
 the agent may already have acted on it — and the rows behind it wait on it;
 removing it lets them go. The band takes at most a quarter of the panel: a deeper
@@ -151,9 +151,8 @@ Context row (above):
 |---|---|---|
 | Roots chip | ⧉ n roots | session context roots (workspace folders + added external ones); lit when an external root is active; click → manage popover; roots pass via protocol — patchbay never indexes. Adding is always on: the session's MCP servers take a root at once. Each row names who holds it, from one gate — "agent + MCP" (the cwd always; every root where the agent takes it now), "MCP · agent at next open" (advertised, after the first turn, no `session/resume` but `session/load` — the note offers "Reopen now"), "MCP only" (the agent doesn't advertise the field, or can neither re-apply nor reopen); the note says why, and points at `@` for an agent that never takes roots. An added row saved for this workspace says where it is saved ("saved · this workspace", "saved · every workspace", "saved · this and 1 other workspace", read-only) or offers **Save** — a menu, this workspace first (adds this workspace to where it is saved), disabled with no workspace open; "Manage saved roots…" opens Settings › Saved roots, the one place a saved root is removed |
 | MCP chip | ▤ n MCP servers | the session's MCP servers, mirroring the roots chip: each the session's last open gave — `built-in`, or where it is saved ("saved · this workspace") — and those given to this session alone ("this session"), which take **Save** (the roots chip's menu: this workspace joins where the server is on, or every workspace) and a take-back; "+ Add for this session…" lists every configured server it hasn't. The agent gets MCP servers only when the session opens, so an add or a take-back waits ("this session · at next open", "until next open") and the note says so — offering "Reopen now" where the agent can load or resume, or saying a new session gets them. "Manage MCP servers…" opens Settings › MCP Servers |
-| Selection ghost chip | ⌖ dashed, lit | **the live-selection indicator**: appears only while the IDE has a selection; click solidifies it into context. Editor-side twin: right-click → add to context. These two are the whole selection story |
-| Context chips | 📄 ⌖ ⚠ 🖼 | attached files, solidified selection, diagnostics, images; × removes |
-| Adder | ＋ dashed | one popover: Files · Selection · Problems · Roots · Attach (image/file — never disabled; converts to the best form the agent accepts) |
+| Selection ghost chip | ⌖ dashed, lit | **the live-selection indicator**: appears only while the IDE has a selection; click puts it in the prompt as a token. Editor-side twin: right-click → add to context. These two are the whole selection story |
+| Adder | ＋ dashed | one popover: Selection · Current file · Problems · Attach files… · Attach folder… — each lands in the prompt as a token at the cursor. A pick is linked where it is, never read (an image too) |
 
 Input: placeholder teaches the two typed triggers; both menus navigate by
 arrow/Enter/Tab/Escape with focus never leaving the input. **`/`** →
@@ -164,7 +163,15 @@ full under the name; an accepted command becomes an inline token. **`@`** →
 context mention picker: open editors first, then workspace files (queried from the
 orchestrator; the input never reads the filesystem), plus the adder's fixed rows.
 A picked file becomes an inline token sent at its position in the prompt; the fixed
-rows resolve to context chips as before. The input takes the cursor when a chat
+rows attach like the adder's, the token landing where the `@` was typed.
+
+**Attachments are tokens in the text.** A selection, the current file, the
+problems, a pasted or dropped image or file, a picked file or folder: each is
+one token at the cursor, named as the user knows it (`@xyz.go:12-34`,
+`@shot.png`), its hover saying what it is, and it is sent at that place among
+the words. Backspace deletes it as a unit and takes it out of the prompt; Undo
+brings it back; cut and paste move it. Pasted into another session's box it is
+its text. Nothing attached sits above the input. The input takes the cursor when a chat
 opens for typing — a new session, a connect, a selection added from the editor, a
 session revealed, the status bar item — and when a session is switched to in the
 view the user is in; it never pulls focus into a view the user isn't in.

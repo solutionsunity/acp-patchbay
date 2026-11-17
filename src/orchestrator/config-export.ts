@@ -36,6 +36,7 @@ export const STORED_KEYS: Readonly<Record<StorageKey, ExportPart | { never: stri
   [STORAGE_KEYS.usedCapabilities]: { never: "what an agent proved on this machine — earned again by use on the next" },
   [STORAGE_KEYS.authLocks]: { never: "a sign-out witnessed on this machine — the next one's agents sign in for themselves" },
   [STORAGE_KEYS.sessionContinuity]: { never: "sessions held by this machine's agents" },
+  [STORAGE_KEYS.sessionContinuityBefore092]: { never: "sessions held by this machine's agents, as an earlier version kept them" },
   [STORAGE_KEYS.spawnRegistry]: { never: "processes running on this machine" },
   [STORAGE_KEYS.defaultAgentFolded]: { never: "marks this machine's old default-agent setting as folded in" },
   [STORAGE_KEYS.legacyStateRecovery]: { never: "marks this machine's one-time recovery as done" },

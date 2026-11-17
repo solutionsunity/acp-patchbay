@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Everything you attach sits in the prompt, where you put it.** A
+  selection, the current file, the problems, a pasted or dropped image or
+  file: each is now a token in the text at the cursor (`@xyz.go:12-34`),
+  and reaches the agent at that place — so two selections can each sit
+  beside the words about them. They used to be chips above the input, all
+  sent ahead of the text. Backspace takes a token out of the prompt, Undo
+  brings it back, cut and paste move it. A prompt held while a turn runs
+  keeps its attachments in place. How an agent treats what it receives is
+  its own: Claude keeps every attachment in place; OpenCode keeps
+  selections in place and gathers links and images apart from the text.
+  (#163)
+- **The + menu attaches files, or a whole folder, from anywhere on disk.**
+  "Attach files…" takes several at once and "Attach folder…" a folder; each
+  is linked where it is and lands in the prompt as a token, for the agent
+  to read itself. A pick is always a link, an image too — paste or drop an
+  image to send the image itself. (#147)
 - **An agent is told when to ask for the session's folders.** In a
   workspace with several folders, an agent that isn't handed them when the
   session opens could answer "what folders do you have" from its own shell

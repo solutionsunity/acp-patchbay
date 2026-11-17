@@ -1460,28 +1460,46 @@ nothing). None of it can make an agent call the tool.
   `ContentBlock::Image`; otherwise the image is written to the session's own folder
   and sent as a `ResourceLink`. Same data, best form the agent accepts (features §1).
 - **One attachment admission table** (shared/attachment-policy.ts): every byte
-  that becomes a chip passes one decision, whichever runtime produced it — the
-  webview ingress (composer/ingress.ts: paste and external drop) or the extension
-  host (the file picker). The table owns the size cap (Preferences, default
-  10MB), the image pass-through set {png, jpeg, gif, webp} (the set every major
-  LLM API accepts — an industry constant, not any agent's quirk table) with the
-  file-name spellings that announce it, the re-encode verdict for other image
-  types, and every refusal message. Each runtime owns only its byte work: the
-  webview re-encodes decodable non-wire images to PNG (decodable = Chromium's
-  `createImageBitmap`: bmp/ico/avif in practice; svg blobs notably fail it); the
-  host has no decoder, so a picked non-wire image lands on the attachment form.
-  An image the platform can't re-encode degrades to the file lane — original
-  bytes, original type, attached as a resource_link the agent reads itself — so
-  refusal is size-only. Nothing is ever guessed: the image chip's `mimeType` is a
-  required field with no defaults anywhere downstream, because the platform that
-  produced the bytes — or, for a picked path, the wire set the file name names —
-  is the only honest source (the spec requires the field to *describe the
-  payload*). Motivating incident: auggie 0.32.0 declares `prompt.image` but 400s
+  that becomes a chip passes one decision — the webview ingress
+  (composer/ingress.ts: paste and external drop), the one place bytes enter
+  (a picked file is linked, never read). The table owns the size cap
+  (Preferences, default 10MB), the image pass-through set {png, jpeg, gif,
+  webp} (the set every major LLM API accepts — an industry constant, not any
+  agent's quirk table), the re-encode verdict for other image types, and every
+  refusal message. The webview re-encodes decodable non-wire images to PNG
+  (decodable = Chromium's `createImageBitmap`: bmp/ico/avif in practice; svg
+  blobs notably fail it). An image the platform can't re-encode degrades to the
+  file lane — original bytes, original type, attached as a resource_link the
+  agent reads itself — so refusal is size-only. Nothing is ever guessed: the
+  image chip's `mimeType` is a required field with no defaults anywhere
+  downstream, because the platform that produced the bytes is the only honest
+  source (the spec requires the field to *describe the payload*). Motivating incident: auggie 0.32.0 declares `prompt.image` but 400s
   the whole turn on formats outside that set (the Auggie dossier).
-- **File attach** (paste, OS drop, or picker): a picked file has a host path,
-  so nothing crosses the webview — a wire-set image under the cap rides as an
-  image chip (bytes read host-side), everything else as a `ResourceLink` to its
-  real path, the agent reading it itself. A picked file is at rest, hence a link;
+- **Every attachment has a place in the prompt** *(decided 2026-11-17, #163,
+  superseding "chips ride ahead of the user's words")*: a staged chip —
+  selection, current file, problems, image, file, folder — is a token in the
+  prompt box where the user put it, and its block goes on the wire at that
+  place (`PromptPart` `chip`, beside `text` and `fileRef`). The chip stays
+  what it was — staged on the session's row, sent in its kind's form — and
+  the token carries only its id: the store holds what is sent. The box gives
+  each chip its token once, at the caret, and the chip is told (`placed`,
+  kept on its row) — so a token the user deleted is not handed out again by
+  another view or after a reload; a chip the words don't place when
+  they are sent or held (its token was deleted) leaves the session then and
+  goes nowhere — not at the deletion, so an undo finds it. A token copied
+  out of the box names itself in the clipboard's HTML, and pasted back is a
+  token again where its chip is staged; anywhere else it is its text.
+  Measured on Claude's adapter 0.108.0 and OpenCode 2.3.0: an embedded
+  resource keeps its place on both; OpenCode gathers links and images into
+  a file list of its own, their place among the words lost — the agent's
+  handling, not patched here.
+- **File attach** (paste, OS drop, or picker): a picked file or folder has a
+  host path, so nothing crosses the webview and nothing is read — each rides
+  as a `ResourceLink` to its real path, the agent reading it itself, an image
+  included *(decided 2026-11-09, #147: a pick is always a link; paste or drop
+  is how an image's bytes are sent — superseding the picked image chip)*. Two
+  picks, files and folder, because the platform's dialog selects one or the
+  other. A picked file is at rest, hence a link;
   the inline text chip is for the editor buffer, which may be dirty. Paste and
   drop carry bytes only (browsers hide paths; a client path means nothing to a
   remote host), so non-images are written to the session's own folder at add

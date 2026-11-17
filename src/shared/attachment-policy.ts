@@ -27,28 +27,9 @@ const WIRE_IMAGES: Readonly<Record<string, string>> = {
   "image/webp": "webp",
 };
 
-/** File-name spellings that name a wire mime beyond its stash extension. */
-const EXTENSION_ALIASES: Readonly<Record<string, string>> = { jpeg: "jpg" };
-
-const MIME_BY_EXTENSION: ReadonlyMap<string, string> = (() => {
-  const map = new Map<string, string>();
-  for (const [mime, ext] of Object.entries(WIRE_IMAGES)) map.set(ext, mime);
-  for (const [alias, ext] of Object.entries(EXTENSION_ALIASES)) map.set(alias, map.get(ext)!);
-  return map;
-})();
-
 /** The stash extension for a wire-set mime; undefined outside the set. */
 export function wireImageExtension(mimeType: string): string | undefined {
   return WIRE_IMAGES[mimeType];
-}
-
-/** The wire mime a file name announces by its extension — the one honest
- * type source when no platform reported one (a picked path). Undefined
- * outside the set: a name never earns a guessed mime. */
-export function wireImageMimeOf(fileName: string): string | undefined {
-  const dot = fileName.lastIndexOf(".");
-  if (dot < 0) return undefined;
-  return MIME_BY_EXTENSION.get(fileName.slice(dot + 1).toLowerCase());
 }
 
 export type Admission = "refuse-size" | "image-passthrough" | "image-reencode" | "file";

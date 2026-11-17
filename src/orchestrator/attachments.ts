@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { classify, wireImageExtension, wireImageMimeOf } from "../shared/attachment-policy";
+import { wireImageExtension } from "../shared/attachment-policy";
 
 export const ATTACHMENTS_DIR = join(tmpdir(), "acp-patchbay-attachments");
 
@@ -34,26 +34,6 @@ export const fileChipLabel = (name: string): string => `File: ${name}`;
  * honest generic extension. */
 export function imageFileName(id: string, mimeType: string): string {
   return `${id}.${wireImageExtension(mimeType) ?? "img"}`;
-}
-
-/** What a file the user picked by path becomes — the host's reading of
- * the shared admission table. The only type source here is the file name
- * (no platform reported one), so the mime is either a wire-set one or
- * absent, never guessed. The two branches the host cannot take both land
- * on the attachment form: re-encode (no decoder in the extension host —
- * and unreachable anyway, since a name never yields a non-wire image mime)
- * and refuse-size (nothing crosses a wire; the path alone is enough for the
- * agent to read it itself). */
-export function pickedFileForm(
-  fileName: string,
-  size: number,
-  maxBytes: number,
-): { kind: "image"; mimeType: string } | { kind: "attachment" } {
-  const mimeType = wireImageMimeOf(fileName);
-  if (mimeType !== undefined && classify(mimeType, size, maxBytes) === "image-passthrough") {
-    return { kind: "image", mimeType };
-  }
-  return { kind: "attachment" };
 }
 
 /** Writes an image's preview into the stash. */

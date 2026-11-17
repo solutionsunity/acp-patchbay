@@ -3,8 +3,8 @@
 
 // A sent prompt read back into the composer's own vocabulary — its words,
 // line breaks and `@file` mentions, the three things the prompt box holds.
-// What rode beside the words (images, attached files, snapshots) is staged
-// as chips by the host, never typed into the box.
+// What was attached (images, files, snapshots) is staged again by the
+// host, whose chips the box gives their tokens.
 import type { UserPart } from "../../../shared/protocol";
 import { basename, filePathOf } from "../../shared/path";
 

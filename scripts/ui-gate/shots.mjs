@@ -11,7 +11,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { chromium } from "playwright-core";
 import { webviewCsp } from "../../src/orchestrator/webview-csp.ts";
-import { agentViewState, longTranscript, preferences, settingsState } from "./fixtures.mjs";
+import { agentViewState, longSelectionChip, longTranscript, preferences, settingsState } from "./fixtures.mjs";
 import { bodyClass, THEMES } from "./themes.mjs";
 
 const OUT = "out/ui-gate";
@@ -910,13 +910,15 @@ for (const theme of Object.keys(THEMES)) {
   await p.close();
 
   // ── chat at the narrowest side-panel width: unbreakable tokens (a URL as
-  // autolink, plain text, and inline code; a queued prompt; an absolute path
-  // in a context chip) wrap or truncate — never push past the panel edge ──
+  // autolink, plain text, and inline code; a queued prompt; a staged
+  // selection's token in the prompt box) wrap or truncate — never push past
+  // the panel edge. The selection was staged with no box to take it: its
+  // token is there when the box is ──
   p = await page(browser, theme, { width: 280, height: 900 });
-  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await renderView(p, "agent-view", { ...agentViewState({ live: false }), contextChips: { s1: [longSelectionChip] } });
   await p.waitForSelector(".chat .msg-user");
   await p.waitForSelector(".queue-row .x");
-  await p.waitForSelector(".ctx-chip .x");
+  await p.waitForSelector(".input-shell .chip-token");
   // Measured on the rendered text itself (Range rects), not on boxes or
   // scrollWidth: an ancestor's overflow:hidden clips the symptom out of
   // every box metric, which is exactly why it shipped unseen. Fences,
@@ -931,7 +933,7 @@ for (const theme of Object.keys(THEMES)) {
       const box = range.getBoundingClientRect();
       if (box.width > 0) textRight = Math.max(textRight, Math.round(box.right));
     }
-    const removers = [...document.querySelectorAll(".queue-row .x, .ctx-chip .x")];
+    const removers = [...document.querySelectorAll(".queue-row .x, .input-shell .chip-token")];
     return {
       textRight,
       removers: removers.length,
@@ -940,7 +942,8 @@ for (const theme of Object.keys(THEMES)) {
     };
   });
   check(`[${theme}] narrow: prose text stays inside the panel (${narrow.textRight} ≤ ${narrow.width})`, narrow.textRight <= narrow.width);
-  check(`[${theme}] narrow: queue row + context chip × stay inside the panel (${narrow.removers} rows, ${narrow.xRight} ≤ ${narrow.width})`, narrow.removers === 2 && narrow.xRight <= narrow.width);
+  check(`[${theme}] narrow: the queue row's × and a staged selection's token stay inside the panel (${narrow.removers} found, ${narrow.xRight} ≤ ${narrow.width})`, narrow.removers === 2 && narrow.xRight <= narrow.width);
+  check(`[${theme}] narrow: the token reads as the file's name and lines`, (await p.textContent(".input-shell .chip-token")) === "@form_controller.scss:12-40");
   await p.screenshot({ path: `${OUT}/chat-narrow-${theme}.png`, fullPage: true });
   await p.close();
 
@@ -1910,6 +1913,91 @@ for (const theme of Object.keys(THEMES)) {
   );
   const att = await p.waitForSelector(".queue-row .att", { timeout: 3000 }).then(async (el) => ({ text: (await el.textContent()).trim(), title: await el.getAttribute("title") }), () => null);
   check(`a held prompt shows the chips it carries (${JSON.stringify(att)})`, att?.text === "2" && att.title === "Selection A, Selection B");
+  await p.close();
+}
+
+// ── an attachment sits in the words (#163, #147): staged, its token lands at
+// the caret; a deleted token stays deleted; cut and paste move it; the
+// prompt is sent with each attachment at its place. Theme-independent. ──
+{
+  const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 700 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".prompt-editor");
+  // The host's two halves of an attach: the chip arrives staged, and, once
+  // the box says it gave the chip its token, is marked placed.
+  const stage = async (chip) => {
+    await p.evaluate((c) => window.__patch([{ kind: "contextChipAdded", patchbaySessionId: "s1", chip: c }]), chip);
+    await p.waitForFunction((id) => window.__actions.some((a) => a.kind === "markChipsPlaced" && a.chipIds.includes(id)), chip.id);
+    await p.evaluate((id) => window.__patch([{ kind: "contextChipsPlaced", patchbaySessionId: "s1", chipIds: [id] }]), chip.id);
+  };
+  const tokens = () => p.$$eval(".input-shell .chip-token", (els) => els.map((el) => el.textContent));
+  await p.click(".prompt-editor");
+  await p.keyboard.type("in ");
+  await stage({ id: "sel", kind: "selection", label: "Selection: /ws/src/xyz.go:12-34", content: "func abc() {}", sourceUri: "file:///ws/src/xyz.go#L12-34" });
+  await p.waitForSelector(".input-shell .chip-token");
+  await p.keyboard.type("rename abc, as in ");
+  await stage({ id: "img", kind: "image", label: "Image: shot.png", content: "AAAA", mimeType: "image/png" });
+  await p.waitForFunction(() => document.querySelectorAll(".input-shell .chip-token").length === 2);
+  check(`a staged attachment's token lands at the caret, named as the user knows it (${JSON.stringify(await tokens())})`, JSON.stringify(await tokens()) === JSON.stringify(["@xyz.go:12-34", "@shot.png"]));
+  // an image token's hover shows the image; a file's says where it is
+  await p.hover('.input-shell .chip-token:has-text("@shot.png")');
+  const preview = await p.waitForSelector('[data-slot="tooltip-content"] img.chip-preview', { timeout: 3000 }).then(() => true, () => false);
+  await p.hover(".hdr");
+  const closed = await p.waitForSelector('[data-slot="tooltip-content"]', { state: "detached", timeout: 3000 }).then(() => true, () => false);
+  check(`an image token's hover shows the image, and leaving it closes the preview (${preview}, ${closed})`, preview && closed);
+  // deleted, it stays deleted — the next attachment is the only one added
+  await stage({ id: "gone", kind: "attachment", label: "File: notes.txt", name: "notes.txt", path: "/home/u/notes.txt" });
+  await p.waitForFunction(() => document.querySelectorAll(".input-shell .chip-token").length === 3);
+  await p.keyboard.press("Backspace");
+  await p.keyboard.press("Backspace");
+  await stage({ id: "dir", kind: "attachment", label: "File: research", name: "research", path: "/home/u/research" });
+  await p.waitForSelector('.input-shell .chip-token:has-text("@research")');
+  check("a file or folder token's hover says where it is", (await p.getAttribute('.input-shell .chip-token:has-text("@research")', "title")) === "/home/u/research");
+  check(`a deleted token is not put back when another attachment arrives (${JSON.stringify(await tokens())})`, JSON.stringify(await tokens()) === JSON.stringify(["@xyz.go:12-34", "@shot.png", "@research"]));
+  // an undo brings a deleted token back
+  await p.keyboard.press("Backspace");
+  await p.keyboard.press("Backspace");
+  const without = (await tokens()).length;
+  await p.keyboard.press("Control+z");
+  await p.keyboard.press("Control+z");
+  check(`an undo brings a deleted token back (${without} → ${(await tokens()).length})`, without === 2 && (await tokens()).length === 3);
+  // cut and paste keep the tokens: they are still attachments, in order
+  await p.keyboard.press("Control+a");
+  await p.keyboard.press("Control+x");
+  const emptied = (await tokens()).length;
+  await p.keyboard.press("Control+v");
+  await p.waitForFunction(() => document.querySelectorAll(".input-shell .chip-token").length === 3, null, { timeout: 3000 }).catch(() => {});
+  check(`cut and paste keep the tokens (${emptied} → ${JSON.stringify(await tokens())})`, emptied === 0 && JSON.stringify(await tokens()) === JSON.stringify(["@xyz.go:12-34", "@shot.png", "@research"]));
+  await p.screenshot({ path: `${OUT}/composer-attachments.png` });
+  await p.keyboard.press("Enter");
+  const sent = await p.evaluate(() => window.__actions.filter((a) => a.kind === "sendPrompt").at(-1));
+  const shape = (sent?.parts ?? []).map((part) => (part.kind === "chip" ? `<${part.id}>` : part.kind === "text" ? part.text : part.kind)).join("");
+  check(`the prompt is sent with each attachment at its place (${JSON.stringify(shape)})`, shape.replace(/\s+/g, " ").trim() === "in <sel> rename abc, as in <img> <dir>");
+  // the + menu links files or a folder
+  await p.click(".ctx-add");
+  await p.click('[data-slot="popover-content"] .it:has-text("Attach folder")');
+  await p.click(".ctx-add");
+  await p.click('[data-slot="popover-content"] .it:has-text("Attach files")');
+  const picks = await p.evaluate(() => window.__actions.filter((a) => a.kind === "addFilePickerContext").map((a) => a.pick));
+  check(`the + menu attaches files or a folder (${JSON.stringify(picks)})`, JSON.stringify(picks) === JSON.stringify(["folder", "files"]));
+  check("no attachment chip sits above the input", (await p.$$(".ctx-row .ctx-chip .x")).length === 0);
+  await p.close();
+}
+
+// ── a chip a box already gave its token is not given another: a view opened
+// on a session whose token was deleted leaves the box as the user left it
+// (the narrow shot above is the other half: one never placed gets its token).
+// Theme-independent. ──
+{
+  const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 700 });
+  await renderView(p, "agent-view", { ...agentViewState({ live: false }), contextChips: { s1: [{ ...longSelectionChip, placed: true }] } });
+  await p.waitForSelector(".prompt-editor");
+  await p.click(".prompt-editor");
+  await p.keyboard.type("as I left it");
+  check(
+    "a chip whose token was deleted gets no new one when the view opens",
+    (await p.$$(".input-shell .chip-token")).length === 0 && !(await p.evaluate(() => window.__actions.some((a) => a.kind === "markChipsPlaced"))),
+  );
   await p.close();
 }
 

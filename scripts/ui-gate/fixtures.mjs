@@ -148,13 +148,13 @@ export const longQueuedPrompt = {
   draft: '{"root":{}}',
 };
 
-/** A selection chip whose label is one unbreakable absolute path — same
- * gate, the chip's own row shape. */
+/** A staged selection whose label is one unbreakable absolute path — its
+ * token in the prompt box reads as the file's name and lines. */
 export const longSelectionChip = {
   id: "c1", kind: "selection",
   label: "Selection: /ws/addons/web/static/src/views/form/form_controller.scss:12-40",
   content: ".o_form_view { display: flex; }",
-  sourceUri: "file:///ws/addons/web/static/src/views/form/form_controller.scss#L12-L40",
+  sourceUri: "file:///ws/addons/web/static/src/views/form/form_controller.scss#L12-40",
 };
 
 /** A command whose description is a paragraph, the way agents advertise
@@ -234,7 +234,7 @@ export function agentViewState({ live }) {
     activeTurn: live ? { s1: new Date(Date.now() - 42_000).toISOString() } : {},
     commandsBySession: { s1: [{ name: "create-plan", description: "draft a plan" }, { name: "review" }, longCommand] },
     sessionUsage: {},
-    contextChips: { s1: [longSelectionChip] }, sessionKnobs: { s1: [] }, promptQueue: { s1: [longQueuedPrompt] }, drafts: {},
+    contextChips: { s1: [] }, sessionKnobs: { s1: [] }, promptQueue: { s1: [longQueuedPrompt] }, drafts: {},
     contextRoots: { s1: [] }, workspaceRoots: ["/ws"], liveSelection: null,
     workspace: "file:///ws", savedRoots: { entries: [], missing: [] }, sessionMcp: {}, mcpServers: [],
     openEditors: [{ file: "/ws/src/app.ts", dirty: false }, { file: "/ws/src/api.ts", dirty: true }],

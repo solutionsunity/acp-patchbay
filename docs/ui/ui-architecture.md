@@ -100,7 +100,11 @@ primitive layer, not the component styling. So the rule:
   the shapes a hand-made overlay takes — a document or window pointer or key
   listener, a portal mounted by hand, a CSS rule showing an element only
   while its parent is hovered — and the ui-gate drives the overlays
-  themselves: each opens, takes the keyboard and closes on Escape.
+  themselves: each opens, takes the keyboard and closes on Escape. One
+  trigger is not React's: a token in the prompt box is the editor's own
+  element, so an image token's hover preview anchors its `Tooltip` to a
+  stand-in laid over the token, opened while the pointer rests on it —
+  Radix still places, bounds and portals it (2026-11-17, #163).
 
 - **No control keeps its click to itself.** An open popover or dialog reads
   a click whose propagation the page stopped as handled by the page, and

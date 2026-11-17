@@ -58,6 +58,7 @@ const ERASED_BY: Readonly<
   [STORAGE_KEYS.mcpServers]: "mcpServers",
   [STORAGE_KEYS.mcpServersBefore090]: "mcpServers",
   [STORAGE_KEYS.sessionContinuity]: "sessions",
+  [STORAGE_KEYS.sessionContinuityBefore092]: "sessions",
   [STORAGE_KEYS.preferences]: "preferences",
   [STORAGE_KEYS.machineCommandRules]: "machineRules",
   [STORAGE_KEYS.machineWriteScope]: "machineWriteScope",

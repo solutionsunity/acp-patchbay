@@ -20,7 +20,7 @@ import type { WorkspaceId } from "../shared/workspace";
 import { askNotice } from "../shared/ask-notice";
 import { type OpenAsk } from "../shared/attention";
 import { actionDoor, type FailureSurfaces, warnCatch } from "./action-door";
-import { chipId, fileChipLabel, pickedFileForm } from "./attachments";
+import { chipId, fileChipLabel } from "./attachments";
 import { diffDir } from "./diff-files";
 import { applyFileWrite } from "./client-host";
 import { configurationText, writeConfigurationFile } from "./config-export";
@@ -940,6 +940,9 @@ export class OrchestratorHost {
           });
         break;
       }
+      case "markChipsPlaced":
+        this.orchestrator.sessions.markPlaced(action.patchbaySessionId, action.chipIds);
+        break;
       case "addDiagnosticsContext": {
         const diagnostics = this.editorStateHost.getDiagnostics();
         if (diagnostics.length === 0) break;
@@ -952,9 +955,6 @@ export class OrchestratorHost {
           });
         break;
       }
-      case "removeContextChip":
-        this.orchestrator.sessions.removeContext(action.patchbaySessionId, action.chipId);
-        break;
       // A connect's failure is the store's to hold and show.
       case "connectCatalogKey":
         await this.orchestrator.mcpServerGates
@@ -1080,7 +1080,7 @@ export class OrchestratorHost {
           .addDroppedFile(action.patchbaySessionId, { chipId: chipId(), name: action.name, mimeType: action.mimeType, base64: action.base64 });
         break;
       case "addFilePickerContext":
-        await this.addFilePickerContext(action.patchbaySessionId);
+        await this.addFilePickerContext(action.patchbaySessionId, action.pick);
         break;
       case "queryWorkspaceFiles":
         await this.queryWorkspaceFiles(action.query);
@@ -1186,36 +1186,21 @@ export class OrchestratorHost {
     await this.saveRoot(target, uri.fsPath);
   }
 
-  /** "Attach file" picker — the host-side byte producer: the file already
-   * has a host path, so no bytes cross the webview. Images in the wire set
-   * ride as image chips (bytes read here); everything else — including
-   * images too big or too exotic for the wire — becomes an attachment chip
-   * at its real path, whose resource_link the agent reads itself. That
-   * fallback is strictly honest, so nothing picked is ever refused. A
-   * picked file is at rest on disk, hence a link, not a text snapshot: the
-   * inline `file` chip is for the editor buffer, which may be dirty. */
-  private async addFilePickerContext(patchbaySessionId: PatchbaySessionId): Promise<void> {
+  /** The "Attach files…" and "Attach folder…" pickers: each pick is linked
+   * where it is — its resource_link the agent reads itself — a folder as a
+   * folder and an image as the file it is. A picked file is at rest on
+   * disk, hence a link, not a snapshot (the `file` chip is for the editor
+   * buffer, which may be dirty) and not bytes (paste or drop sends those).
+   * Nothing picked is refused, and nothing is read here. */
+  private async addFilePickerContext(patchbaySessionId: PatchbaySessionId, pick: "files" | "folder"): Promise<void> {
     const picked = await vscode.window.showOpenDialog({
-      canSelectFolders: false,
-      canSelectFiles: true,
-      canSelectMany: false,
-      openLabel: "Attach to context",
+      canSelectFolders: pick === "folder",
+      canSelectFiles: pick === "files",
+      canSelectMany: true,
+      openLabel: "Attach",
     });
-    const uri = picked?.[0];
-    if (uri === undefined) return;
-    const name = basename(uri.fsPath);
-    const { size } = await vscode.workspace.fs.stat(uri);
-    const form = pickedFileForm(name, size, this.orchestrator.preferences.get().attachmentMaxMB * 1024 * 1024);
-    if (form.kind === "image") {
-      const bytes = await vscode.workspace.fs.readFile(uri);
-      await this.orchestrator.sessions.addContext(patchbaySessionId, {
-        id: chipId(),
-        kind: "image",
-        label: `Image: ${name}`,
-        content: Buffer.from(bytes).toString("base64"),
-        mimeType: form.mimeType,
-      });
-    } else {
+    for (const uri of picked ?? []) {
+      const name = basename(uri.fsPath);
       await this.orchestrator.sessions.addContext(patchbaySessionId, {
         id: chipId(),
         kind: "attachment",
