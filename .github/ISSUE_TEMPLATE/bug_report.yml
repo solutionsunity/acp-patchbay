@@ -9,9 +9,9 @@ body:
 
         - **Not a bug in Patchbay itself?** Issues in the ACP agent, a third-party MCP
           server, or VS Code belong to those projects — see the scope note in
-          [SECURITY.md](../blob/main/.github/SECURITY.md).
+          [SECURITY.md](https://github.com/solutionsunity/acp-patchbay/blob/main/.github/SECURITY.md).
         - **Security vulnerability?** Do **not** open a public issue — follow
-          [SECURITY.md](../blob/main/.github/SECURITY.md) instead.
+          [SECURITY.md](https://github.com/solutionsunity/acp-patchbay/blob/main/.github/SECURITY.md) instead.
         - **Before you paste logs:** wire logs and error output can contain tokens,
           API keys, or env values. Redact them.
 

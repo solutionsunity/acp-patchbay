@@ -9,7 +9,7 @@ body:
         isn't the first one that comes to mind, and a clear problem lets us find it.
 
         For context on how the pieces fit, see the
-        [architecture doc](../blob/main/docs/architecture.md).
+        [architecture doc](https://github.com/solutionsunity/acp-patchbay/blob/main/docs/architecture.md).
 
   - type: textarea
     id: problem
