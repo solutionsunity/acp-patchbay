@@ -124,6 +124,8 @@ export interface OpenEditorInfo {
 }
 
 export interface WorkspaceStateSnapshot {
+  /** The session's root list, exactly as `getRoots` answers it. */
+  roots: string[];
   openEditors: OpenEditorInfo[];
   diagnostics: DiagnosticInfo[];
   selection: SelectionInfo | null;

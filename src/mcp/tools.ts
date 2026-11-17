@@ -30,6 +30,12 @@ export interface McpToolDef {
  * editor state, or asks the user and hands back the answer. */
 const READS_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
 
+/** Sent once at connect, for the clients that pass a server's instructions
+ * to the model: what this server knows that the agent can't see from where
+ * it runs. It names no tool — the list above is the one place they are. */
+export const SERVER_INSTRUCTIONS =
+  "This server reads the user's editor live: the folders this session works in, the open editors, the active file with its unsaved changes, the current selection, and the problems the editor reports. Read these from its tools rather than inferring them from a shell command's current directory or from files on disk. A session may work in several folders, and a shell command's current directory is only one directory.";
+
 export const TOOL_DEFS: McpToolDef[] = [
   {
     name: "get_selection",
@@ -57,14 +63,19 @@ export const TOOL_DEFS: McpToolDef[] = [
   },
   {
     name: "get_workspace_state",
-    description: "A combined snapshot: open editors, diagnostics, and current selection.",
+    description:
+      "A combined snapshot: the folders this session works in (the list get_roots returns), open editors, diagnostics, and current selection.",
     inputSchema: { type: "object" },
     annotations: READS_ONLY,
   },
   {
     name: "get_roots",
+    // Says when to call it, not only what it returns: an agent that isn't
+    // handed the folders at session open learns them here or not at all,
+    // and one that answers from its shell's directory names a single folder
+    // of a workspace that has several.
     description:
-      "The folders this session works in, as absolute paths: the workspace folders and any extra roots the user added to the session.",
+      "The folders this session works in, as a JSON array of absolute paths: the session's working directory first, then the workspace's other folders and any extra roots the user added (one that no longer exists on disk is left out). Read fresh on every call. Call this when the user asks about roots, workspace folders, project directories or the working directory, and before treating the project as a single folder. Do not infer the list from a shell command's current directory: that is one directory, which may not even be the session's, and never the whole list.",
     inputSchema: { type: "object" },
     annotations: READS_ONLY,
   },

@@ -1445,6 +1445,17 @@ Whether a remote server can use a local path is its own business: patchbay
 delivers what the spec allows and does not guess at what a server will do
 with it.
 
+An agent that does not take `additionalDirectories` is not handed the folders
+at session open: the local server's tool is the only way it learns them, and
+it calls a tool at the model's discretion. So the tool's description says
+when to call it, not only what it returns — the user's own words for the
+question, and that a shell command's directory is one directory and never the
+list; `get_workspace_state` carries the same list, for the agent that reads
+the snapshot; and the server sends `instructions` at connect saying the
+editor's state is read from its tools, not inferred from a shell's directory
+or from disk (a client that does not pass instructions to the model loses
+nothing). None of it can make an agent call the tool.
+
 - **Image paste is never disabled**: `promptCapabilities.image` →
   `ContentBlock::Image`; otherwise the image is written to the session's own folder
   and sent as a `ResourceLink`. Same data, best form the agent accepts (features §1).

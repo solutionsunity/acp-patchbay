@@ -140,11 +140,9 @@ export class IpcHost {
       case "getOpenEditors":
         return this.editor.getOpenEditors();
       case "getWorkspaceState":
-        return this.getWorkspaceState();
-      case "getRoots": {
-        const result: RootsResult = { roots: [...this.hooks.sessionRoots(request.contextToken)] };
-        return result;
-      }
+        return this.getWorkspaceState(request.contextToken);
+      case "getRoots":
+        return this.getRoots(request.contextToken);
       case "watchRoots":
         this.rootWatchers.set(socket, request.contextToken);
         return {};
@@ -161,8 +159,13 @@ export class IpcHost {
     }
   }
 
-  private getWorkspaceState(): WorkspaceStateSnapshot {
+  private getRoots(contextToken: string): RootsResult {
+    return { roots: [...this.hooks.sessionRoots(contextToken)] };
+  }
+
+  private getWorkspaceState(contextToken: string): WorkspaceStateSnapshot {
     return {
+      ...this.getRoots(contextToken),
       openEditors: this.editor.getOpenEditors(),
       diagnostics: this.editor.getDiagnostics(),
       selection: this.editor.getSelection(),

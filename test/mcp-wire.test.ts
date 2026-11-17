@@ -76,9 +76,9 @@ class McpTestClient {
     this.child.stdin.write(line + "\n");
   }
 
-  async listTools(): Promise<{ name: string; annotations?: Record<string, unknown> }[]> {
+  async listTools(): Promise<{ name: string; description: string; annotations?: Record<string, unknown> }[]> {
     const resp = await this.send("tools/list");
-    return (resp.result as { tools: { name: string; annotations?: Record<string, unknown> }[] }).tools;
+    return (resp.result as { tools: { name: string; description: string; annotations?: Record<string, unknown> }[] }).tools;
   }
 
   async callTool(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
@@ -212,6 +212,24 @@ describe("local MCP server (real bundled subprocess)", () => {
 
     const snapshot = JSON.parse(await toolText(client, "get_workspace_state"));
     expect(snapshot).toHaveProperty("openEditors");
+  });
+
+  // #161: an agent that isn't handed the session's folders at open learns
+  // them from this server or not at all — so the snapshot carries them, the
+  // roots tool says when to call it, and the server says so at connect.
+  it("get_workspace_state carries the root list get_roots returns", async () => {
+    await client.initialize();
+    const snapshot = JSON.parse(await toolText(client, "get_workspace_state"));
+    expect(snapshot.roots).toEqual(JSON.parse(await toolText(client, "get_roots")));
+    expect(snapshot.roots).toEqual([dir, join(dir, "backend")]);
+  });
+
+  it("the server's instructions and the roots tool say a shell's directory is not the list", async () => {
+    const result = (await client.initialize()) as { instructions?: string };
+    expect(result.instructions).toContain("several folders");
+    const roots = (await client.listTools()).find((t) => t.name === "get_roots");
+    expect(roots?.description).toContain("Call this when the user asks about roots, workspace folders, project directories or the working directory");
+    expect(roots?.description).toContain("Do not infer the list from a shell command's current directory");
   });
 
   it("request_user_input returns the answer when not cancelled", async () => {

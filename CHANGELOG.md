@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **An agent is told when to ask for the session's folders.** In a
+  workspace with several folders, an agent that isn't handed them when the
+  session opens could answer "what folders do you have" from its own shell
+  directory and name only one. The `get_roots` tool now says when to call
+  it and that a shell's directory is not the list, the workspace snapshot
+  (`get_workspace_state`) carries the folders too, and Patchbay's server
+  says at connect that the editor's state comes from its tools. A
+  description can't force the call: an agent may still need to be asked
+  about the workspace. (#161)
 - **Patchbay's own tools say they only read.** An agent in a read-only mode
   (an ask mode) refused `get_roots` and the other editor tools unasked,
   because they carried no `readOnlyHint` and MCP treats a silent tool as one

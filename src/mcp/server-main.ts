@@ -8,7 +8,7 @@
 // IPC bridge (ipc-protocol.ts) via env vars this process is launched with.
 import { IPC_ENV } from "./ipc-protocol";
 import { IpcClient } from "./ipc-client";
-import { callTool, TOOL_DEFS } from "./tools";
+import { callTool, SERVER_INSTRUCTIONS, TOOL_DEFS } from "./tools";
 import { PRODUCT } from "../shared/product";
 
 const socketPath = process.env[IPC_ENV.socket];
@@ -42,6 +42,7 @@ async function handleMessage(msg: JsonRpcMessage): Promise<void> {
           protocolVersion: "2025-03-26",
           capabilities: { tools: {} },
           serverInfo: PRODUCT,
+          instructions: SERVER_INSTRUCTIONS,
         },
       });
       return;
