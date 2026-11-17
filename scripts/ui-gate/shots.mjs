@@ -96,7 +96,12 @@ async function hostCopy(p, locator) {
 }
 
 async function page(browser, themeName, { width, height }) {
-  const p = await browser.newPage({ viewport: { width, height } });
+  // The gate's literal expectations — a cost of "$0.42", "50K" tokens — are
+  // what en-US renders, so the page's locale is pinned rather than left to
+  // whatever locale the machine running the gate resolves (en-CA says
+  // "US$0.42", which would fail checks no code changed). A date read-out is
+  // never pinned this way: a scenario asks the page itself what it says.
+  const p = await browser.newPage({ locale: "en-US", viewport: { width, height } });
   p.on("pageerror", (e) => {
     // fixture pages must render clean — a page error is itself a failure
     console.log(`FAIL  [${themeName}] pageerror: ${String(e).slice(0, 200)}`);
