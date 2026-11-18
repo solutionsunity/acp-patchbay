@@ -174,6 +174,26 @@ describe("landing an import", () => {
     ]);
   });
 
+  // #154: a rule or a write answer names its agents by id, and the file's
+  // ids are another machine's — each lands on the id its agent has here.
+  it("a rule's and a place's agents land on the ids those agents have here, and a differing scope is said", async () => {
+    const base = await golden();
+    const claude = base.agents.find((a) => a.id === "claude")!;
+    const read: ConfigurationRead = {
+      ...base,
+      machineCommandRules: [{ kind: "command", pattern: "npm publish", verdict: "allow", agents: ["claude" as PatchbayAgentId] }],
+      machineWriteScope: [{ location: { kind: "temp" }, on: true, agents: { except: ["claude" as PatchbayAgentId] } }],
+    };
+    const m = await machine();
+    await m.stores.agentConfigs.add({ ...claude, id: "local-claude" as PatchbayAgentId });
+    await m.stores.machineRules.set([{ kind: "command", pattern: "npm publish", verdict: "allow" }]);
+    const plan = planImport(read, await m.local(), here);
+    expect(plan.items.find((i) => i.id === "commandRule:command:npm publish")).toMatchObject({ fate: "differs", differs: ["the agents it applies to"] });
+    await applyImport(read, plan, new Set(["commandRule:command:npm publish", "writeLocation:temp"]), m.targets);
+    expect(m.stores.machineRules.get().commandRules).toEqual([{ kind: "command", pattern: "npm publish", verdict: "allow", agents: ["local-claude"] }]);
+    expect(m.stores.machineWriteScope.get()).toEqual([{ location: { kind: "temp" }, on: true, agents: { except: ["local-claude"] } }]);
+  });
+
   it("a file-write place's answer lands in its place or joins the list; this machine's other places stay", async () => {
     const hermes = { kind: "path", path: "/home/me/.hermes" } as const;
     const read: ConfigurationRead = {

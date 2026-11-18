@@ -17,7 +17,7 @@ async function tester() {
 describe("the Commands tester", () => {
   it("with no shell, a line is one program and its arguments — `;` and `&&` are arguments, as the gate reads them", async () => {
     const { h, judged } = await tester();
-    await h.orchestrator.testCommand("echo a;b && rm x", "none", null);
+    await h.orchestrator.testCommand("echo a;b && rm x", "none", null, null);
     expect(judged()).toMatchObject({
       line: "echo a;b && rm x",
       shell: "none",
@@ -28,7 +28,7 @@ describe("the Commands tester", () => {
   it("under bash, the line is the script — each command it runs judged", async () => {
     const { h, judged } = await tester();
     await h.orchestrator.machinePermissionRules.set([{ kind: "command", pattern: "echo *", verdict: "allow" }]);
-    await h.orchestrator.testCommand("echo a; rm x", "bash", null);
+    await h.orchestrator.testCommand("echo a; rm x", "bash", null, null);
     expect(judged()?.judgement.commands.map((c) => [c.text, c.verdict])).toEqual([
       ["echo a", "allow"],
       ["rm x", "ask"],
@@ -38,14 +38,14 @@ describe("the Commands tester", () => {
   it("the rule being typed counts as added at its layer — and nothing is stored", async () => {
     const { h, judged } = await tester();
     const draft = { rule: { kind: "word" as const, pattern: "rm", verdict: "deny" as const }, layer: "workspace" as const };
-    await h.orchestrator.testCommand("rm x", "none", draft);
+    await h.orchestrator.testCommand("rm x", "none", null, draft);
     expect(judged()?.judgement).toMatchObject({ verdict: "deny", commands: [{ by: draft }] });
     expect(h.orchestrator.permissionRules.get().commandRules).toEqual([]);
   });
 
   it("a line that isn't a command line says so and asks", async () => {
     const { h, judged } = await tester();
-    await h.orchestrator.testCommand('rm "x', "none", null);
+    await h.orchestrator.testCommand('rm "x', "none", null, null);
     expect(judged()?.judgement).toEqual({
       verdict: "ask",
       commands: [],

@@ -28,6 +28,7 @@ import type { AgentConfig } from "./stores/agent-configs";
 import { authTypeOf, type McpServerConfig } from "./stores/mcp-server-configs";
 import { ruleLabel } from "../shared/command-rules";
 import type { SavedRoot } from "./stores/saved-roots";
+import { scopeOf, withScope, type AgentScoped } from "../shared/agent-scope";
 import { type CommandRule, sameRule } from "./stores/permission-rules";
 import { writeScopeRows } from "./stores/write-scope";
 
@@ -179,12 +180,18 @@ const SERVER_LABELS = {
   key: "API key",
 } as const;
 
-/** A server's routing names agents by id: the file's ids become the ids
- * those agents land on here. */
+/** A server's routing — and a rule's or a write answer's scope — names
+ * agents by id: the file's ids become the ids those agents land on here. */
 export function routingOn(routing: McpServerConfig["routing"], agentIds: ReadonlyMap<string, string>): McpServerConfig["routing"] {
   const on = (ids: readonly PatchbayAgentId[]) => ids.map((id) => (agentIds.get(id) ?? id) as PatchbayAgentId);
   if (routing === "auto") return routing;
   return "except" in routing ? { except: on(routing.except) } : on(routing);
+}
+
+/** A rule or a write answer as it lands here: its agents by their ids on
+ * this machine. */
+export function scopedOn<T extends AgentScoped>(scoped: T, agentIds: ReadonlyMap<string, string>): T {
+  return withScope(scoped, routingOn(scopeOf(scoped), agentIds));
 }
 
 export const writeLocationItemId = (location: WriteLocation) => `writeLocation:${writeLocationKey(location)}`;
@@ -254,9 +261,12 @@ export function planImport(read: ConfigurationRead, local: LocalConfiguration, c
     });
   }
 
+  const otherAgents = (mine: AgentScoped, theirs: AgentScoped) =>
+    isDeepStrictEqual(scopeOf(mine), scopeOf(scopedOn(theirs, agentIds))) ? [] : ["the agents it applies to"];
   for (const rule of read.machineCommandRules) {
     const mine = local.machineCommandRules.find((r) => sameRule(r, rule));
-    const differs = mine === undefined || mine.verdict === rule.verdict ? [] : [`${mine.verdict} here, ${rule.verdict} in the file`];
+    const differs =
+      mine === undefined ? [] : [...(mine.verdict === rule.verdict ? [] : [`${mine.verdict} here, ${rule.verdict} in the file`]), ...otherAgents(mine, rule)];
     items.push({ id: commandRuleItemId(rule), part: "settings", kind: "commandRule", label: ruleLabel(rule), fate: fateOf(mine, differs), differs, flags: [] });
   }
 
@@ -264,9 +274,13 @@ export function planImport(read: ConfigurationRead, local: LocalConfiguration, c
   // set nothing: a switch is always here, a folder new until added.
   const hereRows = writeScopeRows(local.machineWriteScope, []);
   for (const entry of read.machineWriteScope) {
-    const here = hereRows.find((r) => sameWriteLocation(r.location, entry.location))?.machine ?? undefined;
+    const row = hereRows.find((r) => sameWriteLocation(r.location, entry.location));
+    const here = row?.machine ?? undefined;
     const word = (on: boolean) => (on ? "on" : "off");
-    const differs = here === undefined || here === entry.on ? [] : [`${word(here)} here, ${word(entry.on)} in the file`];
+    const differs =
+      here === undefined || row === undefined
+        ? []
+        : [...(here === entry.on ? [] : [`${word(here)} here, ${word(entry.on)} in the file`]), ...otherAgents({ agents: row.machineAgents }, entry)];
     const { location } = entry;
     items.push({
       id: writeLocationItemId(location),

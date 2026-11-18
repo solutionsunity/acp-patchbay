@@ -32,6 +32,7 @@ import {
   type SettingsEvent,
   type SettingsSectionId,
   type SettingsState,
+  sameWriteLocation,
   type TesterShell,
   type WriteLocation,
   type WriteScopeView,
@@ -89,7 +90,8 @@ import { LastConnectedStore } from "./stores/last-connected";
 import { DefaultAgentFoldStore } from "./stores/default-agent-fold";
 import { type CommandRule, MachineRulesStore, PermissionRulesStore } from "./stores/permission-rules";
 import { ShellReader } from "./shell-reading";
-import { MachineWriteScopeStore, withWriteEntry, writeScopeRows } from "./stores/write-scope";
+import { MachineWriteScopeStore, withWriteEntry, withWriteScope, writeScopeRows } from "./stores/write-scope";
+import type { AgentScope } from "../shared/agent-scope";
 import { SavedRootsStore } from "./stores/saved-roots";
 import { SeenVersionStore } from "./stores/seen-version";
 import { SECRET_FAMILIES } from "./stores/storage-keys";
@@ -767,6 +769,13 @@ export class Orchestrator {
         removed: (patchbayAgentId) => {
           this.sessions.forgetAgentSessions(patchbayAgentId);
           void this.mcpServers.forgetAgent(patchbayAgentId).catch(this.logCatch(`forget ${patchbayAgentId} in MCP reach`));
+          void Promise.all([
+            this.permissionRules.forgetAgent(patchbayAgentId),
+            this.machinePermissionRules.forgetAgent(patchbayAgentId),
+            this.machineWriteScope.forgetAgent(patchbayAgentId),
+          ])
+            .then(() => this.publishRules())
+            .catch(this.logCatch(`forget ${patchbayAgentId} in the rules`));
           // A chat pane on the agent — still starting, or failed with a
           // Retry — has nothing left to wait for or retry.
           if (this.agentView.current.chatConnect?.patchbayAgentId === patchbayAgentId) {
@@ -814,6 +823,11 @@ export class Orchestrator {
       this.machinePermissionRules,
       this.machineWriteScope,
       (path) => this.ports.readTextFileLive(path),
+      ({ patchbaySessionId }) => {
+        const id = this.sessions.pairOf(patchbaySessionId)?.patchbayAgentId;
+        const name = id === undefined ? undefined : this.agents.name(id);
+        return id === undefined || name === undefined ? null : { id, name, amongOthers: this.agentConfigs.list().length > 1 };
+      },
     );
     this.clientHost = new ClientHost({
       broker: this.broker,
@@ -1422,14 +1436,15 @@ export class Orchestrator {
   }
 
   /** The Commands page's tester: how the gate would judge `line` run as
-   * `shell`, with `draft` counted as added — told to Settings. */
-  async testCommand(line: string, shell: TesterShell, draft: RuleMatchView | null): Promise<void> {
+   * `shell` by `agent` (null: an agent no rule names), with `draft`
+   * counted as added — told to Settings. */
+  async testCommand(line: string, shell: TesterShell, agent: PatchbayAgentId | null, draft: RuleMatchView | null): Promise<void> {
     const run = typedRun(line, shell);
     const judgement: CommandJudgementView =
       run === null
         ? { verdict: "ask", commands: [], unreadable: [{ text: line, reason: "not a command line — a quote is left open" }] }
-        : await this.broker.judgeRun(run, draft ?? undefined);
-    this.settings.emit({ kind: "commandJudged", line, shell, judgement });
+        : await this.broker.judgeRun(run, draft ?? undefined, agent);
+    this.settings.emit({ kind: "commandJudged", line, shell, agent, judgement });
   }
 
   /** One layer's command rules, changed through that layer's store, then
@@ -1451,6 +1466,18 @@ export class Orchestrator {
     }
     const rules = this.permissionRules.get();
     await this.permissionRules.set({ ...rules, writeScope: withWriteEntry(rules.writeScope, location, on) });
+  }
+
+  /** The agents one layer's answer for a place is for — an answer the
+   * layer doesn't hold yet is added as what holds there now. */
+  async setWriteLocationScope(location: WriteLocation, layer: "workspace" | "machine", agents: AgentScope): Promise<void> {
+    const row = this.writeScopeView().rows.find((r) => sameWriteLocation(r.location, location));
+    if (layer === "machine") {
+      await this.machineWriteScope.set(withWriteScope(this.machineWriteScope.get(), location, agents, row?.machine ?? false));
+      return;
+    }
+    const rules = this.permissionRules.get();
+    await this.permissionRules.set({ ...rules, writeScope: withWriteScope(rules.writeScope, location, agents, row?.on ?? false) });
   }
 
   /** Add — and every connect a door names by its source (Settings Connect,

@@ -19,6 +19,12 @@ function size(raw: unknown): number {
 const counted = (noun: string) => (raw: unknown) => count(size(raw), noun);
 const marked = (set: string, unset: string) => (raw: unknown) => (raw === undefined ? unset : set);
 
+/** What a workspace's rules record counts. */
+const workspaceRules = (raw: unknown): string => {
+  const rules = (raw ?? {}) as { commandRules?: unknown; writeScope?: unknown };
+  return `${count(size(rules.commandRules), "rule")} · ${count(size(rules.writeScope), "file-write override")}`;
+};
+
 /** Each key: its label, where it lives — this machine (globalStorage) or
  * this workspace (workspaceState) — and what its detail counts. */
 const ROWS: Record<StorageKey, { label: string; scope: "machine" | "workspace"; detail: (raw: unknown) => string }> = {
@@ -29,7 +35,9 @@ const ROWS: Record<StorageKey, { label: string; scope: "machine" | "workspace"; 
   [STORAGE_KEYS.mcpServersBefore090]: { label: "MCP server configs — as 0.88 kept them", scope: "machine", detail: counted("server") },
   [STORAGE_KEYS.preferences]: { label: "Preferences", scope: "machine", detail: counted("preference set") },
   [STORAGE_KEYS.machineCommandRules]: { label: "Command rules — this machine", scope: "machine", detail: counted("rule") },
+  [STORAGE_KEYS.machineCommandRulesBefore092]: { label: "Command rules — this machine, as 0.90 kept them", scope: "machine", detail: counted("rule") },
   [STORAGE_KEYS.machineWriteScope]: { label: "File writes — this machine", scope: "machine", detail: counted("place set") },
+  [STORAGE_KEYS.machineWriteScopeBefore092]: { label: "File writes — this machine, as 0.90 kept them", scope: "machine", detail: counted("place set") },
   [STORAGE_KEYS.savedRoots]: { label: "Saved roots", scope: "machine", detail: counted("folder") },
   [STORAGE_KEYS.savedRootsBefore090]: { label: "Saved roots — as 0.88 kept them", scope: "machine", detail: counted("folder") },
   [STORAGE_KEYS.usedCapabilities]: { label: "Used-capability cache", scope: "machine", detail: counted("agent record") },
@@ -43,13 +51,11 @@ const ROWS: Record<StorageKey, { label: string; scope: "machine" | "workspace"; 
     detail: marked("folded into auto-connect", "never set"),
   },
   [STORAGE_KEYS.legacyStateRecovery]: { label: "One-time recovery", scope: "machine", detail: marked("done", "not run") },
-  [STORAGE_KEYS.permissionRules]: {
-    label: "Command rules & file writes — this workspace",
+  [STORAGE_KEYS.permissionRules]: { label: "Command rules & file writes — this workspace", scope: "workspace", detail: workspaceRules },
+  [STORAGE_KEYS.permissionRulesBefore092]: {
+    label: "Command rules & file writes — this workspace, as 0.90 kept them",
     scope: "workspace",
-    detail: (raw) => {
-      const rules = (raw ?? {}) as { commandRules?: unknown; writeScope?: unknown };
-      return `${count(size(rules.commandRules), "rule")} · ${count(size(rules.writeScope), "file-write override")}`;
-    },
+    detail: workspaceRules,
   },
   [STORAGE_KEYS.workspaceSavedRootsBefore090]: {
     label: "Saved roots — this workspace, as 0.88 kept them",

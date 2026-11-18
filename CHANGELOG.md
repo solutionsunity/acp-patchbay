@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Rules can apply to specific agents.** A command rule or a file-write
+  place applied to every agent, so on a host running several, rules loose
+  enough for one lowered the floor for all. Each now says which agents it
+  is for — all agents, only these, or all except these — and an agent it
+  doesn't name never meets it: the next layer, then asking, answers.
+  Existing rules keep applying to every agent. In Settings › Trust ›
+  Commands each rule list has a filter by pattern and by agent, shows how
+  many rules it shows, and sets the agents of every rule shown at once;
+  "Test a command" judges as the agent you choose. On Edits each place
+  shows its agents. Rules answer what an agent asks about: one that runs
+  commands itself, or in a mode that asks nothing, reaches no rule. (#154)
+- **A Terminal card's "Always allow" is saved for the agent that asked.**
+  It used to save a rule for every agent. With several agents the card
+  names the agent and adds "Always for all agents" beside it; with one,
+  it looks as before, and an agent you add later asks for itself.
 - **An Upgrade decides on a registry read made after you click.** Starting
   a chat reads the registry in the background, and an Upgrade clicked while
   that read was still on its way took its answer — the registry from

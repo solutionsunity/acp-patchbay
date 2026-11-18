@@ -1756,7 +1756,37 @@ supplies each agent in its own standard — and ACP carries no channel for it
   an allow rule for each command no rule answered, exactly as it reads, and
   is offered only where that says it: none for a part that can't be seen, a
   command an ask rule holds (the user's own rule says ask), or a `*` a
-  pattern would read as a wildcard. The agent's reply names the rule too
+  pattern would read as a wildcard.
+- **A rule and a write answer may name the agents they are for** *(decided
+  2026-11-18, #154, superseding one rule set for every agent)*: a reach
+  over the agents (`shared/agent-scope.ts`, the grammar an MCP server's
+  routing uses) — all, only these, all except these; naming none is every
+  agent, as every rule stored before is. The broker reads each layer as
+  the asking agent meets it (`broker.ts:layersFor`, the agent derived from
+  the ask's session): a rule for other agents isn't in its layer, so the
+  precedence above is unchanged — this workspace, then this machine, the
+  most severe match, else ask — and a workspace rule for one agent leaves
+  the machine's rule standing for the others. A write place is read the
+  same way (`write-scope.ts:writeScopeRows`): a layer's answer counts for
+  the agents it names, the mute too; any other agent goes by the next
+  layer, then the default. Settings filters "the rules an agent is judged
+  by" with the judge's own reading, so the page can't disagree with what
+  is enforced. Deliberate scope: one rule per kind and pattern in a layer,
+  one answer per place — the same command can't be allow for one agent and
+  deny for another in one layer (the two layers cover that); a card
+  therefore offers no "always" for a command the workspace already answers
+  otherwise for another agent. **The card's "always" says whose grant it
+  is**: saved for the asking agent — the click is made in its session, on
+  its command — and, where the host holds other agents, a second answer
+  beside it saves for every agent (*Always for Hermes*, *Always for all
+  agents*, narrow before wide); a grant for one agent joins a rule that
+  already allows the command for others, never replaces it. A removed
+  agent is named nowhere: a rule for it alone goes with it. The three
+  records moved to new keys with this (`storage-keys.ts`): a window on
+  the version before reads a rule for one agent as a rule for every agent
+  — it keeps its keys, and these are filled from them once. An export
+  carries the agents by id, and an import lands them on the ids those
+  agents take here, as it does a server's routing. The agent's reply names the rule too
   (refined 2026-11-14, #157): a deny reaches it as "A rule denies the
   command `fortune -s` (rule: `fortune *`)", each deciding rule once and
   without its layer, which means nothing to an agent — told which rule

@@ -7,10 +7,13 @@
 // happened lives on Audit; what's stored (and erasing it) on Data — one
 // verb per page, one subject per rules page.
 import { type ReactNode, useEffect, useState } from "react";
+import { scopeOf, withScope, type AgentScope } from "../../shared/agent-scope";
 import { matchLabel, ruleLabel } from "../../shared/command-rules";
+import type { PatchbayAgentId } from "../../shared/ids";
 import { RULE_VERDICTS, type CommandJudgementView, type CommandRuleView, type RuleMatchView, type SettingsState, type TesterShell } from "../../shared/protocol";
 import { Icon } from "../shared/icon";
-import { ruleCounts, sortedRules } from "./command-rules-view";
+import { filteredRules, filtering, NO_FILTER, ruleCounts, sortedRules, type RuleFilter } from "./command-rules-view";
+import { ScopeChip, ScopeChoice, scopeText } from "./rule-scope";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -60,33 +63,44 @@ function RuleCountsGrid({ rules }: { rules: readonly CommandRuleView[] }) {
 
 /** One command-rules card — instantiated per layer (workspace, machine) so
  * the two lists can't drift in presentation or behavior. What is typed in
- * its add row is the tester's draft. */
+ * its add row is the tester's draft. A long list is worked through its
+ * filter: by pattern, and by agent — the rules one agent is judged by —
+ * with the counts and the list following it, and the agents of every rule
+ * it shows set at once. */
 function CommandRulesCard(props: {
   title: string;
   note: string;
   rules: readonly CommandRuleView[];
+  agents: SettingsState["agents"];
   emptyText: string;
   onAdd(rule: CommandRuleView): void;
   onRemove(rule: CommandRuleView): void;
+  onScope(rules: readonly CommandRuleView[], scope: AgentScope): void;
   onDraft(rule: CommandRuleView | null): void;
 }) {
   const [kind, setKind] = useState<CommandRuleView["kind"]>("command");
   const [pattern, setPattern] = useState("");
   const [verdict, setVerdict] = useState<CommandRuleView["verdict"]>("allow");
+  const [scope, setScope] = useState<AgentScope>("auto");
+  const [filter, setFilter] = useState<RuleFilter>(NO_FILTER);
+  const [bulk, setBulk] = useState<AgentScope | null>(null);
   const trimmed = pattern.trim();
   // A word is one word, and never allows — the picker offers no allow.
-  const rule: CommandRuleView | null =
+  const typed: CommandRuleView | null =
     trimmed === "" || (kind === "word" && /\s/.test(trimmed))
       ? null
       : kind === "word"
         ? { kind, pattern: trimmed, verdict: verdict === "allow" ? "deny" : verdict }
         : { kind, pattern: trimmed, verdict };
+  const rule = typed === null ? null : withScope(typed, scope);
   const { onDraft } = props;
   // Told once per change of the rule typed, not once per render.
-  const draftKey = rule === null ? "" : `${rule.kind}:${rule.verdict}:${rule.pattern}`;
+  const draftKey = rule === null ? "" : `${rule.kind}:${rule.verdict}:${rule.pattern}:${JSON.stringify(scope)}`;
   useEffect(() => {
     onDraft(rule);
   }, [draftKey]);
+  const shown = filteredRules(props.rules, filter);
+  const narrowed = filtering(filter);
 
   return (
     <div className="card">
@@ -95,17 +109,72 @@ function CommandRulesCard(props: {
       {props.rules.length === 0 ? (
         <div className="note mx-0 mt-0 mb-2">{props.emptyText}</div>
       ) : (
-        <RuleCountsGrid rules={props.rules} />
+        <>
+          <div className="row mb-2" data-rule-filter>
+            <Input
+              type="text"
+              className="flex-1"
+              placeholder="Filter by pattern…"
+              aria-label="Filter rules by pattern"
+              value={filter.text}
+              onInput={(e) => setFilter({ ...filter, text: (e.target as HTMLInputElement).value })}
+            />
+            {props.agents.length > 0 && (
+              <Select value={filter.agent} onValueChange={(v) => setFilter({ ...filter, agent: v as RuleFilter["agent"] })}>
+                <SelectTrigger aria-label="Filter rules by agent">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">all rules</SelectItem>
+                  <SelectItem value="every">for every agent</SelectItem>
+                  {props.agents.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      applies to {a.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+          {narrowed && (
+            <div className="row mb-2 text-xs" data-rule-shown>
+              <span className="flex-1 text-[var(--pb-text-faint)]">
+                {shown.length} of {props.rules.length} rules shown
+              </span>
+              {shown.length > 0 && props.agents.length > 0 && (
+                <ScopeChoice
+                  agents={props.agents}
+                  scope={bulk}
+                  label={`Agents for these ${shown.length}…`}
+                  title="Set which agents every rule shown applies to"
+                  onChange={setBulk}
+                  apply={{
+                    label: bulk === null ? "Choose the agents" : `Apply to ${shown.length} ${shown.length === 1 ? "rule" : "rules"}: ${scopeText(bulk, props.agents)}`,
+                    run: () => {
+                      if (bulk !== null) props.onScope(shown, bulk);
+                      setBulk(null);
+                    },
+                  }}
+                />
+              )}
+            </div>
+          )}
+          <RuleCountsGrid rules={shown} />
+        </>
       )}
-      {/* A list grows with every "Always allow" — hundreds of rules is real.
-          Bounded at about eight rows and scrolled within, it never pushes the
-          card after it, or its own add row, out of reach. */}
-      <div className="max-h-[18rem] overflow-y-auto" data-rule-list>
-        {sortedRules(props.rules).map((r) => (
+      {/* A list grows with every "always" — hundreds of rules is real.
+          Bounded at about seven rows and scrolled within, it never pushes the
+          card after it, or its own add row, out of reach; the filter above
+          it is how a long one is worked. */}
+      <div className="max-h-[15rem] overflow-y-auto" data-rule-list>
+        {sortedRules(shown).map((r) => (
           <div className="rule" key={`${r.kind}:${r.pattern}`}>
             <span className={`verdict ${r.verdict}`}>{r.verdict}</span>
             <span className="text-xs text-[var(--pb-text-faint)]">{r.kind}</span>
             <code>{r.pattern}</code>
+            {props.agents.length > 0 && (
+              <ScopeChip agents={props.agents} scope={scopeOf(r)} of={`rule ${ruleLabel(r)}`} quiet onChange={(next) => props.onScope([r], next)} />
+            )}
             <span
               className="e"
               role="button"
@@ -151,6 +220,15 @@ function CommandRulesCard(props: {
             <SelectItem value="deny">deny</SelectItem>
           </SelectContent>
         </Select>
+        {props.agents.length > 0 && (
+          <ScopeChoice
+            agents={props.agents}
+            scope={scope}
+            label={scopeText(scope, props.agents)}
+            title="Which agents the rule being added applies to"
+            onChange={setScope}
+          />
+        )}
         <Button
           size="sm"
           disabled={rule === null}
@@ -240,25 +318,32 @@ function JudgementView({ judgement, draft }: { judgement: CommandJudgementView; 
   );
 }
 
+/** The tester's agent as its select names it: "" for an agent no rule names. */
+const ANY_OTHER = "";
+
 export function CommandsSection(props: {
   state: SettingsState;
   onAddRule(rule: CommandRuleView, layer: Layer): void;
   onRemoveRule(rule: CommandRuleView, layer: Layer): void;
-  onTest(line: string, shell: TesterShell, draft: Draft | null): void;
+  onScopeRules(rules: readonly CommandRuleView[], layer: Layer, scope: AgentScope): void;
+  onTest(line: string, shell: TesterShell, agent: PatchbayAgentId | null, draft: Draft | null): void;
 }) {
   const { state, onTest } = props;
   const [line, setLine] = useState("");
   const [shell, setShell] = useState<TesterShell>("none");
+  // The agent the line is judged for — one since removed is no agent.
+  const [as, setAs] = useState<PatchbayAgentId | null>(null);
+  const agent = state.agents.some((a) => a.id === as) ? as : null;
   const [draft, setDraft] = useState<Draft | null>(null);
   const draftFrom = (layer: Layer) => (rule: CommandRuleView | null) =>
     setDraft((held) => (rule !== null ? { rule, layer } : held?.layer === layer ? null : held));
   // Asked again whenever the line, the draft or the rules change — the
   // answer shown is always for what is on the page now.
   useEffect(() => {
-    if (line.trim() !== "") onTest(line, shell, draft);
-  }, [line, shell, draft, state.commandRules, state.machineCommandRules]);
+    if (line.trim() !== "") onTest(line, shell, agent, draft);
+  }, [line, shell, agent, draft, state.commandRules, state.machineCommandRules]);
   const shown = state.commandTest;
-  const result = shown !== null && shown.line === line && shown.shell === shell ? shown.judgement : null;
+  const result = shown !== null && shown.line === line && shown.shell === shell && shown.agent === agent ? shown.judgement : null;
 
   return (
     <section className="section">
@@ -267,16 +352,17 @@ export function CommandsSection(props: {
         Terminal commands an agent runs through patchbay ask first, unless a rule answers. Each
         command in a line is judged — in a chain, a loop, a <code>bash -c</code> script — and the
         line takes the most severe verdict; what the text can&apos;t show asks. This workspace&apos;s
-        rules answer first, then the machine&apos;s; within a layer deny beats ask beats allow. An
-        agent running commands itself asks through its own requests, which carry no command a rule
-        could match.
+        rules answer first, then the machine&apos;s; within a layer deny beats ask beats allow. A
+        rule applies to every agent unless it names the agents it is for: for any other agent it
+        isn&apos;t there. An agent running commands itself asks through its own requests, which
+        carry no command a rule could match.
       </div>
 
       <div className="card">
         <h2 className="mt-0">Test a command</h2>
         <div className="note mx-0 mt-0 mb-2">
-          As the gate would judge it, the rule being typed below counted as added. No shell: a
-          program and its arguments; bash: a script.
+          As the gate would judge it for the agent chosen, the rule being typed below counted as
+          added. No shell: a program and its arguments; bash: a script.
         </div>
         <div className="row">
           <Select value={shell} onValueChange={(v) => setShell(v as TesterShell)}>
@@ -288,6 +374,21 @@ export function CommandsSection(props: {
               <SelectItem value="bash">bash</SelectItem>
             </SelectContent>
           </Select>
+          {state.agents.length > 0 && (
+            <Select value={agent ?? ANY_OTHER} onValueChange={(v) => setAs(v === ANY_OTHER ? null : (v as PatchbayAgentId))}>
+              <SelectTrigger aria-label="Test as">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ANY_OTHER}>as any other agent</SelectItem>
+                {state.agents.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    as {a.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <Input
             type="text"
             className="flex-1"
@@ -308,9 +409,11 @@ export function CommandsSection(props: {
         title="Command rules — this workspace"
         note="Evaluated first — this repo's own tightening or loosening of the machine floor."
         rules={state.commandRules}
+        agents={state.agents}
         emptyText="No workspace rules — the machine layer (below) answers, then ask."
         onAdd={(rule) => props.onAddRule(rule, "workspace")}
         onRemove={(rule) => props.onRemoveRule(rule, "workspace")}
+        onScope={(rules, scope) => props.onScopeRules(rules, "workspace", scope)}
         onDraft={draftFrom("workspace")}
       />
 
@@ -318,9 +421,11 @@ export function CommandsSection(props: {
         title="Command rules — this machine"
         note="The fallback floor for every workspace on this machine — consulted only where the workspace layer stays silent."
         rules={state.machineCommandRules}
+        agents={state.agents}
         emptyText="No machine rules — every unmatched command asks."
         onAdd={(rule) => props.onAddRule(rule, "machine")}
         onRemove={(rule) => props.onRemoveRule(rule, "machine")}
+        onScope={(rules, scope) => props.onScopeRules(rules, "machine", scope)}
         onDraft={draftFrom("machine")}
       />
 

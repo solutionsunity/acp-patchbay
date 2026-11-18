@@ -2,7 +2,8 @@
 // Copyright 2026 Solutions Unity
 
 // One control for every scope Settings edits — the agents an MCP server is
-// routed to, the workspaces a server or a saved root is on in: the three
+// routed to, the agents a rule applies to, the workspaces a server or a
+// saved root is on in: the three
 // reaches stated as the three sentences they are, one mode per line, the
 // tick-list indented under whichever list mode is active, never an
 // undifferentiated wrap of radios and checkboxes:
@@ -113,6 +114,33 @@ export function AgentScope(props: {
       wording={AGENTS}
       candidates={props.agents.map((a) => ({ id: a.id, label: a.name }))}
       reach={props.routing}
+      onChange={props.onChange}
+    />
+  );
+}
+
+const APPLIES_TO: Wording = {
+  heading: "applies to",
+  headingTitle: "the agents this applies to — for any other agent it isn't there, and the next layer, then the default, answers",
+  every: "all agents",
+  everyTitle: "every agent, those added later included",
+  only: "only these agents",
+  except: "all agents except these",
+  none: "no agents yet",
+};
+
+/** The agents a command rule or a file-write answer applies to. Null: not
+ * chosen yet. */
+export function AppliesToAgents(props: {
+  agents: SettingsState["agents"];
+  scope: Reach<PatchbayAgentId> | null;
+  onChange(scope: Reach<PatchbayAgentId>): void;
+}) {
+  return (
+    <ScopeControl
+      wording={APPLIES_TO}
+      candidates={props.agents.map((a) => ({ id: a.id, label: a.name }))}
+      reach={props.scope}
       onChange={props.onChange}
     />
   );

@@ -172,6 +172,7 @@ export function App({ state }: { state: SettingsState }) {
           <EditsSection
             state={state}
             onSetWriteLocation={(location, layer, on) => send({ kind: "setWriteLocation", location, layer, on })}
+            onSetWriteLocationScope={(location, layer, agents) => send({ kind: "setWriteLocationScope", location, layer, agents })}
             onAddWriteFolder={(layer) => send({ kind: "pickWriteFolder", layer })}
           />
         )}
@@ -180,7 +181,10 @@ export function App({ state }: { state: SettingsState }) {
             state={state}
             onAddRule={(rule, layer) => send({ kind: "addCommandRule", rule, layer })}
             onRemoveRule={(rule, layer) => send({ kind: "removeCommandRule", rule, layer })}
-            onTest={(line, shell, draft) => send({ kind: "testCommand", line, shell, draft })}
+            onScopeRules={(rules, layer, agents) =>
+              send({ kind: "setCommandRulesScope", rules: rules.map(({ kind, pattern }) => ({ kind, pattern })), layer, agents })
+            }
+            onTest={(line, shell, agent, draft) => send({ kind: "testCommand", line, shell, agent, draft })}
           />
         )}
         {section === "audit" && (

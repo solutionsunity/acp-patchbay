@@ -8,8 +8,6 @@
 // (vscode#123817, open), and Memento deletion on uninstall is not a
 // platform contract either. Structural interfaces so the sweep is
 // unit-testable without vscode; the orchestrator supplies its real stores.
-import { DEFAULT_PERMISSION_RULES, type CommandRule, type PermissionRules } from "./stores/permission-rules";
-import type { WriteEntry } from "../shared/protocol";
 import { STORAGE_KEYS, type StorageKey } from "./stores/storage-keys";
 
 interface Wipeable {
@@ -27,9 +25,9 @@ export interface EraseTargets {
   mcpServers: Erasable;
   sessions: Erasable;
   spawnRegistry: Wipeable;
-  permissionRules: { set(rules: PermissionRules): Promise<void> };
-  machineRules: { set(rules: CommandRule[]): Promise<void> };
-  machineWriteScope: { set(entries: readonly WriteEntry[]): Promise<void> };
+  permissionRules: Wipeable;
+  machineRules: Wipeable;
+  machineWriteScope: Wipeable;
   decisionAudit: Wipeable;
   lastConnected: Wipeable;
   defaultAgentFold: Wipeable;
@@ -61,12 +59,15 @@ const ERASED_BY: Readonly<
   [STORAGE_KEYS.sessionContinuityBefore092]: "sessions",
   [STORAGE_KEYS.preferences]: "preferences",
   [STORAGE_KEYS.machineCommandRules]: "machineRules",
+  [STORAGE_KEYS.machineCommandRulesBefore092]: "machineRules",
   [STORAGE_KEYS.machineWriteScope]: "machineWriteScope",
+  [STORAGE_KEYS.machineWriteScopeBefore092]: "machineWriteScope",
   [STORAGE_KEYS.savedRoots]: "savedRoots",
   [STORAGE_KEYS.savedRootsBefore090]: "savedRoots",
   [STORAGE_KEYS.spawnRegistry]: "spawnRegistry",
   [STORAGE_KEYS.defaultAgentFolded]: "defaultAgentFold",
   [STORAGE_KEYS.permissionRules]: "permissionRules",
+  [STORAGE_KEYS.permissionRulesBefore092]: "permissionRules",
   [STORAGE_KEYS.workspaceSavedRootsBefore090]: "savedRoots",
   [STORAGE_KEYS.lastConnected]: "lastConnected",
   [STORAGE_KEYS.lastActiveSession]: "lastActiveSession",
@@ -87,9 +88,6 @@ export async function eraseAllData(targets: EraseTargets): Promise<void> {
     if (typeof eraser !== "string" || done.has(eraser)) continue;
     done.add(eraser);
     if (eraser === "agents" || eraser === "mcpServers" || eraser === "sessions") await targets[eraser].eraseAll();
-    else if (eraser === "permissionRules") await targets.permissionRules.set(DEFAULT_PERMISSION_RULES);
-    else if (eraser === "machineRules") await targets.machineRules.set([]);
-    else if (eraser === "machineWriteScope") await targets.machineWriteScope.set([]);
     else await targets[eraser].wipe();
   }
   await targets.decisionAudit.wipe();

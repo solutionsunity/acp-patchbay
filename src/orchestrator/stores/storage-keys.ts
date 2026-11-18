@@ -23,8 +23,16 @@ export const STORAGE_KEYS = {
    * fill `mcpServers` where it is empty. */
   mcpServersBefore090: "acpPatchbay.integrations",
   preferences: "acpPatchbay.preferences",
-  machineCommandRules: "acpPatchbay.machineCommandRules",
-  machineWriteScope: "acpPatchbay.machineWriteScope",
+  machineCommandRules: "acpPatchbay.commandRulesMachine",
+  /** This machine's command rules as 0.90 and before kept them, each for
+   * every agent — still written by a window on such a version, which
+   * would read a rule for one agent as a rule for all. Read once, to fill
+   * `machineCommandRules` where it is empty. */
+  machineCommandRulesBefore092: "acpPatchbay.machineCommandRules",
+  machineWriteScope: "acpPatchbay.writeScopeMachine",
+  /** This machine's file-write places as 0.90 and before kept them —
+   * read once, to fill `machineWriteScope` where it is empty. */
+  machineWriteScopeBefore092: "acpPatchbay.machineWriteScope",
   savedRoots: "acpPatchbay.savedRootList",
   /** The folders 0.88 and before saved for every workspace — read once, to
    * fill `savedRoots` where it is empty. */
@@ -40,7 +48,11 @@ export const STORAGE_KEYS = {
   spawnRegistry: "acpPatchbay.spawnRegistry",
   defaultAgentFolded: "acpPatchbay.defaultAgentFolded",
   legacyStateRecovery: "acpPatchbay.legacyStateRecovery",
-  permissionRules: "acpPatchbay.permissionRules",
+  permissionRules: "acpPatchbay.workspaceRules",
+  /** A workspace's rules and write answers as 0.90 and before kept them
+   * in its workspaceState — read once, to fill `permissionRules` where it
+   * is empty. */
+  permissionRulesBefore092: "acpPatchbay.permissionRules",
   /** A workspace's own saved folders, as 0.88 and before kept them in its
    * workspaceState — moved into `savedRoots`, for that workspace, the first
    * time it opens on a later version. */

@@ -8,6 +8,7 @@
 
 import type { PatchbayAgentId, PatchbayAskId, PatchbayMcpServerId, PatchbaySessionId } from "./ids";
 import type { McpDraft } from "./mcp-config";
+import type { AgentScope, AgentScoped } from "./agent-scope";
 import type { Reach } from "./reach";
 import type { WorkspaceId } from "./workspace";
 
@@ -229,15 +230,23 @@ export type Action =
    * every workspace, the fallback floor). */
   | { kind: "addCommandRule"; rule: CommandRuleView; layer: "workspace" | "machine" }
   | { kind: "removeCommandRule"; rule: Pick<CommandRuleView, "kind" | "pattern">; layer: "workspace" | "machine" }
-  /** The Commands page's tester: how the rules would judge `line` — with
-   * `draft` among them at its layer, the rule being typed, so its catch
-   * shows before it is added. `shell`: what the line runs as (`typedRun`).
-   * Answered by `commandJudged`. */
-  | { kind: "testCommand"; line: string; shell: TesterShell; draft: RuleMatchView | null }
+  /** The agents the named rules of one layer apply to — one rule's chip,
+   * or every rule a filter shows, at once. */
+  | { kind: "setCommandRulesScope"; rules: readonly Pick<CommandRuleView, "kind" | "pattern">[]; layer: "workspace" | "machine"; agents: AgentScope }
+  /** The Commands page's tester: how the rules would judge `line` for
+   * `agent` (null: an agent no rule names) — with `draft` among them at
+   * its layer, the rule being typed, so its catch shows before it is
+   * added. `shell`: what the line runs as (`typedRun`). Answered by
+   * `commandJudged`. */
+  | { kind: "testCommand"; line: string; shell: TesterShell; agent: PatchbayAgentId | null; draft: RuleMatchView | null }
   /** One place's answer at one layer — null: the layer says nothing of it
    * (the workspace follows the machine — or drops a folder only it
-   * added; the machine goes back to the default, or drops its folder). */
+   * added; the machine goes back to the default, or drops its folder). A
+   * place the layer already answers keeps the agents its answer is for. */
   | { kind: "setWriteLocation"; location: WriteLocation; layer: "workspace" | "machine"; on: boolean | null }
+  /** The agents one layer's answer for a place is for. A place the layer
+   * doesn't answer yet is answered as it stands, for those agents. */
+  | { kind: "setWriteLocationScope"; location: WriteLocation; layer: "workspace" | "machine"; agents: AgentScope }
   /** File writes' add: the folder picker opens host-side, and the folder
    * lands switched on at `layer` — one added for this workspace is this
    * workspace's own, never on the machine's list. */
@@ -3028,10 +3037,10 @@ export type RuleVerdictView = (typeof RULE_VERDICTS)[number];
 
 /** A command rule: a pattern over a command's whole text, `*` matching
  * anything, or one word anywhere in a command, `*` matching within the
- * word. A word only denies or asks. */
-export type CommandRuleView =
-  | { kind: "command"; pattern: string; verdict: RuleVerdictView }
-  | { kind: "word"; pattern: string; verdict: "ask" | "deny" };
+ * word. A word only denies or asks. It applies to the agents its scope
+ * names — every agent where it names none. */
+export type CommandRuleView = AgentScoped &
+  ({ kind: "command"; pattern: string; verdict: RuleVerdictView } | { kind: "word"; pattern: string; verdict: "ask" | "deny" });
 
 /** What the Commands page's tester runs a typed line as: the program and
  * its arguments, no shell between — as `terminal/create` runs — or a
@@ -3075,8 +3084,9 @@ export type WriteLocation =
   | { kind: "temp" }
   | { kind: "path"; path: string };
 
-/** One layer's answer for one place. */
-export interface WriteEntry {
+/** One layer's answer for one place — for the agents its scope names,
+ * every agent where it names none. */
+export interface WriteEntry extends AgentScoped {
   location: WriteLocation;
   on: boolean;
 }
@@ -3105,11 +3115,15 @@ export function writeLocationLabel(location: WriteLocation): string {
 
 /** One file-write place: this machine's answer — null for a folder only
  * this workspace added — this workspace's, null where it follows the
- * machine, and the answer this window goes by. */
+ * machine, each with the agents it is for, and the answer that holds: for
+ * the agent the rows were read for, or, read for none (Settings), for an
+ * agent no answer names. */
 export interface WriteScopeRowView {
   location: WriteLocation;
   machine: boolean | null;
+  machineAgents: AgentScope;
   workspace: boolean | null;
+  workspaceAgents: AgentScope;
   on: boolean;
 }
 
@@ -3208,7 +3222,7 @@ export interface SettingsState {
   /** The import under way on the Import/Export page; null when none. */
   configImport: ConfigImportView | null;
   /** The tester's last answer, for the line it judged. */
-  commandTest: { line: string; shell: TesterShell; judgement: CommandJudgementView } | null;
+  commandTest: { line: string; shell: TesterShell; agent: PatchbayAgentId | null; judgement: CommandJudgementView } | null;
 }
 
 /** One row of the Data page's storage inventory — a store, where it lives
@@ -3282,7 +3296,7 @@ export type SettingsEvent =
   | { kind: "wireLogChanged"; active: boolean; until: string | null }
   | { kind: "dataInventoryChanged"; rows: readonly DataInventoryRow[] }
   | { kind: "configImportChanged"; configImport: ConfigImportView | null }
-  | { kind: "commandJudged"; line: string; shell: TesterShell; judgement: CommandJudgementView }
+  | { kind: "commandJudged"; line: string; shell: TesterShell; agent: PatchbayAgentId | null; judgement: CommandJudgementView }
   | { kind: "sectionChanged"; section: SettingsSectionId };
 
 export function reduceSettings(
@@ -3362,7 +3376,7 @@ export function reduceSettings(
     case "configImportChanged":
       return { ...state, configImport: event.configImport };
     case "commandJudged":
-      return { ...state, commandTest: { line: event.line, shell: event.shell, judgement: event.judgement } };
+      return { ...state, commandTest: { line: event.line, shell: event.shell, agent: event.agent, judgement: event.judgement } };
     case "preferencesChanged":
       return { ...state, preferences: event.preferences };
     case "savedRootsChanged":

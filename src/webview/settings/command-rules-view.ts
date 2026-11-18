@@ -2,7 +2,9 @@
 // Copyright 2026 Solutions Unity
 
 // What the Commands page derives from a layer's rules: the order they show
-// in, and how many of each there are.
+// in, how many of each there are, and the ones a filter shows.
+import { appliesTo, everyAgent, scopeOf } from "../../shared/agent-scope";
+import type { PatchbayAgentId } from "../../shared/ids";
 import { RULE_VERDICTS, type CommandRuleView } from "../../shared/protocol";
 
 type Verdict = CommandRuleView["verdict"];
@@ -37,4 +39,30 @@ export function ruleCounts(rules: readonly CommandRuleView[]): RuleCounts {
     }
   }
   return { byKind, total };
+}
+
+/** Which rules a card shows: those whose pattern holds `text`, and — by
+ * agent — every rule, the ones for every agent alone, or the ones one
+ * agent is judged by. */
+export interface RuleFilter {
+  text: string;
+  agent: "all" | "every" | PatchbayAgentId;
+}
+
+export const NO_FILTER: RuleFilter = { text: "", agent: "all" };
+
+export function filtering(filter: RuleFilter): boolean {
+  return filter.text.trim() !== "" || filter.agent !== "all";
+}
+
+/** The rules the filter shows. "The ones an agent is judged by" is read as
+ * the judge reads it — a rule for every agent is one of them. */
+export function filteredRules(rules: readonly CommandRuleView[], filter: RuleFilter): CommandRuleView[] {
+  const text = filter.text.trim().toLowerCase();
+  const { agent } = filter;
+  return rules.filter(
+    (r) =>
+      (text === "" || r.pattern.toLowerCase().includes(text)) &&
+      (agent === "all" || (agent === "every" ? everyAgent(scopeOf(r)) : appliesTo(r, agent))),
+  );
 }

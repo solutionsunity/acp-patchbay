@@ -35,7 +35,7 @@ import {
   resolveDistribution,
 } from "./stores/acp-registry";
 import { FileKV } from "./stores/file-kv";
-import { sameRule, withRule } from "./stores/permission-rules";
+import { sameRule, withRule, withRulesScope } from "./stores/permission-rules";
 import { recoverLegacyGlobalState } from "./stores/vscdb-recovery";
 import { statusBarContent } from "./status-bar";
 import { editorLineOf, folderShownIn } from "./tool-locations";
@@ -895,11 +895,18 @@ export class OrchestratorHost {
       case "removeCommandRule":
         await this.orchestrator.setCommandRules(action.layer, (rules) => rules.filter((r) => !sameRule(r, action.rule)));
         break;
+      case "setCommandRulesScope":
+        await this.orchestrator.setCommandRules(action.layer, (rules) => withRulesScope(rules, action.rules, action.agents));
+        break;
       case "testCommand":
-        await this.orchestrator.testCommand(action.line, action.shell, action.draft);
+        await this.orchestrator.testCommand(action.line, action.shell, action.agent, action.draft);
         break;
       case "setWriteLocation":
         await this.orchestrator.setWriteLocation(action.location, action.layer, action.on);
+        this.orchestrator.publishRules();
+        break;
+      case "setWriteLocationScope":
+        await this.orchestrator.setWriteLocationScope(action.location, action.layer, action.agents);
         this.orchestrator.publishRules();
         break;
       case "pickWriteFolder":

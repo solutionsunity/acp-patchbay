@@ -47,7 +47,16 @@ function run(line: string, over: Partial<CreateTerminalParams> = {}): CreateTerm
   return { ...parsed, env: {}, cwd: workspaceRoot, outputByteLimit: null, ...over };
 }
 
-function harness() {
+/** The agent a session's asks come from, by the session's name: "sA…" is
+ * agent A's, "sB…" agent B's — two agents side by side on one host. */
+const TWO_AGENTS: Record<string, { id: PatchbayAgentId; name: string }> = {
+  A: { id: "agent-a" as PatchbayAgentId, name: "Hermes" },
+  B: { id: "agent-b" as PatchbayAgentId, name: "OpenCode" },
+};
+const sA = { patchbaySessionId: "sA" as PatchbaySessionId };
+const sB = { patchbaySessionId: "sB" as PatchbaySessionId };
+
+function harness(agents: "none" | "one" | "two" = "none") {
   const rules = new PermissionRulesStore(new MemoryKV());
   const machineRules = new MachineRulesStore(new MemoryKV());
   const machineWriteScope = new MachineWriteScopeStore(new MemoryKV());
@@ -65,7 +74,14 @@ function harness() {
     openLink: (href) => opened.push(href),
   });
   const roots = () => ({ workspace: granted, added });
-  const broker = new PermissionBroker(rules, asks, roots, (text) => text.split(HANDED_OUT).join("•••"), reader, machineRules, machineWriteScope);
+  const agentOf =
+    agents === "none"
+      ? undefined
+      : ({ patchbaySessionId }: { patchbaySessionId: PatchbaySessionId }) => {
+          const agent = TWO_AGENTS[patchbaySessionId.charAt(1)];
+          return agent === undefined ? null : { ...agent, amongOthers: agents === "two" };
+        };
+  const broker = new PermissionBroker(rules, asks, roots, (text) => text.split(HANDED_OUT).join("•••"), reader, machineRules, machineWriteScope, undefined, agentOf);
   return { broker, asks, roots, rules, machineRules, machineWriteScope, audit, events, opened, refreshCount: () => auditRefreshes };
 }
 
@@ -928,5 +944,92 @@ describe("PermissionBroker url asks — a page the user opens", () => {
     expect(events.at(-1)).toEqual({ kind: "elicitationLinkSettled", patchbaySessionId: "s1", patchbayAskId, state: "ended" });
     asks.reopenLink(patchbayAskId);
     expect(opened).toHaveLength(1);
+  });
+});
+
+// #154: one host, several agents, each trusted differently. A rule or a
+// write answer may name the agents it is for; for any other agent it isn't
+// there, and the next layer — then asking, or the default — answers.
+describe("rules and write answers for named agents (#154)", () => {
+  const A = TWO_AGENTS.A!.id;
+  const B = TWO_AGENTS.B!.id;
+  const verdictFor = async (h: ReturnType<typeof harness>, agent: PatchbayAgentId | null, line: string) =>
+    (await h.broker.judgeRun(run(line), undefined, agent)).verdict;
+
+  it("a rule applies to the agents it names: the others never meet it, and are asked", async () => {
+    const h = harness("two");
+    await h.rules.set({ commandRules: [{ ...allow("npm test"), agents: [A] }, { ...deny("git push *"), agents: { except: [A] } }], writeScope: [] });
+    expect(await verdictFor(h, A, "npm test")).toBe("allow");
+    expect(await verdictFor(h, B, "npm test")).toBe("ask");
+    expect(await verdictFor(h, A, "git push origin")).toBe("ask");
+    expect(await verdictFor(h, B, "git push origin")).toBe("deny");
+    // an agent no rule names — one added later — meets only what is for every agent, or for all but some
+    expect(await verdictFor(h, null, "npm test")).toBe("ask");
+    expect(await verdictFor(h, null, "git push origin")).toBe("deny");
+    // and the gate judges by who asks
+    await expect(h.broker.gateCommand(sA, run("npm test"))).resolves.toBe("accepted");
+    await expect(h.broker.gateCommand(sB, run("git push origin"))).resolves.toEqual({ denied: [{ ...deny("git push *"), agents: { except: [A] } }] });
+  });
+
+  it("a workspace rule for one agent leaves the machine's rule standing for the others", async () => {
+    const h = harness("two");
+    await h.rules.set({ commandRules: [{ ...allow("npm publish"), agents: [A] }], writeScope: [] });
+    await h.machineRules.set([deny("npm publish")]);
+    expect(await verdictFor(h, A, "npm publish")).toBe("allow"); // this workspace answers for A
+    expect(await verdictFor(h, B, "npm publish")).toBe("deny"); // for B it says nothing: the machine's holds
+  });
+
+  it("a write answer applies to the agents it names — the mute too", async () => {
+    const h = harness("two");
+    const inTemp = [join(tmpdir(), "scratch.txt")];
+    const inWorkspace = [join(workspaceRoot, "a.ts")];
+    await h.machineWriteScope.set([{ location: { kind: "temp" }, on: true, agents: [A] }]);
+    expect(await h.broker.evaluateFileWrites(sA, inTemp)).toBe("allow");
+    expect(await h.broker.evaluateFileWrites(sB, inTemp)).toBe("ask"); // B goes by the default: temp off
+    await h.rules.set({ commandRules: [], writeScope: [{ location: { kind: "alwaysAsk" }, on: true, agents: [B] }] });
+    expect(await h.broker.evaluateFileWrites(sA, inWorkspace)).toBe("allow");
+    expect(await h.broker.evaluateFileWrites(sB, inWorkspace)).toBe("ask"); // muted for B alone
+  });
+
+  it("with one agent the card's Always allow is one button — saved for that agent, so one added later asks for itself", async () => {
+    const h = harness("one");
+    const pending = h.broker.gateCommand(sA, run("npm run lint"));
+    const card = await cardOf(h.events, pending);
+    expect(card.options.map((o) => o.label)).toEqual(["Allow once", "Always allow", "Reject"]);
+    h.asks.answerOption(card.patchbayAskId, "allow_always");
+    await pending;
+    expect(h.rules.get().commandRules).toEqual([{ ...allow("npm run lint"), agents: [A] }]);
+    expect(await verdictFor(h, B, "npm run lint")).toBe("ask");
+  });
+
+  it("among several agents the card names whose grant it is, narrow before wide; each answer saves what it says", async () => {
+    const h = harness("two");
+    const ask = async (requester: typeof sA, line: string, optionId: string) => {
+      h.events.length = 0;
+      const pending = h.broker.gateCommand(requester, run(line));
+      const card = await cardOf(h.events, pending);
+      h.asks.answerOption(card.patchbayAskId, optionId);
+      await pending;
+      return card.options.map((o) => o.label);
+    };
+    expect(await ask(sA, "npm run lint", "allow_always")).toEqual(["Allow once", "Always for Hermes", "Always for all agents", "Reject"]);
+    expect(h.rules.get().commandRules).toEqual([{ ...allow("npm run lint"), agents: [A] }]);
+    // the other agent is still asked — and its own grant joins the rule, never replaces Hermes's
+    expect(await ask(sB, "npm run lint", "allow_always")).toEqual(["Allow once", "Always for OpenCode", "Always for all agents", "Reject"]);
+    expect(h.rules.get().commandRules).toEqual([{ ...allow("npm run lint"), agents: [A, B] }]);
+    await ask(sA, "npm run build", "allow_always_all");
+    expect(h.rules.get().commandRules[1]).toEqual(allow("npm run build"));
+    expect(await verdictFor(h, B, "npm run build")).toBe("allow");
+  });
+
+  it("no Always is offered for a command this workspace already answers otherwise for another agent — one rule per pattern", async () => {
+    const h = harness("two");
+    await h.rules.set({ commandRules: [{ ...deny("rm -rf build"), agents: [A] }], writeScope: [] });
+    const pending = h.broker.gateCommand(sB, run("rm -rf build"));
+    const card = await cardOf(h.events, pending);
+    expect(card.options.map((o) => o.label)).toEqual(["Allow once", "Reject"]);
+    h.asks.answerOption(card.patchbayAskId, "allow_once");
+    await pending;
+    expect(h.rules.get().commandRules).toEqual([{ ...deny("rm -rf build"), agents: [A] }]); // Hermes's deny untouched
   });
 });

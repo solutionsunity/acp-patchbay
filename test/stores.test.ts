@@ -25,10 +25,13 @@ import {
   DEFAULT_PERMISSION_RULES,
   MachineRulesStore,
   PermissionRulesStore,
+  rulesWithout,
   withRule,
+  withRulesScope,
+  type CommandRule,
 } from "../src/orchestrator/stores/permission-rules";
 import { SavedRootsStore } from "../src/orchestrator/stores/saved-roots";
-import { MachineWriteScopeStore, withWriteEntry, writeScopeRows } from "../src/orchestrator/stores/write-scope";
+import { MachineWriteScopeStore, withWriteEntry, withWriteScope, writeEntriesWithout, writeScopeRows } from "../src/orchestrator/stores/write-scope";
 import type { PatchbayAgentId } from "../src/shared/ids";
 import type { WorkspaceId } from "../src/shared/workspace";
 import { STORAGE_KEYS, SECRET_FAMILIES } from "../src/orchestrator/stores/storage-keys";
@@ -183,9 +186,11 @@ describe("PermissionRulesStore", () => {
     for (const [fileWriteScope, writeScope] of cases) {
       const kv = new MemoryKV();
       const commandRules = [{ kind: "command", pattern: "npm test", verdict: "allow" }];
-      void kv.update(STORAGE_KEYS.permissionRules, { commandRules, fileWriteScope });
+      void kv.update(STORAGE_KEYS.permissionRulesBefore092, { commandRules, fileWriteScope });
       expect(new PermissionRulesStore(kv).get()).toEqual({ commandRules, writeScope });
       expect(kv.get(STORAGE_KEYS.permissionRules)).toEqual({ commandRules, writeScope });
+      // copied, never moved: a window on the earlier version keeps its key
+      expect(kv.get(STORAGE_KEYS.permissionRulesBefore092)).toEqual({ commandRules, fileWriteScope });
     }
   });
 
@@ -237,11 +242,11 @@ describe("MachineRulesStore", () => {
   // Every rule stored before rules had kinds matched the whole command.
   it("rules stored without a kind become command rules, once, in both layers", () => {
     const machineKv = new MemoryKV();
-    void machineKv.update(STORAGE_KEYS.machineCommandRules, [{ pattern: "git status", verdict: "allow" }, "junk"]);
+    void machineKv.update(STORAGE_KEYS.machineCommandRulesBefore092, [{ pattern: "git status", verdict: "allow" }, "junk"]);
     new MachineRulesStore(machineKv);
     expect(machineKv.get(STORAGE_KEYS.machineCommandRules)).toEqual([{ kind: "command", pattern: "git status", verdict: "allow" }, "junk"]);
     const workspaceKv = new MemoryKV();
-    void workspaceKv.update(STORAGE_KEYS.permissionRules, { commandRules: [{ pattern: "npm *", verdict: "deny" }], writeScope: [] });
+    void workspaceKv.update(STORAGE_KEYS.permissionRulesBefore092, { commandRules: [{ pattern: "npm *", verdict: "deny" }], writeScope: [] });
     expect(new PermissionRulesStore(workspaceKv).get().commandRules).toEqual([{ kind: "command", pattern: "npm *", verdict: "deny" }]);
     expect(workspaceKv.get(STORAGE_KEYS.permissionRules)).toEqual({ commandRules: [{ kind: "command", pattern: "npm *", verdict: "deny" }], writeScope: [] });
   });
@@ -292,10 +297,10 @@ describe("writeScopeRows", () => {
 
   it("nothing set: the mute off, the workspace on, session roots and temp off — no folders", () => {
     expect(writeScopeRows([], [])).toEqual([
-      { location: { kind: "alwaysAsk" }, machine: false, workspace: null, on: false },
-      { location: { kind: "workspace" }, machine: true, workspace: null, on: true },
-      { location: { kind: "sessionRoots" }, machine: false, workspace: null, on: false },
-      { location: { kind: "temp" }, machine: false, workspace: null, on: false },
+      { location: { kind: "alwaysAsk" }, machine: false, machineAgents: "auto", workspace: null, workspaceAgents: "auto", on: false },
+      { location: { kind: "workspace" }, machine: true, machineAgents: "auto", workspace: null, workspaceAgents: "auto", on: true },
+      { location: { kind: "sessionRoots" }, machine: false, machineAgents: "auto", workspace: null, workspaceAgents: "auto", on: false },
+      { location: { kind: "temp" }, machine: false, machineAgents: "auto", workspace: null, workspaceAgents: "auto", on: false },
     ]);
   });
 
@@ -938,5 +943,83 @@ describe("SessionContinuityStore", () => {
     await store.patch("auggie" as PatchbayAgentId, "s1", ws, { draft: "c" });
     await store.forgetAgent("claude" as PatchbayAgentId);
     expect(store.list().map((r) => r.patchbayAgentId)).toEqual(["auggie"]);
+  });
+});
+
+// #154: rules and write answers name the agents they are for. The stored
+// shape changed, so the three records moved to new keys — a window on the
+// version before reads a rule for one agent as a rule for every agent.
+describe("rules for named agents: the stores (#154)", () => {
+  const A = "agent-a" as PatchbayAgentId;
+  const B = "agent-b" as PatchbayAgentId;
+  const rule = (pattern: string, agents?: CommandRule["agents"]): CommandRule => ({ kind: "command", pattern, verdict: "allow", ...(agents === undefined ? {} : { agents }) });
+
+  it("a rule's agents are stored with it and read back; one for every agent is stored as it always was", async () => {
+    const kv = new MemoryKV();
+    const store = new MachineRulesStore(kv);
+    await store.set([rule("a", [A]), rule("b", { except: [B] }), rule("c")]);
+    expect(new MachineRulesStore(kv).get().commandRules).toEqual([rule("a", [A]), rule("b", { except: [B] }), rule("c")]);
+    expect(kv.get<unknown[]>(STORAGE_KEYS.machineCommandRules)?.[2]).toEqual({ kind: "command", pattern: "c", verdict: "allow" });
+  });
+
+  it("the named rules take a scope, every other as it was — back to every agent is said by naming none", () => {
+    const rules = [rule("a"), rule("b", [A]), rule("c")];
+    expect(withRulesScope(rules, [rule("a"), rule("b")], [B])).toEqual([rule("a", [B]), rule("b", [B]), rule("c")]);
+    expect(withRulesScope(rules, [rule("b")], "auto")).toEqual([rule("a"), rule("b"), rule("c")]);
+  });
+
+  it("a removed agent is named in no rule: one for it alone goes with it, one that only left it out is for every agent again", () => {
+    expect(rulesWithout([rule("only", [A]), rule("both", [A, B]), rule("except", { except: [A] }), rule("all"), rule("nobody", [])], A)).toEqual([
+      rule("both", [B]),
+      rule("except"),
+      rule("all"),
+      rule("nobody", []),
+    ]);
+    expect(writeEntriesWithout([{ location: { kind: "temp" }, on: true, agents: [A] }, { location: { kind: "workspace" }, on: false, agents: [A, B] }], A)).toEqual([
+      { location: { kind: "workspace" }, on: false, agents: [B] },
+    ]);
+  });
+
+  it("a place's answer counts for the agents it names; switching it keeps its agents; naming agents for an unanswered place keeps what holds", () => {
+    const machine = [{ location: { kind: "temp" as const }, on: true, agents: [A] }];
+    const on = (agent: PatchbayAgentId | null) => writeScopeRows(machine, [], agent).find((r) => r.location.kind === "temp")!.on;
+    expect([on(A), on(B), on(null)]).toEqual([true, false, false]);
+    expect(writeScopeRows(machine, []).find((r) => r.location.kind === "temp")).toMatchObject({ machine: true, machineAgents: [A] });
+    expect(withWriteEntry(machine, { kind: "temp" }, false)).toEqual([{ location: { kind: "temp" }, on: false, agents: [A] }]);
+    expect(withWriteScope([], { kind: "workspace" }, [B], true)).toEqual([{ location: { kind: "workspace" }, on: true, agents: [B] }]);
+    expect(withWriteScope(machine, { kind: "temp" }, "auto", false)).toEqual([{ location: { kind: "temp" }, on: true }]);
+  });
+
+  it("each record is copied once from the key an earlier version keeps — which is left as it was, and never read again", async () => {
+    const kv = new MemoryKV();
+    const earlierRules = [{ kind: "command", pattern: "npm test", verdict: "allow" }];
+    const earlierPlaces = [{ location: { kind: "temp" }, on: true }];
+    await kv.update(STORAGE_KEYS.machineCommandRulesBefore092, earlierRules);
+    await kv.update(STORAGE_KEYS.machineWriteScopeBefore092, earlierPlaces);
+    const rules = new MachineRulesStore(kv);
+    const places = new MachineWriteScopeStore(kv);
+    expect(rules.get().commandRules).toEqual(earlierRules);
+    expect(places.get()).toEqual(earlierPlaces);
+    await rules.set([rule("for one agent", [A])]);
+    // a window on the earlier version goes on writing its key: nothing of it comes back
+    await kv.update(STORAGE_KEYS.machineCommandRulesBefore092, [...earlierRules, { kind: "command", pattern: "later", verdict: "allow" }]);
+    expect(new MachineRulesStore(kv).get().commandRules).toEqual([rule("for one agent", [A])]);
+    expect(kv.get(STORAGE_KEYS.machineWriteScopeBefore092)).toEqual(earlierPlaces);
+  });
+
+  it("erasing takes the earlier version's copy too, and nothing is copied back", async () => {
+    const kv = new MemoryKV();
+    await kv.update(STORAGE_KEYS.machineCommandRulesBefore092, [{ kind: "command", pattern: "x", verdict: "allow" }]);
+    await kv.update(STORAGE_KEYS.machineWriteScopeBefore092, [{ location: { kind: "temp" }, on: true }]);
+    await kv.update(STORAGE_KEYS.permissionRulesBefore092, { commandRules: [{ kind: "command", pattern: "y", verdict: "deny" }], writeScope: [] });
+    await new MachineRulesStore(kv).wipe();
+    await new MachineWriteScopeStore(kv).wipe();
+    await new PermissionRulesStore(kv).wipe();
+    for (const key of [STORAGE_KEYS.machineCommandRulesBefore092, STORAGE_KEYS.machineWriteScopeBefore092, STORAGE_KEYS.permissionRulesBefore092]) {
+      expect(kv.get(key)).toBeUndefined();
+    }
+    expect(new MachineRulesStore(kv).get().commandRules).toEqual([]);
+    expect(new MachineWriteScopeStore(kv).get()).toEqual([]);
+    expect(new PermissionRulesStore(kv).get()).toEqual(DEFAULT_PERMISSION_RULES);
   });
 });

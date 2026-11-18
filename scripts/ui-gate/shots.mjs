@@ -2651,6 +2651,18 @@ for (const theme of Object.keys(THEMES)) {
       fw.writeScope.rows.filter((r) => r.workspace !== null && r.machine !== null).length,
   );
   check("[file writes] an overridden machine row says what holds here", (await machineCard.locator('text="on here"').count()) === 1);
+  // #154: each answer says which agents it is for, and its chip changes them
+  check(
+    "[file writes] an answer says the agents it is for — every agent, or the ones it names",
+    (await machineCard.locator(".scope-chip").count()) === fw.writeScope.rows.filter((r) => r.machine !== null).length &&
+      (await machineCard.locator(".rule", { has: p.locator('code:text("/home/me/.hermes")') }).locator(".scope-chip").innerText()).trim() === "only Augment" &&
+      (await machineCard.locator(".rule").first().locator(".scope-chip").innerText()).trim() === "all agents",
+  );
+  await machineCard.locator(".rule", { has: p.locator('code:text("/tmp")') }).locator(".scope-chip").click();
+  await p.locator('[data-slot="popover-content"] label:has-text("only these agents")').click();
+  const placed = await p.evaluate(() => window.__actions.filter((a) => a.kind === "setWriteLocationScope").at(-1));
+  check(`[file writes] a place's chip sets the agents its answer is for (${JSON.stringify(placed)})`, placed?.location.kind === "temp" && placed.layer === "machine" && JSON.stringify(placed.agents) === "[]");
+  await p.keyboard.press("Escape");
   check("[file writes] nothing dimmed while the mute is off", (await writeCards.locator(".rule.opacity-50").count()) === 0);
   check("[file writes] adding a folder is open while the mute is off", (await writeCards.locator('button:has-text("Add folder…"):not([disabled])').count()) === 2);
   await machineCard.screenshot({ path: `${OUT}/settings-file-writes.png` });
@@ -2728,6 +2740,79 @@ for (const theme of Object.keys(THEMES)) {
   await p.waitForFunction(() => document.querySelector("[data-rule-list]").scrollTop > 0, null, { timeout: 2000 }).catch(() => {});
   check("[commands] the rule list keeps its Page keys", await p.locator("[data-rule-list]").first().evaluate((el) => el.scrollTop > 0));
   await p.screenshot({ path: `${OUT}/settings-commands-long.png` });
+
+  // ── Commands, rules for named agents (#154): a long list is worked through
+  // its filter — by pattern and by agent — and the agents of every rule it
+  // shows are set at once; a rule that names agents says so on its row, one
+  // for every agent stays as it was ──
+  const workspaceCard = p.locator(".card", { has: p.locator('h2:text("Command rules — this workspace")') });
+  const lastAction = (kind) => p.evaluate((k) => window.__actions.filter((a) => a.kind === k).at(-1), kind);
+  check("[commands] a rule for every agent says nothing of agents on its row", (await workspaceCard.locator("[data-rule-list] .scope-chip span").count()) === 0);
+  await workspaceCard.locator('[aria-label="Filter rules by pattern"]').fill("WORD-");
+  await workspaceCard.locator("[data-rule-shown]").waitFor();
+  check(
+    "[commands] the filter narrows the list and the counts with it, and says how many it shows",
+    (await workspaceCard.locator("[data-rule-list] .rule").count()) === 11 &&
+      /11 of 341 rules shown/.test(await workspaceCard.locator("[data-rule-shown]").innerText()) &&
+      /total\s*6\s*5\s*0\s*11/.test(await workspaceCard.locator("[data-rule-counts]").innerText()),
+  );
+  await workspaceCard.locator('button:has-text("Agents for these 11")').click();
+  const bulk = p.locator('[data-slot="popover-content"]');
+  check("[commands] the bulk change sets nothing until its agents are chosen", await bulk.locator('button:has-text("Choose the agents")').isDisabled());
+  await bulk.locator('label:has-text("only these agents")').click();
+  await bulk.locator('label:has-text("Claude Code")').click();
+  await bulk.locator('button:has-text("Apply to 11 rules: only Claude Code")').click();
+  const scoped = await lastAction("setCommandRulesScope");
+  check(
+    `[commands] the agents of every rule the filter shows are set at once (${scoped?.rules?.length} rules, ${JSON.stringify(scoped?.agents)})`,
+    scoped?.layer === "workspace" && scoped.rules.length === 11 && scoped.rules.every((r) => r.kind === "word" && Object.keys(r).length === 2) && JSON.stringify(scoped.agents) === '["claude"]',
+  );
+  // the host's answer: those rules now name their agent
+  await p.evaluate(
+    ([rules, ws]) =>
+      window.__patch([{ kind: "permissionRulesChanged", commandRules: rules.map((r) => (r.kind === "word" ? { ...r, agents: ["claude"] } : r)), machineCommandRules: [], writeScope: ws }]),
+    [many.commandRules, many.writeScope],
+  );
+  await workspaceCard.locator(".scope-chip.named").first().waitFor();
+  check(
+    "[commands] a rule that names agents says so on its row",
+    (await workspaceCard.locator("[data-rule-list] .scope-chip.named").count()) === 11 &&
+      (await workspaceCard.locator("[data-rule-list] .scope-chip.named").first().innerText()).trim() === "only Claude Code",
+  );
+  await workspaceCard.locator('[aria-label="Filter rules by pattern"]').fill("");
+  const pick = async (label, option) => {
+    await workspaceCard.locator(`[aria-label="${label}"]`).click();
+    await p.locator(`[role="option"]:has-text("${option}")`).click();
+  };
+  await pick("Filter rules by agent", "applies to Augment");
+  check("[commands] by agent, the list is what that agent is judged by — the rules for another agent left out", (await workspaceCard.locator("[data-rule-list] .rule").count()) === 330);
+  await pick("Filter rules by agent", "applies to Claude Code");
+  check("[commands] …and every rule that applies to the agent chosen, its own and every agent's", (await workspaceCard.locator("[data-rule-list] .rule").count()) === 341);
+  await pick("Filter rules by agent", "for every agent");
+  check("[commands] …or the rules for every agent alone", (await workspaceCard.locator("[data-rule-list] .rule").count()) === 330);
+  await pick("Filter rules by agent", "all rules");
+  // one rule's chip sets that rule alone, saved as it is chosen
+  await workspaceCard.locator("[data-rule-list] .scope-chip.named").first().click();
+  await p.locator('[data-slot="popover-content"] label:has-text("all agents except these")').click();
+  const one = await lastAction("setCommandRulesScope");
+  check(`[commands] a rule's own chip sets that rule alone (${JSON.stringify(one?.rules)})`, one?.rules.length === 1 && JSON.stringify(one.agents) === '{"except":[]}');
+  await p.keyboard.press("Escape");
+  // the add row carries the agents the new rule is for, and the tester judges as the agent chosen
+  await workspaceCard.locator('button[title="Which agents the rule being added applies to"]').click();
+  await p.locator('[data-slot="popover-content"] label:has-text("only these agents")').click();
+  await p.locator('[data-slot="popover-content"] label:has-text("Augment")').click();
+  await p.keyboard.press("Escape");
+  await workspaceCard.locator('input[placeholder="kubectl get *"]').fill("make deploy");
+  await workspaceCard.locator('button:has-text("Add rule")').click();
+  const added = await lastAction("addCommandRule");
+  check(`[commands] a rule is added for the agents its row names (${JSON.stringify(added?.rule)})`, added?.rule.pattern === "make deploy" && JSON.stringify(added.rule.agents) === '["aug"]');
+  await p.fill('[aria-label="Command to test"]', "npm test");
+  await p.locator('[aria-label="Test as"]').click();
+  await p.locator('[role="option"]:has-text("as Augment")').click();
+  const tested = await p.waitForFunction(() => window.__actions.filter((a) => a.kind === "testCommand").find((a) => a.agent === "aug"), null, { timeout: 3000 }).then((h) => h.jsonValue(), () => null);
+  check("[commands] the tester judges the line as the agent chosen", tested?.line === "npm test" && tested.agent === "aug");
+  await sweep(p, "settings › Commands with agent scopes");
+  await p.screenshot({ path: `${OUT}/settings-commands-scoped.png` });
   await p.close();
 
   // ── Commands tester (#95, #104): a line is asked about with the rule being
@@ -2761,6 +2846,7 @@ for (const theme of Object.keys(THEMES)) {
             kind: "commandJudged",
             line: l,
             shell: "none",
+            agent: null,
             judgement: {
               verdict: "deny",
               commands: [

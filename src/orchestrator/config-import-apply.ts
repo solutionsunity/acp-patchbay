@@ -10,12 +10,13 @@ import { writeLocationLabel, type KnobSeed, type PreferencesView, type WriteEntr
 import type { PatchbayAgentId, PatchbayMcpServerId } from "../shared/ids";
 import type { ConfigurationRead } from "./config-import";
 import { ruleLabel } from "../shared/command-rules";
-import { commandRuleItemId, routingOn, savedRootItemId, writeLocationItemId, type ImportPlan } from "./config-import-plan";
+import { commandRuleItemId, routingOn, savedRootItemId, scopedOn, writeLocationItemId, type ImportPlan } from "./config-import-plan";
 import type { AgentConfig } from "./stores/agent-configs";
 import type { McpServerConfig } from "./stores/mcp-server-configs";
 import type { SavedRoot } from "./stores/saved-roots";
 import { type CommandRule, withRule } from "./stores/permission-rules";
-import { withWriteEntry } from "./stores/write-scope";
+import { scopeOf } from "../shared/agent-scope";
+import { withWriteEntry, withWriteScope } from "./stores/write-scope";
 import { agentErrorText } from "./readers/agent-error";
 
 type Env = Record<string, string>;
@@ -87,13 +88,18 @@ export async function applyImport(
 
   for (const rule of read.machineCommandRules) {
     if (!taken(commandRuleItemId(rule))) continue;
-    await land(ruleLabel(rule), () => targets.machineRules.set(withRule(targets.machineRules.get().commandRules, rule)));
+    await land(ruleLabel(rule), () =>
+      targets.machineRules.set(withRule(targets.machineRules.get().commandRules, scopedOn(rule, plan.agentIds))),
+    );
   }
 
-  for (const { location, on } of read.machineWriteScope) {
+  for (const entry of read.machineWriteScope) {
+    const { location, on } = entry;
     if (!taken(writeLocationItemId(location))) continue;
     await land(writeLocationLabel(location), () =>
-      targets.machineWriteScope.set(withWriteEntry(targets.machineWriteScope.get(), location, on)),
+      targets.machineWriteScope.set(
+        withWriteScope(withWriteEntry(targets.machineWriteScope.get(), location, on), location, scopeOf(scopedOn(entry, plan.agentIds)), on),
+      ),
     );
   }
 

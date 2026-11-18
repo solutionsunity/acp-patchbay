@@ -23,6 +23,8 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, sep } from "node:path";
+import { appliesTo, scopeOf, withScope, type AgentScope } from "../shared/agent-scope";
+import { withOne } from "../shared/reach";
 import { formatCommandLine } from "../shared/command-line";
 import { matchLabel } from "../shared/command-rules";
 import type {
@@ -38,7 +40,7 @@ import type { AskPlace, AsksStore, LinkCompletion, Proposal, Requester } from ".
 import { judgeCommands, type RuleLayers } from "./command-judge";
 import { computeLineDiff, previewOf } from "./diff";
 import type { ShellReader } from "./shell-reading";
-import { type CommandRule, type MachineRulesStore, type PermissionRulesStore, type RuleVerdict, withRule } from "./stores/permission-rules";
+import { type CommandRule, type MachineRulesStore, type PermissionRulesStore, type RuleVerdict, sameRule, withRule } from "./stores/permission-rules";
 import { type MachineWriteScopeStore, writeScopeRows } from "./stores/write-scope";
 import type { CreateTerminalParams } from "./terminal-runner";
 import type { PatchbayAgentId, PatchbayAskId } from "../shared/ids";
@@ -52,9 +54,27 @@ export type GateOutcome = "accepted" | "rejected" | "cancelled" | { denied: read
 
 const ALLOW_ONCE: PermissionOptionView = { optionId: "allow_once", label: "Allow once", kind: "allow_once" };
 const ALLOW_ALWAYS: PermissionOptionView = { optionId: "allow_always", label: "Always allow", kind: "allow_always" };
+const ALLOW_ALWAYS_ALL: PermissionOptionView = { optionId: "allow_always_all", label: "Always for all agents", kind: "allow_always" };
 const REJECT: PermissionOptionView = { optionId: "reject_once", label: "Reject", kind: "reject_once" };
 
-/** What "Always allow" would save for a line that asks: an allow rule for
+/** The agent behind an ask: who its rules are read for, how a card names
+ * it, and whether it is one of several — a grant then says whose it is. */
+export interface AskingAgent {
+  id: PatchbayAgentId;
+  name: string;
+  amongOthers: boolean;
+}
+
+/** A card's "always" answers. The first saves for the asking agent — the
+ * grant is made in its session, on its command — and says so by name
+ * where there are others; the second, offered only then, for every agent.
+ * Narrow before wide. */
+function alwaysOptions(agent: AskingAgent | null): PermissionOptionView[] {
+  if (agent === null || !agent.amongOthers) return [ALLOW_ALWAYS];
+  return [{ ...ALLOW_ALWAYS, label: `Always for ${agent.name}` }, ALLOW_ALWAYS_ALL];
+}
+
+/** What an "always" answer would save for a line that asks: an allow rule for
  * each command no rule answered, exactly as it reads. Null when that can't
  * say it — a part it can't see, a command an ask rule holds (the user's
  * own rule says to ask), or a `*` a pattern would read as a wildcard. */
@@ -129,19 +149,33 @@ export class PermissionBroker {
      * buffer, unsaved edits included, where one holds the file; the disk
      * otherwise. */
     private readonly currentText: (path: string) => Promise<string> = (path) => readFile(path, "utf8"),
+    /** The agent an ask comes from — null where none is known (tests that
+     * don't exercise agents): the rules for every agent then judge it. */
+    private readonly agentOf: (requester: Requester) => AskingAgent | null = () => null,
   ) {}
 
-  /** A run judged by the rules, as the gate judges one — with `draft`
-   * among them, at its layer, when one is given: what a rule would catch
-   * before it is added. */
-  async judgeRun(run: { command: string; args: readonly string[] }, draft?: RuleMatchView): Promise<CommandJudgementView> {
-    const layers = this.layers();
-    if (draft !== undefined) layers[draft.layer] = withRule(layers[draft.layer], draft.rule);
-    return judgeCommands(await this.reader.readRun(run.command, run.args), layers);
+  /** A run judged by the rules, as the gate judges one for `agent` (null:
+   * an agent no rule names) — with `draft` among them, at its layer, when
+   * one is given: what a rule would catch before it is added. */
+  async judgeRun(
+    run: { command: string; args: readonly string[] },
+    draft?: RuleMatchView,
+    agent: PatchbayAgentId | null = null,
+  ): Promise<CommandJudgementView> {
+    const stored = this.stored();
+    if (draft !== undefined) stored[draft.layer] = withRule(stored[draft.layer], draft.rule);
+    return judgeCommands(await this.reader.readRun(run.command, run.args), this.layersFor(stored, agent));
   }
 
-  private layers(): { -readonly [L in keyof RuleLayers]: readonly CommandRule[] } {
+  private stored(): { -readonly [L in keyof RuleLayers]: readonly CommandRule[] } {
     return { workspace: this.rules.get().commandRules, machine: this.machineRules?.get().commandRules ?? [] };
+  }
+
+  /** Each layer as one agent meets it: the rules that apply to it. A rule
+   * for other agents isn't in its layer at all, so the next layer — then
+   * asking — answers. */
+  private layersFor(stored: RuleLayers, agent: PatchbayAgentId | null): RuleLayers {
+    return { workspace: stored.workspace.filter((r) => appliesTo(r, agent)), machine: stored.machine.filter((r) => appliesTo(r, agent)) };
   }
 
   /** Allows only when every path lands inside a place the write scope
@@ -150,7 +184,7 @@ export class PermissionBroker {
    * judged where the write lands, never by the text the agent sent. The
    * mute, or no path named, asks. */
   async evaluateFileWrites(requester: Requester, paths: readonly string[]): Promise<RuleVerdict> {
-    const on = writeScopeRows(this.machineWriteScope?.get() ?? [], this.rules.get().writeScope)
+    const on = writeScopeRows(this.machineWriteScope?.get() ?? [], this.rules.get().writeScope, this.agentOf(requester)?.id ?? null)
       .filter((row) => row.on)
       .map((row) => row.location);
     if (on.some((l) => l.kind === "alwaysAsk") || paths.length === 0) return "ask";
@@ -271,9 +305,26 @@ export class PermissionBroker {
     };
   }
 
-  private async persistAllowRules(added: readonly CommandRule[]): Promise<void> {
+  /** "Always" saved, in this workspace's layer, for `scope`'s agents: a
+   * rule that already allows the same command for other agents takes
+   * these in too — one rule per pattern, its agents widened, never a
+   * grant another agent held replaced. */
+  private async persistAllowRules(added: readonly CommandRule[], scope: AgentScope): Promise<void> {
     const rules = this.rules.get();
-    await this.rules.set({ ...rules, commandRules: added.reduce(withRule, rules.commandRules) });
+    const widened = (rule: CommandRule): CommandRule => {
+      const held = rules.commandRules.find((r) => sameRule(r, rule));
+      if (held === undefined || scope === "auto") return withScope(rule, scope);
+      return withScope(rule, (scope as readonly PatchbayAgentId[]).reduce<AgentScope>((s, id) => withOne(s, id, true), scopeOf(held)));
+    };
+    await this.rules.set({ ...rules, commandRules: added.map(widened).reduce(withRule, rules.commandRules) });
+  }
+
+  /** Whether "always" can be saved for these commands: this workspace's
+   * layer holds one rule per pattern, so a pattern it already answers
+   * otherwise for some other agent can't also allow here. */
+  private savable(added: readonly CommandRule[]): boolean {
+    const held = this.rules.get().commandRules;
+    return added.every((rule) => held.every((r) => !sameRule(r, rule) || r.verdict === "allow"));
   }
 
   /** Patchbay's own mandatory gate on fs/write_text_file. Always produces a
@@ -313,8 +364,10 @@ export class PermissionBroker {
     // The place is held before the line is read: a turn stopped meanwhile
     // answers this command too, before any card was shown.
     const { id, ending } = this.asks.open(requester, "command", { command, cwd: run.cwd, env: Object.keys(run.env) });
-    const judgement = await this.judgeRun(run);
-    const always = judgement.verdict === "ask" ? alwaysRules(judgement) : null;
+    const agent = this.agentOf(requester);
+    const judgement = await this.judgeRun(run, undefined, agent?.id ?? null);
+    const asked = judgement.verdict === "ask" ? alwaysRules(judgement) : null;
+    const always = asked !== null && this.savable(asked) ? asked : null;
     // The card shows either way — a rule changes who answers, never what is
     // visible — and a rule's answer settles it at once, naming the rule.
     const card = {
@@ -326,7 +379,7 @@ export class PermissionBroker {
         ...Object.entries(run.env).map(([name, value]) => ({ label: "env", value: `${name}=${this.redact(value)}` })),
         ...judgementFacts(judgement),
       ],
-      options: always === null ? [ALLOW_ONCE, REJECT] : [ALLOW_ONCE, ALLOW_ALWAYS, REJECT],
+      options: always === null ? [ALLOW_ONCE, REJECT] : [ALLOW_ONCE, ...alwaysOptions(agent), REJECT],
     };
     this.asks.show(id, card, judgement.verdict === "ask" ? undefined : judgement.verdict);
     const ended = await ending;
@@ -337,7 +390,10 @@ export class PermissionBroker {
     }
     if (ended.end !== "user" || ended.choice.kind !== "option") return "cancelled";
     const picked = ended.choice.option.kind;
-    if (picked === "allow_always" && always !== null) await this.persistAllowRules(always);
+    if (picked === "allow_always" && always !== null) {
+      const forAll = agent === null || ended.choice.option.optionId === ALLOW_ALWAYS_ALL.optionId;
+      await this.persistAllowRules(always, forAll ? "auto" : [agent.id]);
+    }
     return picked === "allow_once" || picked === "allow_always" ? "accepted" : "rejected";
   }
 }

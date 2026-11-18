@@ -121,7 +121,7 @@ session's worth of change against.
 | Notice | ⓘ line | something the agent tells you outside its answer: `Agent: title`, the description beneath, plain text; a warning in yellow, an error in red, info quiet. Live only — the agent never replays one, so a reload doesn't bring it back |
 | Tool call | 🛠 card | title + the first reported file as a link (`name:line`, **+N** for the others) + the lines the call's diffs add and remove (**+a −d**) + spinner while running → ✓/✗. The link opens the file at the line the agent named; the ± opens the edit in VS Code's native diff editor — or, when several files carry a diff, the details; the rest of the header toggles details. The count is what the agent reported, whole file or changed regions, each against its own counterpart. Details: one row per file — name, each reported line, folder relative to the workspace, its own **+a −d** (opening its diff) when the call carried one — listed only when it says more than the header; then what the tool produced for the user (the agent's markdown, images, embedded files), then a collapsed **raw** toggle with the wire input and output. A terminal the call runs in shows inside the card, always visible, never as a separate block. The title is one clipped line on a closed card and whole on an open one; hovering it shows it whole either way. Three or more calls in a row fold into one "N tool calls" row, whose hover lists each call's title. Preferences › Tool calls sets, per routed kind, how its calls sit: grouped, ungrouped on one line, ungrouped with the whole title, or uncollapsed |
 | Terminal | ▣ card | command output streams live inside the card; exit status in header — the code, or the signal that ended a killed command; inside a tool card, a terminal patchbay didn't run here says so |
-| Permission | 🛡 card | tool + exact command shown (argument boundaries kept); a terminal card also lists its cwd and each env var the agent sets, handed-out values masked; an agent's own request shows the call it asks about: each change it carries as the diff card shows one, then its files at the lines it named, what it produced, and its raw input behind its toggle, folded on every card, pending or answered — the folded toggle shows the input's first line, so a card whose title names only a tool still shows what is asked; with a change, **Open diff** leads the answers; a request a rule allows shows its card settled ("Allowed (rule)"); a request the agent takes back reads "Withdrawn by the agent"; **Allow once / Always / Reject**; resolution line notes the decision audit; when no visible surface shows the session the same request surfaces as a native notification, whose buttons answer it too, beside **Open**, but only when its one line shows everything the card does — a request with a diff, content, input, or a command's directory and environment offers **Open** alone, and is decided at the card — answered in the card instead, the notification stays until dismissed (VS Code gives no way to close it), and its answers then do nothing |
+| Permission | 🛡 card | tool + exact command shown (argument boundaries kept); a terminal card also lists its cwd and each env var the agent sets, handed-out values masked; an agent's own request shows the call it asks about: each change it carries as the diff card shows one, then its files at the lines it named, what it produced, and its raw input behind its toggle, folded on every card, pending or answered — the folded toggle shows the input's first line, so a card whose title names only a tool still shows what is asked; with a change, **Open diff** leads the answers; a request a rule allows shows its card settled ("Allowed (rule)"); a request the agent takes back reads "Withdrawn by the agent"; **Allow once / Always / Reject** — on patchbay's own Terminal card "always" saves a command rule for the agent that asked, and where the host holds other agents the card names it and offers a second answer for every agent (*Always for Hermes · Always for all agents*); resolution line notes the decision audit; when no visible surface shows the session the same request surfaces as a native notification, whose buttons answer it too, beside **Open**, but only when its one line shows everything the card does — a request with a diff, content, input, or a command's directory and environment offers **Open** alone, and is decided at the card — answered in the card instead, the notification stays until dismissed (VS Code gives no way to close it), and its answers then do nothing |
 | Question | ❓ card | "*Agent* asks:" + the agent's message; one control per field (text, number, Yes/No, choice, multi-choice), declared defaults pre-filled; **Send** stays disabled until required fields are filled and limits hold; **Decline / Cancel** reach the agent as themselves; resolution line records the outcome. The same card serves the MCP `request_user_input` tool. Off screen, a native notification names the question with **Open**, which brings the session up — the answer is given in the card, and the notification stays until dismissed (VS Code gives no way to close it) |
 | Link | 🔗 card | "*Agent* asks you to open a page:" + the agent's message; the host in bold and the full address as plain text (never a clickable link), with a warning line per suspicious trait; **Open in browser / Decline / Cancel** — Open is the consent and opens the system browser; once opened, "waiting for *Agent* to finish" with **Open again** until the agent reports it done ("completed"); a question the agent takes back reads "withdrawn by the agent" |
 | Diff | 📝 card | file + its **+a −d** (the tool card's count, one rendering: only the sides that moved), then the whole change when it fits — every hunk with three unchanged lines each side, at most twelve rows — or, when it doesn't, none of it and a line saying so: a card never shows part of a change; while the proposal is open, **Open diff** (VS Code's own diff editor, current vs proposed, one tab per file, closed when the ask ends) leads the answers; **Accept / Reject before disk is touched**; auto-accept rules change who clicks, not what is visible; off screen, a native notification offers **Open** — the change is decided at the card, never from a line that can't show it |
@@ -505,7 +505,9 @@ import" — with only `Close`.
 ### Edits
 
 Where an agent's file writes — through patchbay's own write gate, or the edit asks it
-sends itself — are approved without asking, in two cards. *File writes — this
+sends itself — are approved without asking, in two cards. Each answer shows the
+agents it is for — "all agents" unless it names some — on a control that changes
+them (#154); an agent an answer doesn't name goes by the next answer down. *File writes — this
 machine* lists every place, each with its switch — *Always ask* first, then
 *Workspace* (every workspace folder, on by default), *Session roots* (the folders
 added to a session — the saved roots it started with and any added since — off by
@@ -562,9 +564,23 @@ follows the kind: `kubectl get *`, `sudo`), verdict — a word offers only deny 
 ask, and takes no spaces — then Add rule; the note under it says what the kind
 matches (a word: one word wherever it sits; a command pattern: one command's whole
 text, an allow trusting the command itself — the cwd and env the agent runs it with
-ride along). Each list is bounded at about eight rows and scrolls within itself: a
-list grows with every "Always allow", and hundreds of rules must not push the card
-after it, or its own add row, out of reach (#103). The placement statement in
+ride along). Each list is bounded at about seven rows and scrolls within itself: a
+list grows with every "always", and hundreds of rules must not push the card
+after it, or its own add row, out of reach (#103).
+
+**Rules for named agents (#154).** A rule applies to every agent unless it names
+the agents it is for. A long list is worked through its filter row, above the
+counts: a search over patterns, and — where agents exist — *all rules*, *for every
+agent*, or *applies to <agent>*: the rules that agent is judged by, every agent's
+among them. The counts and the list follow the filter, which says how many it
+shows ("11 of 341 rules shown") and offers **Agents for these n…**: the one scope
+control (all agents / only these / all except these), then *Apply to n rules* —
+the agents of every rule shown, set at once. A rule's row carries a small agents
+control: silent for a rule for every agent, reading "only Hermes" or "all except
+OpenCode" where it names some, and opening the same control for that rule alone,
+saved as it is chosen. The add row has it too, kept until the rule is added. The
+tester is asked *as* an agent — any other agent, or one by name — and answers
+with that agent's rules. The placement statement in
 green, as on Edits.
 
 ### Audit

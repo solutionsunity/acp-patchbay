@@ -309,12 +309,12 @@ export function settingsState() {
     writeScope: {
       tempDir: "/tmp",
       rows: [
-        { location: { kind: "alwaysAsk" }, machine: false, workspace: null, on: false },
-        { location: { kind: "workspace" }, machine: true, workspace: null, on: true },
-        { location: { kind: "sessionRoots" }, machine: false, workspace: null, on: false },
-        { location: { kind: "temp" }, machine: false, workspace: true, on: true },
-        { location: { kind: "path", path: "/home/me/.hermes" }, machine: true, workspace: null, on: true },
-        { location: { kind: "path", path: "/srv/infra/terraform/environments/production" }, machine: null, workspace: true, on: true },
+        { location: { kind: "alwaysAsk" }, machine: false, machineAgents: "auto", workspace: null, workspaceAgents: "auto", on: false },
+        { location: { kind: "workspace" }, machine: true, machineAgents: "auto", workspace: null, workspaceAgents: "auto", on: true },
+        { location: { kind: "sessionRoots" }, machine: false, machineAgents: "auto", workspace: null, workspaceAgents: "auto", on: false },
+        { location: { kind: "temp" }, machine: false, machineAgents: "auto", workspace: true, workspaceAgents: "auto", on: true },
+        { location: { kind: "path", path: "/home/me/.hermes" }, machine: true, machineAgents: ["aug"], workspace: null, workspaceAgents: "auto", on: true },
+        { location: { kind: "path", path: "/srv/infra/terraform/environments/production" }, machine: null, machineAgents: "auto", workspace: true, workspaceAgents: "auto", on: true },
       ],
     },
     auditTail: [], mcpCatalog: catalogEntries, mcpServers: [], mcpConnects: [], mcpImportReview: null,

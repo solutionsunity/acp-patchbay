@@ -143,8 +143,9 @@ describe("reading a configuration file", () => {
         [STORAGE_KEYS.agents]: [agent("a"), { id: "b" }, "c"],
         [STORAGE_KEYS.lastKnobs]: { a: { mode: "plan" }, b: "plan" },
         [STORAGE_KEYS.preferences]: { soundOnDone: true, knobSource: "sometimes", laterPreference: 1 },
-        [STORAGE_KEYS.machineCommandRules]: [{ pattern: "ls", verdict: "allow" }, { pattern: "x", verdict: "maybe" }],
-        [STORAGE_KEYS.machineWriteScope]: [{ location: { kind: "temp" }, on: true }, { location: { kind: "path", path: "rel" }, on: true }],
+        // as an earlier version's file keys them: read into today's
+        [STORAGE_KEYS.machineCommandRulesBefore092]: [{ pattern: "ls", verdict: "allow" }, { pattern: "x", verdict: "maybe" }],
+        [STORAGE_KEYS.machineWriteScopeBefore092]: [{ location: { kind: "temp" }, on: true }, { location: { kind: "path", path: "rel" }, on: true }],
         [STORAGE_KEYS.savedRootsBefore090]: ["/a", 7],
         "acpPatchbay.laterThing": { x: 1 },
         [STORAGE_KEYS.usedCapabilities]: [],

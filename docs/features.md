@@ -296,7 +296,14 @@ deliverable.
 ### Permissions
 
 - User can define permission rules once — command allowlists, file-write scope —
-  one rule set for everything patchbay gates, never scoped per agent.
+  one rule set for everything patchbay gates. A rule or a write place
+  applies to every agent unless it names the agents it is for — all agents,
+  only these, or all except these, the choice an MCP server's routing gives.
+  On a host running several agents each can be trusted on its own terms: for
+  an agent a rule doesn't name, the rule isn't there, and the next layer,
+  then asking, answers. *(Decided 2026-11-18, #154, superseding "never
+  scoped per agent": one dial for every agent made rules loose enough for
+  one agent's routine work lower the floor for all the others.)*
 - Command rules layer: machine-level defaults (every workspace on this machine)
   with per-workspace rules evaluated first — a workspace can tighten or loosen
   its own floor, and no rule anywhere means ask. Rules answer what the agent

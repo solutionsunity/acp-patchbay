@@ -13,7 +13,9 @@ import {
   type WriteLocation,
   type WriteScopeRowView,
 } from "../../shared/protocol";
+import type { AgentScope } from "../../shared/agent-scope";
 import { Icon } from "../shared/icon";
+import { ScopeChip } from "./rule-scope";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -45,6 +47,7 @@ const dimmed = (muted: boolean, location: WriteLocation) => (muted && location.k
 function WriteScopeCards(props: {
   state: SettingsState;
   onSet(location: WriteLocation, layer: Layer, on: boolean | null): void;
+  onScope(location: WriteLocation, layer: Layer, agents: AgentScope): void;
   onAdd(layer: Layer): void;
 }) {
   const { rows, tempDir } = props.state.writeScope;
@@ -57,6 +60,16 @@ function WriteScopeCards(props: {
   const followed = rows.filter((r) => r.workspace === null);
   const [picked, setPicked] = useState("");
   const toAdd: WriteScopeRowView | undefined = followed.find((r) => writeLocationKey(r.location) === picked) ?? followed[0];
+  // The agents a layer's answer is for — every agent unless it names some.
+  const scopeFor = (row: WriteScopeRowView, layer: Layer) =>
+    props.state.agents.length > 0 && (
+      <ScopeChip
+        agents={props.state.agents}
+        scope={layer === "machine" ? row.machineAgents : row.workspaceAgents}
+        of={`${writeLocationLabel(row.location)} — this ${layer}`}
+        onChange={(agents) => props.onScope(row.location, layer, agents)}
+      />
+    );
   const switchFor = (row: WriteScopeRowView, layer: Layer, on: boolean) => (
     <Switch
       checked={on}
@@ -81,6 +94,7 @@ function WriteScopeCards(props: {
                 {row.workspace ? "on" : "off"} here
               </span>
             )}
+            {scopeFor(row, "machine")}
             {switchFor(row, "machine", row.machine === true)}
             {row.location.kind === "path" ? (
               <span
@@ -110,7 +124,8 @@ function WriteScopeCards(props: {
           — links and <code>..</code> followed — and surfaces as a diff either way: auto-approve
           only changes who clicks, not what is visible. Approved places also answer an agent&apos;s
           own edit asks for you, over the mode you picked for the session; anywhere else, each
-          agent&apos;s mode decides when you are asked.
+          agent&apos;s mode decides when you are asked. An answer applies to every agent unless it
+          names the agents it is for: any other agent goes by the next answer down.
         </div>
       </div>
 
@@ -127,6 +142,7 @@ function WriteScopeCards(props: {
             <div className={`rule ${dimmed(muted, row.location)}`} key={writeLocationKey(row.location)}>
               <Place location={row.location} tempDir={tempDir} />
               <span className="text-[11px] text-muted-foreground">machine: {row.machine ? "on" : "off"}</span>
+              {scopeFor(row, "workspace")}
               {switchFor(row, "workspace", row.workspace === true)}
               <span
                 className="e"
@@ -171,6 +187,7 @@ function WriteScopeCards(props: {
           {ownFolders.map((row) => (
             <div className={`rule ${dimmed(muted, row.location)}`} key={writeLocationKey(row.location)}>
               <Place location={row.location} tempDir={tempDir} />
+              {scopeFor(row, "workspace")}
               {switchFor(row, "workspace", row.workspace === true)}
               <span
                 className="e"
@@ -198,6 +215,7 @@ function WriteScopeCards(props: {
 export function EditsSection(props: {
   state: SettingsState;
   onSetWriteLocation(location: WriteLocation, layer: Layer, on: boolean | null): void;
+  onSetWriteLocationScope(location: WriteLocation, layer: Layer, agents: AgentScope): void;
   onAddWriteFolder(layer: Layer): void;
 }) {
   return (
@@ -214,6 +232,7 @@ export function EditsSection(props: {
       <WriteScopeCards
         state={props.state}
         onSet={props.onSetWriteLocation}
+        onScope={props.onSetWriteLocationScope}
         onAdd={props.onAddWriteFolder}
       />
 
