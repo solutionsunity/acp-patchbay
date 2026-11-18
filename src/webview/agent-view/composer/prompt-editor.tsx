@@ -399,10 +399,20 @@ function EditorCore(props: PromptEditorProps & { history: HistoryState }) {
   // (the chip goes nowhere at send), and an undo brings the token back to
   // a chip still staged. The draft is saved with the token before the chip
   // is told — a chip marked placed with no token anywhere would be sent
-  // nowhere, unseen. Declared after the draft's own effects: a session's
-  // draft is in the box before its chips are looked for there.
+  // nowhere, unseen. Only the box in the view the user is in gives it: a
+  // session open in two views would otherwise get the token twice, once in
+  // each box, and a view nobody is in gives it when the user comes to it
+  // (`focused` changes). Declared after the draft's own effects: a
+  // session's draft is in the box before its chips are looked for there.
+  const [focused, setFocused] = useState(0);
+  useEffect(() => {
+    const came = () => setFocused((n) => n + 1);
+    window.addEventListener("focus", came);
+    return () => window.removeEventListener("focus", came);
+  }, []);
   useEffect(() => {
     if (loadedFor.current !== props.patchbaySessionId || props.patchbaySessionId === "") return;
+    if (!document.hasFocus()) return;
     const unplaced = props.chips.filter((c) => c.placed !== true);
     if (unplaced.length === 0) return;
     let inserted = false;
@@ -423,8 +433,8 @@ function EditorCore(props: PromptEditorProps & { history: HistoryState }) {
     flushDraft();
     send({ kind: "markChipsPlaced", patchbaySessionId: props.patchbaySessionId, chipIds: unplaced.map((c) => c.id) });
     // the words go on from the token, where the view is the one in use
-    if (inserted && document.hasFocus()) takeKeyboard(editor);
-  }, [editor, props.chips, props.patchbaySessionId]);
+    if (inserted) takeKeyboard(editor);
+  }, [editor, props.chips, props.patchbaySessionId, focused]);
 
   // Trigger tracking: recomputed on every state/selection change.
   useEffect(

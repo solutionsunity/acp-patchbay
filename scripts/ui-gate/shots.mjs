@@ -2028,6 +2028,29 @@ for (const theme of Object.keys(THEMES)) {
   await p.close();
 }
 
+// ── only the view the user is in gives an arriving attachment its token: a
+// session open in two views gets it once, and a view without focus gives it
+// when focus comes. Theme-independent. ──
+{
+  const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 700 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".prompt-editor");
+  const away = await p.evaluate(async () => {
+    const own = Document.prototype.hasFocus;
+    Document.prototype.hasFocus = () => false;
+    window.__patch([{ kind: "contextChipAdded", patchbaySessionId: "s1", chip: { id: "away", kind: "attachment", label: "File: away.txt", name: "away.txt", path: "/home/u/away.txt" } }]);
+    await new Promise((r) => setTimeout(r, 300));
+    const tokens = document.querySelectorAll(".input-shell .chip-token").length;
+    const marked = window.__actions.some((a) => a.kind === "markChipsPlaced");
+    Document.prototype.hasFocus = own;
+    window.dispatchEvent(new FocusEvent("focus"));
+    await new Promise((r) => setTimeout(r, 300));
+    return { tokens, marked, after: document.querySelectorAll(".input-shell .chip-token").length };
+  });
+  check(`a view without focus gives no token, and gives it when focus comes (${JSON.stringify(away)})`, away.tokens === 0 && !away.marked && away.after === 1);
+  await p.close();
+}
+
 // ── a chip a box already gave its token is not given another: a view opened
 // on a session whose token was deleted leaves the box as the user left it
 // (the narrow shot above is the other half: one never placed gets its token).
