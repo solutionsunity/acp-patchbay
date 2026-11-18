@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **An Upgrade decides on a registry read made after you click.** Starting
+  a chat reads the registry in the background, and an Upgrade clicked while
+  that read was still on its way took its answer — the registry from
+  before the click — so it could ask to stop the agent for a version the
+  registry no longer listed. A Refresh, Add, Upgrade or Reset now waits for
+  a read that leaves after it; update notices still share the read on its
+  way.
 - **Pasting a folder says it wasn't attached.** A folder copied in the file
   manager and pasted into the composer attached nothing and said nothing,
   and any files pasted with it were lost too. It is now named in a notice

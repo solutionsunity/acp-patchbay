@@ -235,6 +235,8 @@ export class AcpRegistryStore {
    * ledger behind `AcpRegistryData.icons`; persisted in the one cache file. */
   private iconCache: Record<string, { version: string; dataUri: string }> = {};
   private inflight: Promise<RegistryRead> | null = null;
+  /** The read an act waits for: the one after the read on its way. */
+  private following: Promise<RegistryRead> | null = null;
   /** Held in memory only: after a restart the window's first read says
    * again whether the registry can be reached. */
   private failure: RegistryFailureView | null = null;
@@ -276,18 +278,31 @@ export class AcpRegistryStore {
   }
 
   /** The one way to the registry: reads it now, at `moment` — the log line
-   * names it — and what it held becomes what it answered. Overlapping
-   * moments share one read (named by the first). An optional moment whose
-   * switch is off reads nothing: the copy stays as last confirmed. */
+   * names it — and what it held becomes what it answered. A moment that
+   * only refreshes what is shown (one with a switch) shares the read on
+   * its way. A user's act (an Upgrade, an Add, a Refresh) does not: a read
+   * that left before the act holds the registry from before it, and
+   * deciding on it would let older evidence stand for newer — so the act
+   * waits for the read on its way to end and takes the one after it, which
+   * the acts that come meanwhile share. An optional moment whose switch is
+   * off reads nothing: the copy stays as last confirmed. */
   read(moment: RegistryReadMoment): Promise<RegistryRead> {
-    const why = classOf(moment);
-    if (!switchedOn(why, this.preferences())) {
+    if (!switchedOn(classOf(moment), this.preferences())) {
       return Promise.resolve({ ok: false, at: new Date().toISOString(), reason: "switched off in Preferences" });
     }
-    if (this.inflight === null) {
-      this.inflight = this.readOnce(REGISTRY_READS[moment].said, why);
-      this.onChanged("reading");
-    }
+    if (this.inflight === null) return this.start(moment);
+    if ("switch" in REGISTRY_READS[moment]) return this.inflight;
+    this.following ??= this.inflight.then(() => {
+      this.following = null;
+      // a read started since the one awaited left after the act too
+      return this.inflight ?? this.start(moment);
+    });
+    return this.following;
+  }
+
+  private start(moment: RegistryReadMoment): Promise<RegistryRead> {
+    this.inflight = this.readOnce(REGISTRY_READS[moment].said, classOf(moment));
+    this.onChanged("reading");
     return this.inflight;
   }
 

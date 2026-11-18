@@ -177,14 +177,42 @@ describe("AcpRegistryStore", () => {
     vi.unstubAllGlobals();
   });
 
-  it("overlapping triggers share one read", async () => {
+  it("refreshes of what is shown share the read on its way", async () => {
     await fresh();
     const fetchSpy = vi.fn(async () => json(payload));
     vi.stubGlobal("fetch", fetchSpy);
     const store = new AcpRegistryStore(dir, () => {}, () => DEFAULT_PREFERENCES);
-    const [a, b] = await Promise.all([store.read("manual"), store.read("manual")]);
+    const [a, b] = await Promise.all([store.read("new-session"), store.read("settings")]);
     expect(a).toBe(b);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // An Upgrade joined a read a new session had started, answered with the
+  // registry from before the click, and asked to stop an agent for a
+  // version the registry no longer listed.
+  it("an act never takes a read that left before it — it takes the next one, which acts meanwhile share", async () => {
+    await fresh();
+    const listing = (version: string) => ({ ...payload, agents: [{ ...payload.agents[0]!, version }] });
+    let served = "2.0.0";
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const fetchSpy = vi.fn(async () => {
+      const version = served; // what the registry holds as the request leaves
+      if (fetchSpy.mock.calls.length === 1) await gate;
+      return json(listing(version));
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    const store = new AcpRegistryStore(dir, () => {}, () => DEFAULT_PREFERENCES);
+    const background = store.read("new-session"); // leaves now, holding 2.0.0
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    served = "0.9.0"; // the registry moves; then the user acts, twice
+    const upgrade = store.read("upgrade");
+    const refresh = store.read("manual");
+    release();
+    await background;
+    expect(await upgrade).toBe(await refresh);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(store.current().agents.map((a) => a.version)).toEqual(["0.9.0"]);
   });
 
   it("asks only-if-changed with its validator; an unchanged registry keeps its data and confirms it current", async () => {
@@ -248,7 +276,7 @@ describe("AcpRegistryStore", () => {
     const seen: [string, boolean][] = [];
     const store: AcpRegistryStore = new AcpRegistryStore(dir, (change) => seen.push([change, store.reading()]), () => DEFAULT_PREFERENCES);
     const first = store.read("startup");
-    const joined = store.read("manual"); // a click while a read is on its way joins it
+    const joined = store.read("settings"); // a refresh of what is shown joins the read on its way
     expect(store.reading()).toBe(true);
     await vi.waitFor(() => expect(release).toBeDefined());
     release(json(payload));

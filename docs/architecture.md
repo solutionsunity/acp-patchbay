@@ -1555,7 +1555,13 @@ mechanism — MCP servers routed to agents:
   first read says it again — and moves only that line: no update notice
   rides it. A moment switched off reads nothing and so fails nothing. A
   read on its way is the store's fact too, told when it starts and cleared
-  before its outcome is: Refresh spins for any read, a click joins it. The disk cache holds
+  before its outcome is: Refresh spins for any read. A moment for update
+  notices joins the read on its way; a user's act never does — a read that
+  left before the act holds the registry from before it — and waits for
+  the read after, which acts arriving meanwhile share *(decided 2026-11-18,
+  superseding "a click joins it": an Upgrade joined a new session's read,
+  and asked to stop an agent for a version the registry no longer
+  listed)*. The disk cache holds
   the registry *as served*, never patchbay's parse of it: a build that
   reads more of the format sees everything, where a parsed copy would keep
   what an older build dropped. Each agent entry is read on its own (many

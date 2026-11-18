@@ -633,16 +633,28 @@ describe("agents store", () => {
   });
 
   // The chip was shown from an older read: the entry moved back, or down to
-  // the pin, before the click.
+  // the pin, before the click. The read the new chat starts is still on its
+  // way when the click comes, holding the registry from before it — the
+  // Upgrade must not take it (it once did, when the load made that read
+  // slow, and asked to stop the agent for 2.0.0).
   it("an Upgrade whose fresh read holds nothing newer asks nothing and leaves the agent as it is", async () => {
     const user = asking();
     const h = harness({ ports: { confirm: user.confirm } });
     await upgradable(h);
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    const before = registryFile([{ id: "reg", version: "2.0.0" }]);
+    vi.stubGlobal("fetch", async () => {
+      await held;
+      return new Response(JSON.stringify(before), { headers: { "content-type": "application/json" } });
+    });
     await openConversation(h, "reg" as PatchbayAgentId);
     expect(h.row("reg" as PatchbayAgentId)?.update).toEqual({ from: "1.0.0", to: "2.0.0" });
 
     serveRegistry({ id: "reg", version: "0.9.0" });
-    await h.gates.upgrade("reg" as PatchbayAgentId);
+    const first = h.gates.upgrade("reg" as PatchbayAgentId);
+    release(); // the chat's read lands, after the click
+    await first;
     serveRegistry({ id: "reg", version: "1.0.0" });
     await h.gates.upgrade("reg" as PatchbayAgentId);
 
