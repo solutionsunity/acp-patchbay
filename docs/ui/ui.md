@@ -90,7 +90,7 @@ and shown at most three lines long; its words take the chat to that prompt
 **Copy** takes its readable form; **Reuse** puts it back in the composer —
 words, line breaks and `@file` mentions as tokens, the cursor after them,
 **Undo** taking them out again — and stages its images and attached files
-again, their tokens after the words. Reuse lands only in an empty composer, as taking a held
+again, each token where it was among the words. Reuse lands only in an empty composer, as taking a held
 prompt back does, and says so on the button rather than hiding; what can't
 come back is named in a warning: a selection or problems snapshot was of
 its moment (take a fresh one), a file no longer where it was is gone.

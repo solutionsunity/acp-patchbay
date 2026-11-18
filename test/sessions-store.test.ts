@@ -4156,17 +4156,25 @@ describe("a session's files live with the session", () => {
     expect(h.state().contextChips[patchbaySessionId] ?? []).toEqual([]);
     const prompt = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "user")!;
 
-    const missed = await h.sessions.restagePromptFiles(patchbaySessionId, prompt.id);
+    // the ids the composer placed the tokens under, one per image or file in
+    // order — the gone file's included, so the ones after it keep theirs
+    const placed = ["chip-reuse-img", "chip-reuse-file", "chip-reuse-gone"];
+    const missed = await h.sessions.restagePromptFiles(patchbaySessionId, prompt.id, placed);
     expect(missed).toEqual([`${basename(gonePath)}, no longer at ${gonePath}`, 'the snapshot "a.ts:1-2" — take a fresh one']);
     const staged = h.state().contextChips[patchbaySessionId]!;
     expect(staged.map((c) => [c.kind, c.label])).toEqual([
       ["image", "Image (image/png)"],
       ["attachment", `File: ${basename(notes)}`],
     ]);
-    // fresh chips — the sent ones are history, never re-pointed
-    expect(staged.every((c) => c.id.startsWith("chip-") && !c.id.startsWith("chip-f59a"))).toBe(true);
+    // fresh chips under the placed ids — the sent ones are history, never re-pointed
+    expect(staged.map((c) => c.id)).toEqual(["chip-reuse-img", "chip-reuse-file"]);
     expect(staged[0]).toMatchObject({ content: PNG });
-    expect(await h.sessions.restagePromptFiles(patchbaySessionId, "no-such-block")).toEqual([]);
+    // an id that isn't a fresh chip id — taken already, or not one at all — is replaced
+    await h.sessions.restagePromptFiles(patchbaySessionId, prompt.id, ["chip-reuse-img", "not a chip"]);
+    const again = h.state().contextChips[patchbaySessionId]!.slice(2).map((c) => c.id);
+    expect(again).toHaveLength(2);
+    expect(again.every((id) => id.startsWith("chip-") && id !== "chip-reuse-img")).toBe(true);
+    expect(await h.sessions.restagePromptFiles(patchbaySessionId, "no-such-block", [])).toEqual([]);
     await h.pool.stop("f59a" as PatchbayAgentId);
   });
 

@@ -838,7 +838,7 @@ export class OrchestratorHost {
         break;
       case "restagePromptFiles":
         {
-          const missed = await this.orchestrator.sessions.restagePromptFiles(action.patchbaySessionId, action.blockId);
+          const missed = await this.orchestrator.sessions.restagePromptFiles(action.patchbaySessionId, action.blockId, action.chipIds);
           if (missed.length > 0) vscode.window.showWarningMessage(`Reused without ${missed.join("; ")}.`);
         }
         break;

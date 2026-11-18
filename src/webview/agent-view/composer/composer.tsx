@@ -113,8 +113,8 @@ export function Composer(props: {
   };
   // The words land in the box (the editor's own); what rode beside them is
   // the host's to stage again — only once the words did land.
-  const onReused = (prompt: UserBlock, landed: boolean): void => {
-    if (landed) send({ kind: "restagePromptFiles", patchbaySessionId, blockId: prompt.id });
+  const onReused = (prompt: UserBlock, landed: boolean, chipIds: readonly string[]): void => {
+    if (landed) send({ kind: "restagePromptFiles", patchbaySessionId, blockId: prompt.id, chipIds });
     else props.onNotice(COMPOSER_HAS_TEXT);
   };
 

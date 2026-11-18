@@ -2,9 +2,10 @@
 // Copyright 2026 Solutions Unity
 
 // A sent prompt read back into the composer's own vocabulary — its words,
-// line breaks and `@file` mentions, the three things the prompt box holds.
-// What was attached (images, files, snapshots) is staged again by the
-// host, whose chips the box gives their tokens.
+// line breaks, `@file` mentions, and, where it is asked for, a token at the
+// place of each image and attached file, under an id the host stages that
+// attachment again with. A snapshot (selection, problems) was of its
+// moment and is not brought back.
 import type { UserPart } from "../../../shared/protocol";
 import { basename, filePathOf } from "../../shared/path";
 
@@ -19,12 +20,15 @@ export type PromptPiece =
   | { kind: "text"; text: string }
   | { kind: "break" }
   /** Spelled as the `@` picker spells a file it inserts. */
-  | { kind: "mention"; path: string; label: string };
+  | { kind: "mention"; path: string; label: string }
+  /** An attachment's place, spelled as the box spells its chip's token. */
+  | { kind: "chip"; id: string; label: string; title: string };
 
 /** The prompt's words in order. A mention of a local file is a mention
  * again; one of anything else is its address, as text — the box mentions
- * files only. */
-export function promptPieces(parts: readonly UserPart[]): PromptPiece[] {
+ * files only. Given `chipId`, each image and attached file is a chip piece
+ * under the id it mints, in the order they come. */
+export function promptPieces(parts: readonly UserPart[], chipId?: () => string): PromptPiece[] {
   const pieces: PromptPiece[] = [];
   const text = (t: string) =>
     t.split("\n").forEach((line, i) => {
@@ -37,6 +41,8 @@ export function promptPieces(parts: readonly UserPart[]): PromptPiece[] {
     else pieces.push({ kind: "mention", path, label: `@${basename(path)}` });
   };
   for (const part of parts) {
+    if (chipId !== undefined && part.kind === "attachment") pieces.push({ kind: "chip", id: chipId(), label: `@${part.name}`, title: part.path });
+    if (chipId !== undefined && part.kind === "image") pieces.push({ kind: "chip", id: chipId(), label: "@image", title: "" });
     if (part.kind === "mention") mention(part.uri, part.uri);
     if (part.kind !== "text") continue;
     let last = 0;

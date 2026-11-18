@@ -199,8 +199,9 @@ export type Action =
   | { kind: "reclaimQueuedPrompt"; patchbaySessionId: PatchbaySessionId; promptId: string }
   /** Stage a sent prompt's files again (the prompts chip's Reuse, once its
    * words are back in the composer): images and attached files come back
-   * as chips; what can't is said. */
-  | { kind: "restagePromptFiles"; patchbaySessionId: PatchbaySessionId; blockId: string }
+   * staged under `chipIds` — the ids the composer placed their tokens
+   * under, in the prompt's order; what can't is said. */
+  | { kind: "restagePromptFiles"; patchbaySessionId: PatchbaySessionId; blockId: string; chipIds: readonly string[] }
   /** Debounced durable save of the composer's per-session draft. */
   | { kind: "setSessionDraft"; patchbaySessionId: PatchbaySessionId; draft: string }
   /** A Settings card's knob editor expanded (open) or collapsed — the

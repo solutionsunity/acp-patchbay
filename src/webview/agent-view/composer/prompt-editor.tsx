@@ -86,8 +86,10 @@ export interface PromptEditorProps {
   /** A sent prompt to put back in the box — a new `seq` is the request. It
    * lands only in an empty box, as one undoable edit. */
   reuse: { seq: number; prompt: UserBlock } | null;
-  /** Whether a reuse request landed. */
-  onReused(prompt: UserBlock, landed: boolean): void;
+  /** Whether a reuse request landed — and, where it did, the ids its
+   * attachments' tokens were placed under, in order, for the host to stage
+   * them with. */
+  onReused(prompt: UserBlock, landed: boolean, chipIds: readonly string[]): void;
   commands: readonly AvailableCommand[];
   openEditors: readonly OpenEditorView[];
   workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
@@ -334,22 +336,29 @@ function EditorCore(props: PromptEditorProps & { history: HistoryState }) {
     seenReuse.current = props.reuse.seq;
     const { prompt } = props.reuse;
     if (serialize() !== "") {
-      props.onReused(prompt, false);
+      props.onReused(prompt, false, []);
       return;
     }
+    const chipIds: string[] = [];
     if (props.history.current === null) props.history.current = { editor, editorState: editor.getEditorState() };
     editor.update(() => {
       const paragraph = $createParagraphNode();
-      for (const piece of promptPieces(prompt.parts)) {
+      const mint = () => {
+        const id = `chip-${crypto.randomUUID()}`;
+        chipIds.push(id);
+        return id;
+      };
+      for (const piece of promptPieces(prompt.parts, mint)) {
         if (piece.kind === "text") paragraph.append($createTextNode(piece.text));
         else if (piece.kind === "break") paragraph.append($createLineBreakNode());
-        else paragraph.append($createMentionNode(piece.path, piece.label));
+        else if (piece.kind === "mention") paragraph.append($createMentionNode(piece.path, piece.label));
+        else paragraph.append($createChipNode(piece.id, piece.label, piece.title));
       }
       $getRoot().clear().append(paragraph);
       paragraph.selectEnd();
     });
     takeKeyboard(editor);
-    props.onReused(prompt, true);
+    props.onReused(prompt, true, chipIds);
   }, [editor, props.reuse]);
 
   // The sibling-view seam (a session open in the sidebar AND a detached
@@ -560,6 +569,9 @@ function EditorCore(props: PromptEditorProps & { history: HistoryState }) {
    * text) plus positional `parts` where a mention node becomes a fileRef
    * and a chip node names its chip. */
   const submit = () => {
+    // A token whose chip isn't staged — one Reuse placed for a file that is
+    // gone — is sent as the words it reads.
+    const staged = new Set(props.chips.map((c) => c.id));
     const { text, parts } = editor.getEditorState().read(() => {
       const collected: PromptPart[] = [];
       let buffer = "";
@@ -581,7 +593,7 @@ function EditorCore(props: PromptEditorProps & { history: HistoryState }) {
             if ($isMentionNode(child)) {
               flush();
               collected.push({ kind: "fileRef", path: child.getPath() });
-            } else if ($isChipNode(child)) {
+            } else if ($isChipNode(child) && staged.has(child.getChipId())) {
               flush();
               collected.push({ kind: "chip", id: child.getChipId() });
             } else if ($isLineBreakNode(child)) {

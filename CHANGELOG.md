@@ -33,7 +33,8 @@
   beside the words about them. They used to be chips above the input, all
   sent ahead of the text. Backspace takes a token out of the prompt, Undo
   brings it back, cut and paste move it. A prompt held while a turn runs
-  keeps its attachments in place. How an agent treats what it receives is
+  keeps its attachments in place, and reusing a sent prompt puts each
+  image and file back where it was. How an agent treats what it receives is
   its own: Claude keeps every attachment in place; OpenCode keeps
   selections in place and gathers links and images apart from the text.
   (#163)

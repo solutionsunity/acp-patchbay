@@ -1742,21 +1742,33 @@ export class SessionsStore {
    * the copy the transcript shows, an attached file from its path. What
    * can't come back is returned, one phrase each: a snapshot (selection,
    * problems) was of its moment and is taken afresh, never re-sent from the
-   * transcript's bounded copy; a file that's gone is gone. */
-  async restagePromptFiles(patchbaySessionId: PatchbaySessionId, blockId: string): Promise<string[]> {
+   * transcript's bounded copy; a file that's gone is gone. Each image and
+   * file comes back under the id the composer placed its token under —
+   * `chipIds`, in the prompt's order, one per image or file, whether it
+   * comes back or not; an id that isn't a fresh chip id is replaced. */
+  async restagePromptFiles(patchbaySessionId: PatchbaySessionId, blockId: string, chipIds: readonly string[]): Promise<string[]> {
     const prompt = (this.hooks.currentTranscript?.(patchbaySessionId) ?? []).find(
       (b): b is UserBlock => b.kind === "user" && b.id === blockId,
     );
     if (prompt === undefined || !this.known.has(patchbaySessionId)) return [];
     const missed: string[] = [];
+    const taken = new Set((this.saved(patchbaySessionId).chips ?? []).map((c) => c.id));
+    const ids = [...chipIds];
+    const placedId = (): string => {
+      const id = ids.shift();
+      if (id === undefined || !/^chip-[\w-]+$/.test(id) || taken.has(id)) return chipId();
+      taken.add(id);
+      return id;
+    };
     for (const part of prompt.parts) {
       switch (part.kind) {
         case "image": {
+          const id = placedId();
           const content = part.file === undefined ? null : await readBase64(join(ATTACHMENTS_DIR, part.file));
           if (content === null) missed.push("an image patchbay holds no copy of");
           else {
             await this.addContext(patchbaySessionId, {
-              id: chipId(),
+              id,
               kind: "image",
               label: `Image (${part.mimeType})`,
               content,
@@ -1765,10 +1777,11 @@ export class SessionsStore {
           }
           break;
         }
-        case "attachment":
+        case "attachment": {
+          const id = placedId();
           if (await access(part.path).then(() => true, () => false)) {
             await this.addContext(patchbaySessionId, {
-              id: chipId(),
+              id,
               kind: "attachment",
               label: fileChipLabel(part.name),
               name: part.name,
@@ -1776,6 +1789,7 @@ export class SessionsStore {
             });
           } else missed.push(`${part.name}, no longer at ${part.path}`);
           break;
+        }
         case "context":
           missed.push(`the snapshot "${part.label}" — take a fresh one`);
           break;

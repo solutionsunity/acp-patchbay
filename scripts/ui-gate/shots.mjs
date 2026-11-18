@@ -669,10 +669,15 @@ for (const theme of Object.keys(THEMES)) {
   await p.waitForSelector(".prompts-panel", { state: "detached", timeout: 3000 });
   await p.waitForSelector(".prompt-editor .mention-token", { timeout: 3000 });
   const reused = await p.$eval(".prompt-editor", (el) => el.textContent);
-  check(`[${theme}] Reuse puts the words back, the mention a token again ("${reused}")`, reused === "find foo in @api.ts and fix it");
+  check(`[${theme}] Reuse puts the words back, the mention a token again, the attached file's token at its place ("${reused}")`, reused === "find foo in @api.ts and fix it@notes.md");
   check(
-    `[${theme}] Reuse asks the host to stage the prompt's files again`,
-    await p.waitForFunction(() => window.__actions.some((a) => a.kind === "restagePromptFiles" && a.blockId === "u1" && a.patchbaySessionId === "s1"), null, { timeout: 3000 }).then(() => true, () => false),
+    `[${theme}] Reuse asks the host to stage the prompt's files again, under the ids their tokens were placed with`,
+    await p
+      .waitForFunction(() => {
+        const token = document.querySelector(".prompt-editor .chip-token")?.dataset.chipId;
+        return window.__actions.some((a) => a.kind === "restagePromptFiles" && a.blockId === "u1" && a.patchbaySessionId === "s1" && a.chipIds.length === 1 && a.chipIds[0] === token);
+      }, null, { timeout: 3000 })
+      .then(() => true, () => false),
   );
   check(`[${theme}] Reuse hands the composer the keyboard`, await p.waitForFunction(() => document.activeElement?.closest(".prompt-editor") !== null, null, { timeout: 3000 }).then(() => true, () => false));
   await p.screenshot({ path: `${OUT}/prompt-reused-${theme}.png` });
