@@ -49,7 +49,7 @@ export const ACTION_FAILURE: Readonly<Record<Action["kind"], string | null>> = {
   switchSession: "The session didn't open",
   closeSession: "The session wasn't closed",
   reloadSession: "The session wasn't reloaded",
-  detachSession: "The session didn't open in its own window",
+  detachSession: "The session didn't open apart from the sidebar",
   copySessionId: "The session id wasn't copied",
   sendHeldPrompt: "The held prompt wasn't sent",
   removeQueuedPrompt: "The held prompt wasn't removed",

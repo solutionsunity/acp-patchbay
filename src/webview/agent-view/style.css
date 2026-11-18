@@ -1535,6 +1535,49 @@ body {
   align-items: center;
 }
 
+/* A session's row measures itself: the two open-apart icons show while it
+ * is wide enough to keep its title beside them, and leave a narrow one to
+ * the title and the menu, which holds both. By the row's width, never on
+ * hover — shown, they are there for the keyboard too. */
+.s-row,
+.sess-row {
+  container-type: inline-size;
+}
+
+.open-apart {
+  display: none;
+  gap: 2px;
+  align-items: center;
+}
+
+@container (min-width: 340px) {
+  .open-apart {
+    display: inline-flex;
+  }
+}
+
+/* The drawer's filter and what it shows, above the rows. */
+.drawer .s-filter {
+  display: flex;
+  gap: 6px;
+  padding: 0 8px 6px;
+}
+
+.drawer .s-shown {
+  padding: 0 8px 6px;
+  font-size: 11px;
+  color: var(--pb-text-faint);
+}
+
+/* Where a conversation holds the text searched for: one line, cut. */
+.s-row .found {
+  font-size: 11px;
+  color: var(--pb-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .live-dot {
   width: 6px;
   height: 6px;

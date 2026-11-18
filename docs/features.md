@@ -108,6 +108,18 @@ deliverable.
 - Renaming lives in the agent, not patchbay: ACP has no rename request, so
   agents with an in-chat `/rename` round-trip the title through their own
   `session/list` / `session_info_update` — which patchbay always honors.
+- A session opens apart from the sidebar, in an editor tab or in a window of
+  its own, from its row or its menu — several at once as tabs, side by
+  side, or across screens. The sidebar stays one view with one switcher:
+  no strip of sessions inside it *(decided 2026-10-16, built 2026-11-18,
+  #133 — a strip there would be a second switcher in the narrowest
+  surface)*.
+- User can find a session in the Sessions drawer by a word of its title,
+  narrow the list to one agent's, and — for the sessions loaded in this
+  window, whose conversation is here — by a word of what was said. Each
+  row says whether it is loaded, and the drawer how many are: a search of
+  conversations reaches exactly those, since patchbay keeps no transcripts
+  (#98).
 - A session can be forked from its menu where the agent offers it
   (`session/fork`): a new session carrying the original's history opens, and
   the original stays as it is. Forking at an earlier turn, or editing a sent
@@ -362,7 +374,10 @@ deliverable.
 - Status bar shows the active session, connection health, and usage when available;
   clicking it jumps to the session.
 - Command palette covers every core action: new session, switch session, connect
-  agent, open settings.
+  agent, open settings. Switch Session lists what the drawer's rows say —
+  each session's mark, agent and last activity — with the session the user
+  was in before first, so one answer flips back, and opens one in a tab or
+  a window from its row (#133).
 - Patchbay speaks for its own version, without asking the network: a notice
   with one action, once per window. A fresh install points to adding the
   first agent; an update offers what's new, from the changelog it ships

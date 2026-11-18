@@ -74,11 +74,14 @@ export function activate(context: vscode.ExtensionContext): {
       if (!orchestrator.preferences.get().detachWindows) return;
       void agentPanelHost.openMain().catch(host.warnCatch("detach agent view", "The agent view didn't open in its own window"));
     }),
-    vscode.commands.registerCommand("acpPatchbay.detachSession", (patchbaySessionId: PatchbaySessionId) => {
-      if (!orchestrator.preferences.get().detachWindows) return;
+    vscode.commands.registerCommand("acpPatchbay.detachSession", (patchbaySessionId: PatchbaySessionId, into: "tab" | "window") => {
+      // A window is what the preference switches; a tab is an editor like any other.
+      if (into === "window" && !orchestrator.preferences.get().detachWindows) return;
       const session = orchestrator.agentView.current.sessions.find((s) => s.id === patchbaySessionId);
       if (session === undefined) return;
-      void agentPanelHost.openPinned(session.id, session.title).catch(host.warnCatch(`detach session ${session.id}`, "The session didn't open in its own window"));
+      void agentPanelHost
+        .openPinned(session.id, session.title, into)
+        .catch(host.warnCatch(`detach session ${session.id}`, `The session didn't open in its own ${into}`));
     }),
     vscode.commands.registerCommand("acpPatchbay.newSession", () => host.newSessionCommand()),
     vscode.commands.registerCommand("acpPatchbay.switchSession", () => host.switchSessionCommand()),

@@ -19,8 +19,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-/** Ellipsis menu shared by the session row and sessions-drawer rows.
- * `detach` mirrors the detachWindows preference — off hides the entry point.
+/** A session's actions, shared by the session row and sessions-drawer
+ * rows: the two ways to open it apart from the sidebar — a tab, a window —
+ * as icons beside the ellipsis menu while the row has the room (a narrow
+ * row keeps its title, and the menu, which always holds both), then the
+ * menu. `detach` mirrors the detachWindows preference — off hides the
+ * window, never the tab: a tab is an editor like any other.
  * `open`/`onOpenChange` are optional: omitted, Radix manages its own state
  * (fine for the lone active-session row); a list of rows (SessionsDrawer)
  * must pass them, controlled from one shared "which id is open" state — two
@@ -49,48 +53,58 @@ export function SessionActions({
 }) {
   const send = useActions();
   const offers = sessionOffers(agent?.capabilities);
+  const openApart = (into: "tab" | "window") => send({ kind: "detachSession", patchbaySessionId: session.id, into });
   return (
-    <DropdownMenu open={open} onOpenChange={onOpenChange}>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-6 w-6" title="Session actions" aria-label="Session actions">
-          <Icon name="ellipsis" />
+    <>
+      <span className="open-apart">
+        <Button variant="ghost" size="icon" className="h-6 w-6" title="Open in tab" aria-label="Open in tab" onClick={() => openApart("tab")}>
+          <Icon name="window" />
         </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
         {detach && (
-          <DropdownMenuItem onSelect={() => send({ kind: "detachSession", patchbaySessionId: session.id })}>
-            Open in new window
-          </DropdownMenuItem>
+          <Button variant="ghost" size="icon" className="h-6 w-6" title="Open in new window" aria-label="Open in new window" onClick={() => openApart("window")}>
+            <Icon name="multiple-windows" />
+          </Button>
         )}
-        <DropdownMenuItem
-          disabled={reloading}
-          onSelect={() => send({ kind: "reloadSession", patchbaySessionId: session.id })}
-        >
-          {reloading ? "Reloading…" : "Reload from agent"}
-        </DropdownMenuItem>
-        {/* The agent's own id for the session — the host holds it and
-            writes it; the view knows the session only by patchbay's id. */}
-        <DropdownMenuItem onSelect={() => send({ kind: "copySessionId", patchbaySessionId: session.id })}>
-          Copy session ID
-        </DropdownMenuItem>
-        {offers.fork && (
-          <DropdownMenuItem onSelect={() => send({ kind: "forkSession", patchbaySessionId: session.id })}>
-            Fork
+      </span>
+      <DropdownMenu open={open} onOpenChange={onOpenChange}>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-6 w-6" title="Session actions" aria-label="Session actions">
+            <Icon name="ellipsis" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => openApart("tab")}>Open in tab</DropdownMenuItem>
+          {detach && <DropdownMenuItem onSelect={() => openApart("window")}>Open in new window</DropdownMenuItem>}
+          <DropdownMenuItem
+            disabled={reloading}
+            onSelect={() => send({ kind: "reloadSession", patchbaySessionId: session.id })}
+          >
+            {reloading ? "Reloading…" : "Reload from agent"}
           </DropdownMenuItem>
-        )}
-        {/* The host asks before the agent deletes — nothing brings it back. */}
-        {offers.delete && (
-          <DropdownMenuItem onSelect={() => send({ kind: "deleteSession", patchbaySessionId: session.id })}>
-            Delete…
+          {/* The agent's own id for the session — the host holds it and
+              writes it; the view knows the session only by patchbay's id. */}
+          <DropdownMenuItem onSelect={() => send({ kind: "copySessionId", patchbaySessionId: session.id })}>
+            Copy session ID
           </DropdownMenuItem>
-        )}
-        {offers.close && (
-          <DropdownMenuItem onSelect={() => send({ kind: "closeSession", patchbaySessionId: session.id })}>
-            Close
-          </DropdownMenuItem>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+          {offers.fork && (
+            <DropdownMenuItem onSelect={() => send({ kind: "forkSession", patchbaySessionId: session.id })}>
+              Fork
+            </DropdownMenuItem>
+          )}
+          {/* The host asks before the agent deletes — nothing brings it back. */}
+          {offers.delete && (
+            <DropdownMenuItem onSelect={() => send({ kind: "deleteSession", patchbaySessionId: session.id })}>
+              Delete…
+            </DropdownMenuItem>
+          )}
+          {offers.close && (
+            <DropdownMenuItem onSelect={() => send({ kind: "closeSession", patchbaySessionId: session.id })}>
+              Close
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
   );
 }
 

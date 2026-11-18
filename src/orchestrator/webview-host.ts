@@ -222,13 +222,15 @@ export function openDiagramPanel(extensionUri: vscode.Uri, svg: string): void {
 
 /** Detached agent-view surfaces (editor-area WebviewPanels, floatable into
  * auxiliary windows for multi-screen): one optional full agent view, plus
- * any number of per-session pinned panels. All of them are ordinary
+ * any number of per-session pinned panels, each a tab or a window. All of them are ordinary
  * render-only webviews on the same multi-view channel — the sidebar keeps
  * working alongside; a pinned panel merely renders one session and ignores
  * the shared active-session pointer. */
 export class AgentPanelHost {
   private main: vscode.WebviewPanel | null = null;
   private pinned = new Map<PatchbaySessionId, vscode.WebviewPanel>();
+  /** The pinned panels moved out to a window of their own. */
+  private floated = new Set<vscode.WebviewPanel>();
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -253,19 +255,26 @@ export class AgentPanelHost {
     await this.floatActiveEditor();
   }
 
-  /** One session in its own window; a second open reveals the existing one. */
-  async openPinned(patchbaySessionId: PatchbaySessionId, title: string): Promise<void> {
-    const existing = this.pinned.get(patchbaySessionId);
-    if (existing !== undefined) {
-      existing.reveal();
-      return;
+  /** One session in its own panel: a tab among the editors, or that tab
+   * moved out to a window of its own. A session already open is brought to
+   * the front where it is — and moved out if it was a tab and a window is
+   * asked for; one already in its window is never moved again. */
+  async openPinned(patchbaySessionId: PatchbaySessionId, title: string, into: "tab" | "window"): Promise<void> {
+    let panel = this.pinned.get(patchbaySessionId);
+    if (panel === undefined) {
+      const created = (panel = this.createPanel(title, patchbaySessionId));
+      this.pinned.set(patchbaySessionId, created);
+      created.onDidDispose(() => {
+        this.floated.delete(created);
+        if (this.pinned.get(patchbaySessionId) === created) this.pinned.delete(patchbaySessionId);
+      });
+    } else {
+      panel.reveal();
     }
-    const panel = this.createPanel(title, patchbaySessionId);
-    this.pinned.set(patchbaySessionId, panel);
-    panel.onDidDispose(() => {
-      if (this.pinned.get(patchbaySessionId) === panel) this.pinned.delete(patchbaySessionId);
-    });
-    await this.floatActiveEditor();
+    if (into === "window" && !this.floated.has(panel)) {
+      this.floated.add(panel);
+      await this.floatActiveEditor();
+    }
   }
 
   /** Mirror of the sessions list (wired to channel.onChange in extension.ts):

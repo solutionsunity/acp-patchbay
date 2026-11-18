@@ -8,15 +8,9 @@
 // holds all three counts, so there is one overlay and nothing to race.
 import { useState } from "react";
 import type { AgentSummary, SessionSummary } from "../../shared/protocol";
-import { SESSION_MARKS, type Elsewhere, type SessionMark } from "../../shared/attention";
+import { MARK_TITLE, SESSION_MARKS, type Elsewhere, type SessionMark } from "../../shared/attention";
 import { useActions } from "../shared/actions";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-
-const MARK_TITLE: Record<SessionMark, string> = {
-  waiting: "Waiting on you",
-  running: "In progress",
-  unseen: "Finished since you last saw it",
-};
 
 
 /** The session mark's dot — one vocabulary for the drawer rows and the

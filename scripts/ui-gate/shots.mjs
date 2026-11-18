@@ -1671,7 +1671,10 @@ for (const theme of Object.keys(THEMES)) {
   // below rather than ending the run
   await p.click(sessions, { timeout: 3000 }).catch(() => {});
   await p.waitForSelector(".drawer .s-row", { timeout: 3000 }).catch(() => {});
-  await p.keyboard.press("Tab");
+  // past the drawer's own search and filter, which come first
+  for (let i = 0; i < 6 && !(await p.evaluate(() => document.querySelector(".drawer .s-row")?.contains(document.activeElement) === true)); i++) {
+    await p.keyboard.press("Tab");
+  }
   check("Tab reaches the drawer's first session", await focusIn(p, ".drawer .s-row"));
   await p.keyboard.press("Enter");
   const picked = await p.evaluate(() => window.__actions.at(-1));
@@ -2032,6 +2035,63 @@ for (const theme of Object.keys(THEMES)) {
   check(`the + menu attaches files or a folder (${JSON.stringify(picks)})`, JSON.stringify(picks) === JSON.stringify(["folder", "files"]));
   check("no attachment chip sits above the input", (await p.$$(".ctx-row .ctx-chip .x")).length === 0);
   await p.close();
+}
+
+// ── the sessions drawer finds a session (#98) and opens one apart (#133):
+// by a word of its title or — where its conversation is loaded here — of
+// what was said; narrowed to one agent's; each row saying whether it is
+// loaded; a tab or a window from the row while it has the room, and from the
+// menu always. Theme-independent. ──
+{
+  const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.click('button[aria-label="Sessions"]');
+  await p.waitForSelector(".drawer .s-row");
+  const titles = () => p.$$eval(".drawer .s-row .nm", (els) => els.map((el) => el.textContent));
+  const shownLine = () => p.$eval(".drawer .s-shown", (el) => el.textContent.trim());
+  const loadedRows = await p.$$eval(".drawer .s-row", (rows) => rows.filter((r) => r.querySelector(".sub")?.textContent.includes("· loaded")).map((r) => r.querySelector(".nm").textContent));
+  check(
+    `[sessions] the drawer says how many sessions it holds and how many are loaded, and each loaded row says so (${await shownLine()}; ${loadedRows})`,
+    (await shownLine()) === "4 sessions · 2 loaded" && JSON.stringify(loadedRows.sort()) === JSON.stringify(["find foo", "migrate the schema"]),
+  );
+  const find = p.locator('.drawer [aria-label="Find a session"]');
+  await find.fill("RELEASE");
+  check(`[sessions] a word of a title finds the session, loaded or not (${await titles()})`, JSON.stringify(await titles()) === '["write the release notes"]' && (await shownLine()) === "1 of 4 sessions · 2 loaded");
+  await find.fill("fix it");
+  await p.waitForSelector(".drawer .s-row .found");
+  const found = await p.$eval(".drawer .s-row .found", (el) => el.textContent);
+  check(`[sessions] a word of what was said finds the session whose conversation is here, showing where ("${found}")`, JSON.stringify(await titles()) === '["find foo"]' && found.includes("fix it"));
+  await find.fill("no such words anywhere");
+  check("[sessions] nothing found says a conversation is searched only where it is loaded", (await p.locator(".drawer .s-row .sub", { hasText: "searched only where it is loaded" }).count()) === 1);
+  await find.fill("");
+  await p.locator('.drawer [aria-label="Sessions of which agent"]').click();
+  await p.locator('[role="option"]:has-text("Augment")').click();
+  check("[sessions] narrowed to one agent's, only its sessions are listed", (await titles()).length === 0 && (await shownLine()) === "0 of 4 sessions · 2 loaded");
+  await p.locator('.drawer [aria-label="Sessions of which agent"]').click();
+  await p.locator('[role="option"]:has-text("all agents")').click();
+  // a tab or a window, from the row's own icons while it has the room
+  const row = p.locator(".drawer .s-row", { hasText: "refactor bar" });
+  await row.locator('button[aria-label="Open in tab"]').click();
+  await row.locator('button[aria-label="Open in new window"]').click();
+  const opened = await p.evaluate(() => window.__actions.filter((a) => a.kind === "detachSession").map((a) => `${a.patchbaySessionId}:${a.into}`));
+  check(`[sessions] a row opens its session in a tab or in a new window (${opened})`, JSON.stringify(opened) === '["s2:tab","s2:window"]');
+  await row.locator('button[aria-label="Session actions"]').click();
+  const entries = await p.$$eval('[data-slot="dropdown-menu-content"] [role="menuitem"]', (els) => els.map((el) => el.textContent.trim()));
+  check(`[sessions] the menu holds both ways too (${entries.slice(0, 2)})`, entries[0] === "Open in tab" && entries[1] === "Open in new window");
+  await p.keyboard.press("Escape");
+  await p.screenshot({ path: `${OUT}/sessions-drawer-find.png` });
+  await p.close();
+  // a narrow row keeps its title: the icons leave, the menu stays
+  const narrow = await page(browser, Object.keys(THEMES)[0], { width: 280, height: 900 });
+  await renderView(narrow, "agent-view", agentViewState({ live: false }));
+  await narrow.click('button[aria-label="Sessions"]');
+  await narrow.waitForSelector(".drawer .s-row");
+  const narrowRow = narrow.locator(".drawer .s-row", { hasText: "refactor bar" });
+  const iconsShown = await narrowRow.locator('button[aria-label="Open in tab"]').isVisible();
+  await narrowRow.locator('button[aria-label="Session actions"]').click();
+  const narrowEntries = await narrow.$$eval('[data-slot="dropdown-menu-content"] [role="menuitem"]', (els) => els.map((el) => el.textContent.trim()));
+  check(`[sessions] a narrow row leaves the icons out and keeps the menu, which holds both (${iconsShown}, ${narrowEntries.slice(0, 2)})`, !iconsShown && narrowEntries[0] === "Open in tab" && narrowEntries[1] === "Open in new window");
+  await narrow.close();
 }
 
 // ── only the view the user is in gives an arriving attachment its token: a

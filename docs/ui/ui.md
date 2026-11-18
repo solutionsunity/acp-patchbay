@@ -50,7 +50,8 @@ never split panels.
 |---|---|
 | Title | click → Sessions drawer |
 | Forked from | a fork's line under the title row: `Forked from ‹original›` opens the original; `Forked from a session no longer listed` once the list no longer names it |
-| Kebab ⋯ | open in new window (when detached windows are on) · reload from agent (rejoin truth) · copy session ID · **Fork** where the agent declares `session/fork` — a new session carrying this one's history opens, and this one stays as it is · **Delete…** where the agent declares `session/delete` — asks first, then the agent removes the session from its history and patchbay forgets what it kept for it; a refusal says why and keeps it · **Close** where the agent declares `session/close` — its work stops and it leaves the list, keeping everything patchbay saved for it; an agent that lists its sessions lists it again the next time the history is read. The same menu sits on every row of the Sessions drawer |
+| Open apart | ▭ ⧉ | **Open in tab** and **Open in new window** (the window when detached windows are on) as icons beside ⋯ while the row is wide enough to keep its title; a narrow row leaves them to the menu |
+| Kebab ⋯ | open in tab · open in new window (when detached windows are on) · reload from agent (rejoin truth) · copy session ID · **Fork** where the agent declares `session/fork` — a new session carrying this one's history opens, and this one stays as it is · **Delete…** where the agent declares `session/delete` — asks first, then the agent removes the session from its history and patchbay forgets what it kept for it; a refusal says why and keeps it · **Close** where the agent declares `session/close` — its work stops and it leaves the list, keeping everything patchbay saved for it; an agent that lists its sessions lists it again the next time the history is read. The same menu sits on every row of the Sessions drawer |
 
 ### 3 · Read-out strip
 
@@ -196,11 +197,25 @@ connected` / capability one-liner); picking the row starts a chat with it,
 connecting in-pane when it isn't running. Footer: `＋ Add or manage agents —
 Settings…` — adding lives in Settings only; stop/restart are Settings
 troubleshooting controls plus the crash banner's `Restart`. **Sessions drawer** —
-per session: session mark (waiting on you / turn or sub-agent underway / finished unseen) · title · agent + state subtitle · kebab
-(same actions as the session row). Below the rows, one line per agent whose
+first a find box ("Find by title, or by what was said…") and, with more than one
+agent, an agent filter; under them a line saying what is listed and how many are
+loaded ("4 sessions · 2 loaded", "1 of 4 sessions · 2 loaded" while narrowed). A
+session is *loaded* when its conversation is in this window: its row says so, and
+only its conversation can be searched — a match there shows a few words around it
+under the row; a session that exists only in its agent's history is found by its
+title. Then, per session: session mark (waiting on you / turn or sub-agent underway / finished unseen) · title · agent + last activity (+ "loaded") · open in tab · open in new window · kebab
+(same actions as the session row; the two open icons while the row has the room). Below the rows, one line per agent whose
 handshake declared no `session/list`: `{agent} doesn't report its sessions —
 only the ones open in this window are listed`. Footer: `＋ New session` (the
 same smart ＋).
+
+**Switch Session** (the palette command; the user binds its key) is the keyboard's
+way between sessions, in VS Code's own pick: each row the session's mark as an icon
+and in words (a pick draws no coloured dot), its title, its agent and last
+activity, and two buttons — open in tab, open in new window. The session the user
+was in before the one in front is first, so Enter flips back; the rest follow as
+the drawer orders them. There is no strip of sessions in the sidebar: several at
+once are tabs or windows (#133).
 
 ### 7 · Chat pane states
 

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **A session opens in an editor tab, as well as in a new window.** A
+  session's row has **Open in tab** beside **Open in new window** — as
+  icons while the row has the room, and in its ⋯ menu always — so several
+  sessions sit as tabs beside your files, side by side, or on other
+  screens. **Switch Session** (command palette; bind a key to it) now
+  shows each session's status, agent and last activity, puts the session
+  you were in before first, so Enter flips back, and can open one in a tab
+  or a window. The sidebar keeps one view and one switcher: no strip of
+  sessions was added to it. (#133)
+- **The Sessions drawer finds a session.** Type a word of its title, or of
+  what was said in it, and pick one agent's sessions where you run
+  several. Each row says whether the session is loaded in this window,
+  and the drawer how many are: a search of conversations reaches those,
+  since Patchbay keeps no transcripts of the rest — any session is still
+  found by its title. (#98)
 - **Rules can apply to specific agents.** A command rule or a file-write
   place applied to every agent, so on a host running several, rules loose
   enough for one lowered the floor for all. Each now says which agents it

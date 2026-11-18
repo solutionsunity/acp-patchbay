@@ -46,6 +46,14 @@ export function waitingOn(state: AgentViewState, session: SessionSummary): strin
 export const SESSION_MARKS = ["waiting", "unseen", "running"] as const;
 export type SessionMark = (typeof SESSION_MARKS)[number];
 
+/** A mark in words — wherever one is said: a dot's hover, the header's
+ * counts, a native pick that can't draw the dot. */
+export const MARK_TITLE: Record<SessionMark, string> = {
+  waiting: "Waiting on you",
+  running: "In progress",
+  unseen: "Finished since you last saw it",
+};
+
 export function sessionMark(state: AgentViewState, session: SessionSummary): SessionMark | null {
   const holds: Record<SessionMark, () => boolean> = {
     waiting: () => openAsks(state.transcripts[session.id] ?? []).length > 0,

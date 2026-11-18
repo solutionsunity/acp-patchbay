@@ -7,17 +7,20 @@
 // is walked and picked from the keyboard. `onDone(toast?)` closes the
 // drawer — drawer visibility and toasts are the shell's local UI state.
 import { useState, type ReactNode } from "react";
-import type { AgentSummary, SessionSummary } from "../../shared/protocol";
+import type { AgentSummary, AgentViewState, SessionSummary } from "../../shared/protocol";
 import type { SessionMark } from "../../shared/attention";
+import { listSessions, NO_SESSION_FILTER, type SessionFilter } from "../../shared/session-list";
 import { useActions } from "../shared/actions";
 import { agentSubtitle } from "../../shared/capability-format";
 import { Icon } from "../shared/icon";
-import { timeAgo } from "../shared/time";
+import { timeAgo } from "../../shared/time";
 import { MarkDot } from "./attention";
 import { unlistedAgents } from "./drawer-notes";
 import { Dot } from "../shared/dot";
 import { SessionActions } from "./session-row";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetClose, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import type { PatchbaySessionId } from "../../shared/ids";
 
@@ -95,8 +98,14 @@ export function AgentsDrawer(props: {
   );
 }
 
+/** The sessions, found by what the user remembers of one: a word of its
+ * title or — for the ones loaded here, whose conversation is in this
+ * window — of what was said in it; narrowed to one agent's. A row says
+ * whether it is loaded, the line above the rows how many are: that is how
+ * far a search of the conversations reaches. */
 export function SessionsDrawer(props: {
   sessions: readonly SessionSummary[];
+  transcripts: AgentViewState["transcripts"];
   agents: readonly AgentSummary[];
   activePatchbaySessionId: PatchbaySessionId | null;
   markOf(session: SessionSummary): SessionMark | null;
@@ -110,17 +119,61 @@ export function SessionsDrawer(props: {
   // another's needs a single state transition (session-row.tsx), not two
   // independent Radix instances racing to close/open on the same click.
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  // Latest activity on top — sorted here in the view, so the reducer stays
-  // append-only and wire-merge arrival order stops mattering.
-  const ordered = [...props.sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const [filter, setFilter] = useState<SessionFilter>(NO_SESSION_FILTER);
+  // The filter's agent, while that agent is still one of them.
+  const of = props.agents.some((a) => a.id === filter.agent) ? filter.agent : "all";
+  // Latest activity on top — ordered in the view (session-list.ts), so the
+  // reducer stays append-only and wire-merge arrival order stops mattering.
+  const held = { sessions: props.sessions, transcripts: props.transcripts };
+  const rows = listSessions(held, { ...filter, agent: of });
+  const all = listSessions(held);
+  const loaded = all.filter((r) => r.loaded).length;
+  const narrowed = rows.length !== all.length;
   return (
     <Drawer title="Sessions" onClose={props.onDone}>
-      {ordered.length === 0 && (
+      {all.length > 0 && (
+        <>
+          <div className="s-filter">
+            <Input
+              type="text"
+              className="min-w-0 flex-1"
+              placeholder="Find by title, or by what was said…"
+              aria-label="Find a session"
+              value={filter.text}
+              onInput={(e) => setFilter({ ...filter, text: (e.target as HTMLInputElement).value })}
+            />
+            {props.agents.length > 1 && (
+              <Select value={of} onValueChange={(v) => setFilter({ ...filter, agent: v as SessionFilter["agent"] })}>
+                <SelectTrigger aria-label="Sessions of which agent" className="max-w-[45%]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">all agents</SelectItem>
+                  {props.agents.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {a.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+          <div className="s-shown" title="A loaded session's conversation is in this window, so a search reads what was said in it; any other is found by its title">
+            {narrowed ? `${rows.length} of ${all.length} sessions` : `${all.length} ${all.length === 1 ? "session" : "sessions"}`} · {loaded} loaded
+          </div>
+        </>
+      )}
+      {all.length === 0 && (
         <div className="s-row cursor-default">
           <span className="sub">No sessions yet.</span>
         </div>
       )}
-      {ordered.map((s) => {
+      {all.length > 0 && rows.length === 0 && (
+        <div className="s-row cursor-default">
+          <span className="sub">No session matches — a conversation is searched only where it is loaded here.</span>
+        </div>
+      )}
+      {rows.map(({ session: s, loaded: here, found }) => {
         const agent = props.agents.find((a) => a.id === s.patchbayAgentId);
         const isActive = s.id === props.activePatchbaySessionId;
         return (
@@ -139,7 +192,9 @@ export function SessionsDrawer(props: {
                 <div className="nm">{s.title}</div>
                 <div className="sub">
                   {agent?.name ?? s.patchbayAgentId} · {timeAgo(s.updatedAt)}
+                  {here && " · loaded"}
                 </div>
+                {found !== null && <div className="found">{found}</div>}
               </div>
             </button>
             <div className="badges">

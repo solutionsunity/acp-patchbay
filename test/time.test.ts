@@ -1,7 +1,7 @@
 // timeAgo — the drawer's "last activity" label: largest fitting unit,
 // "just now" under a minute, "" for garbage (never NaN in the UI).
 import { describe, expect, it } from "vitest";
-import { timeAgo } from "../src/webview/shared/time";
+import { timeAgo } from "../src/shared/time";
 
 const NOW = Date.parse("2026-07-09T12:00:00Z");
 const ago = (ms: number) => new Date(NOW - ms).toISOString();

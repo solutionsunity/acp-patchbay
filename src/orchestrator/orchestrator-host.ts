@@ -18,7 +18,9 @@ import {
 } from "../shared/protocol";
 import type { WorkspaceId } from "../shared/workspace";
 import { askNotice } from "../shared/ask-notice";
-import { type OpenAsk } from "../shared/attention";
+import { MARK_TITLE, sessionMark, type OpenAsk, type SessionMark } from "../shared/attention";
+import { listSessions, withFirst } from "../shared/session-list";
+import { timeAgo } from "../shared/time";
 import { actionDoor, type FailureSurfaces, warnCatch } from "./action-door";
 import { chipId, fileChipLabel } from "./attachments";
 import { diffDir } from "./diff-files";
@@ -76,11 +78,20 @@ async function askModal(message: string, choice: string): Promise<boolean> {
   return (await vscode.window.showWarningMessage(message, { modal: true }, choice)) === choice;
 }
 
+/** A session's mark as a native pick draws it. */
+const MARK_ICON: Record<SessionMark, string> = { waiting: "bell-dot", unseen: "circle-filled", running: "sync" };
+const OPEN_IN_TAB: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon("window"), tooltip: "Open in tab" };
+const OPEN_IN_WINDOW: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon("multiple-windows"), tooltip: "Open in new window" };
+
 export class OrchestratorHost {
   /** The window's orchestrator: everything that runs without VS Code. */
   readonly orchestrator: Orchestrator;
   readonly editorStateHost: EditorStateHost;
   private readonly editorSubscriptions: vscode.Disposable[] = [];
+  /** The session in front and the one the user was in before it — what
+   * Switch Session offers first, so one answer flips back. Held for the
+   * window's life only: a pick's convenience, nothing to restore. */
+  private inFront: { now: PatchbaySessionId | null; before: PatchbaySessionId | null } = { now: null, before: null };
   private readonly selfVersion: SelfVersionHost;
   private readonly failureSurfaces: FailureSurfaces = {
     logCatch: (context) => this.orchestrator.logCatch(context),
@@ -214,6 +225,13 @@ export class OrchestratorHost {
         openEditors: this.editorStateHost.getOpenEditors(),
       });
     };
+    // The session in front, and the one before it — moved only by a change of the one in front.
+    this.editorSubscriptions.push({
+      dispose: this.orchestrator.agentView.onChange(() => {
+        const now = this.orchestrator.agentView.current.activePatchbaySessionId;
+        if (now !== this.inFront.now) this.inFront = { now, before: this.inFront.now };
+      }),
+    });
     this.editorSubscriptions.push(
       vscode.window.onDidChangeTextEditorSelection(pushEditorContext),
       vscode.window.onDidChangeActiveTextEditor(pushEditorContext),
@@ -348,26 +366,26 @@ export class OrchestratorHost {
    * deadline). */
   async switchSessionCommand(): Promise<void> {
     type Item = vscode.QuickPickItem & { patchbaySessionId: PatchbaySessionId };
-    const items = (): Item[] =>
-      this.orchestrator.agentView.current.sessions.map((s) => ({
-        label: s.title,
-        description: this.orchestrator.agents.name(s.patchbayAgentId) ?? s.patchbayAgentId,
-        patchbaySessionId: s.id,
-      }));
     const pick = vscode.window.createQuickPick<Item>();
     pick.placeholder = "Switch to session…";
-    pick.items = items();
+    pick.matchOnDescription = true;
+    const fill = () => (pick.items = this.sessionPickItems());
+    fill();
     pick.busy = true;
-    const picked = await new Promise<Item | undefined>((resolve) => {
+    const picked = await new Promise<{ item: Item; into: "front" | "tab" | "window" } | undefined>((resolve) => {
       let open = true;
-      pick.onDidAccept(() => resolve(pick.selectedItems[0]));
+      pick.onDidAccept(() => {
+        const item = pick.selectedItems[0];
+        resolve(item === undefined ? undefined : { item, into: "front" });
+      });
+      pick.onDidTriggerItemButton(({ item, button }) => resolve({ item, into: button === OPEN_IN_TAB ? "tab" : "window" }));
       pick.onDidHide(() => {
         open = false;
         resolve(undefined);
       });
       void this.orchestrator.sessions.syncRunningAgents().catch(this.orchestrator.logCatch("sync sessions")).finally(() => {
         if (!open) return;
-        pick.items = items();
+        fill();
         pick.busy = false;
         if (pick.items.length === 0) {
           vscode.window.showInformationMessage("No sessions yet.");
@@ -378,7 +396,48 @@ export class OrchestratorHost {
     });
     pick.dispose();
     if (picked === undefined) return;
-    await this.orchestrator.revealSession(picked.patchbaySessionId);
+    if (picked.into === "front") await this.orchestrator.revealSession(picked.item.patchbaySessionId);
+    else await this.openApart(picked.item.patchbaySessionId, picked.into);
+  }
+
+  /** The sessions as Switch Session lists them — what the drawer's rows
+   * say, in a native pick's own terms: the mark as an icon and in words (a
+   * pick can't draw the dot), the title, the agent and the last activity,
+   * and the two ways to open one apart. The session the user was in before
+   * this one comes first, so the first answer flips back; the rest follow
+   * as the drawer orders them, latest activity first. */
+  private sessionPickItems(): (vscode.QuickPickItem & { patchbaySessionId: PatchbaySessionId })[] {
+    const state = this.orchestrator.agentView.current;
+    const windows = this.orchestrator.preferences.get().detachWindows;
+    return withFirst(listSessions(state), this.inFront.before).map(({ session }) => {
+      const mark = sessionMark(state, session);
+      const said = [
+        this.orchestrator.agents.name(session.patchbayAgentId) ?? session.patchbayAgentId,
+        timeAgo(session.updatedAt),
+        ...(mark === null ? [] : [MARK_TITLE[mark].toLowerCase()]),
+        ...(session.id === state.activePatchbaySessionId ? ["in front"] : []),
+      ];
+      return {
+        label: session.title,
+        description: said.filter((s) => s !== "").join(" · "),
+        iconPath: new vscode.ThemeIcon(mark === null ? "comment-discussion" : MARK_ICON[mark]),
+        buttons: windows ? [OPEN_IN_TAB, OPEN_IN_WINDOW] : [OPEN_IN_TAB],
+        patchbaySessionId: session.id,
+      };
+    });
+  }
+
+  /** A session opened apart from the sidebar: a tab, or a window. A window
+   * is preference-gated at the source of truth, not only in the menu that
+   * hid itself (render-only webviews don't get to be the gate). The panel
+   * host lives in extension.ts (like Settings) — reached by command. Then
+   * the one open ceremony, pinned: the panel renders this session by id, so
+   * the active pointer stays where it is. */
+  private async openApart(patchbaySessionId: PatchbaySessionId, into: "tab" | "window"): Promise<void> {
+    if (into === "window" && !this.orchestrator.preferences.get().detachWindows) return;
+    const panel = vscode.commands.executeCommand("acpPatchbay.detachSession", patchbaySessionId, into);
+    this.orchestrator.sessionGates.open(patchbaySessionId, { pin: true });
+    await panel;
   }
 
   /** "Connect agent" — the palette shortcut, through the same `connectFrom`
@@ -815,17 +874,7 @@ export class OrchestratorHost {
           });
         break;
       case "detachSession":
-        // Preference-gated at the source of truth, not only in the menu
-        // that hid itself (render-only webviews don't get to be the gate).
-        if (!this.orchestrator.preferences.get().detachWindows) break;
-        // The panel host lives in extension.ts (like Settings) — reach it by
-        // command. Then the one open ceremony, pinned: the panel renders
-        // this session by id, so the active pointer stays where it is.
-        {
-          const panel = vscode.commands.executeCommand("acpPatchbay.detachSession", action.patchbaySessionId);
-          this.orchestrator.sessionGates.open(action.patchbaySessionId, { pin: true });
-          await panel;
-        }
+        await this.openApart(action.patchbaySessionId, action.into);
         break;
       case "sendHeldPrompt":
         this.orchestrator.sessionGates.sendHeld(action.patchbaySessionId, action.promptId);

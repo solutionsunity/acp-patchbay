@@ -162,10 +162,12 @@ export type Action =
    * window is on the rows — reality at the moment of need, never polled. */
   | { kind: "syncSessions" }
   | { kind: "switchSession"; patchbaySessionId: PatchbaySessionId }
-  /** Open the session in its own editor panel, floated to a new (auxiliary)
-   * window — detached from the sidebar, multi-screen usable. Does not touch
-   * the shared active-session pointer. */
-  | { kind: "detachSession"; patchbaySessionId: PatchbaySessionId }
+  /** Open the session in its own editor panel — a tab beside the user's
+   * files, or floated to a new (auxiliary) window, multi-screen usable.
+   * Either way it is apart from the sidebar and does not touch the shared
+   * active-session pointer. A session already open that way is brought to
+   * the front where it is. */
+  | { kind: "detachSession"; patchbaySessionId: PatchbaySessionId; into: "tab" | "window" }
   /** What the session menu offers (session-offers.ts), each where the
    * agent declares it: Fork opens a new session the agent seeds with this
    * one's context; Delete removes the session from the agent's history,

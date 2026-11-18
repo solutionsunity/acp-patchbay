@@ -271,6 +271,7 @@ export function App({
       {drawer === "sessions" && (
         <SessionsDrawer
           sessions={state.sessions}
+          transcripts={state.transcripts}
           agents={state.agents}
           activePatchbaySessionId={state.activePatchbaySessionId}
           markOf={(s) => sessionMark(state, s)}
