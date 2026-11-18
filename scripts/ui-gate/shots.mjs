@@ -1989,6 +1989,12 @@ for (const theme of Object.keys(THEMES)) {
   await p.hover(".hdr");
   const closed = await p.waitForSelector('[data-slot="tooltip-content"]', { state: "detached", timeout: 3000 }).then(() => true, () => false);
   check(`an image token's hover shows the image, and leaving it closes the preview (${preview}, ${closed})`, preview && closed);
+  // the keyboard's way to it: the caret right after the token shows it too
+  await p.keyboard.press("ArrowLeft");
+  const byCaret = await p.waitForSelector('[data-slot="tooltip-content"] img.chip-preview', { timeout: 3000 }).then(() => true, () => false);
+  await p.keyboard.press("ArrowRight");
+  const caretLeft = await p.waitForSelector('[data-slot="tooltip-content"]', { state: "detached", timeout: 3000 }).then(() => true, () => false);
+  check(`the caret right after an image token shows the image, and moving on closes it (${byCaret}, ${caretLeft})`, byCaret && caretLeft);
   // deleted, it stays deleted — the next attachment is the only one added
   await stage({ id: "gone", kind: "attachment", label: "File: notes.txt", name: "notes.txt", path: "/home/u/notes.txt" });
   await p.waitForFunction(() => document.querySelectorAll(".input-shell .chip-token").length === 3);
