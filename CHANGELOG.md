@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **The Agent View can be the sessions list, with each chat in a tab.** A
+  new button in the view's header switches between two layouts, one click
+  either way: the chat, as before — or the list of sessions, always in
+  place with each one's status, where a click opens that session's chat
+  as an editor tab. You see which session is running, finished or waiting
+  on you while you work in another, and each chat gets the editor's
+  width. The chat layout stays the default and loses nothing; the choice
+  is also in Preferences and the command palette. After a window reload
+  the session you were in comes back in its tab; reopen the others from
+  the list. (#133)
 - **A session opens in an editor tab, as well as in a new window.** A
   session's row has **Open in tab** beside **Open in new window** — as
   icons while the row has the room, and in its ⋯ menu always — so several

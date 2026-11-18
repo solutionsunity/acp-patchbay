@@ -14,7 +14,9 @@ import * as vscode from "vscode";
 import {
   type Action,
   type ConnectAgentSource,
+  type PreferencesView,
   type SaveScope,
+  type SessionsLayout,
 } from "../shared/protocol";
 import type { WorkspaceId } from "../shared/workspace";
 import { askNotice } from "../shared/ask-notice";
@@ -92,6 +94,8 @@ export class OrchestratorHost {
    * Switch Session offers first, so one answer flips back. Held for the
    * window's life only: a pick's convenience, nothing to restore. */
   private inFront: { now: PatchbaySessionId | null; before: PatchbaySessionId | null } = { now: null, before: null };
+  /** The session being put in front because the user went to its tab. */
+  private wentToTab: PatchbaySessionId | null = null;
   private readonly selfVersion: SelfVersionHost;
   private readonly failureSurfaces: FailureSurfaces = {
     logCatch: (context) => this.orchestrator.logCatch(context),
@@ -225,11 +229,23 @@ export class OrchestratorHost {
         openEditors: this.editorStateHost.getOpenEditors(),
       });
     };
-    // The session in front, and the one before it — moved only by a change of the one in front.
+    // The session in front, and the one before it — moved only by a change
+    // of the one in front. In the list layout the session in front is shown
+    // in its tab: whatever put it in front — a row, a new chat, Switch
+    // Session, a notice's Open, the window's return to the session it left
+    // — its tab opens, or comes to the front. Except the tab itself: a
+    // session in front because the user went to its tab is where they are
+    // already. The two rules never feed each other — a tab's focus moves the
+    // session in front, and never a tab; so a focus told late, after another
+    // session was picked, costs a moment's wrong row, not a tab pulled back.
     this.editorSubscriptions.push({
       dispose: this.orchestrator.agentView.onChange(() => {
         const now = this.orchestrator.agentView.current.activePatchbaySessionId;
-        if (now !== this.inFront.now) this.inFront = { now, before: this.inFront.now };
+        if (now === this.inFront.now) return;
+        this.inFront = { now, before: this.inFront.now };
+        const byItsTab = now === this.wentToTab;
+        this.wentToTab = null;
+        if (now !== null && !byItsTab && this.listLayout()) void this.openApart(now, "tab").catch(this.orchestrator.logCatch(`open tab ${now}`));
       }),
     });
     this.editorSubscriptions.push(
@@ -647,8 +663,47 @@ export class OrchestratorHost {
    * its composer while it has focus itself, so it never pulls focus from
    * where the user is. */
   async focusComposer(): Promise<void> {
-    await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
+    // In the list layout the composer is the session's tab's, which its
+    // own opening brings to the front: the sidebar holds no composer to
+    // take the focus to.
+    if (!this.listLayout()) await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
     this.orchestrator.agentView.emit({ kind: "composerFocusRequested" });
+  }
+
+  private listLayout(): boolean {
+    return this.orchestrator.preferences.get().sessionsLayout === "list";
+  }
+
+  /** A session's tab took the focus. In the list layout that is the user
+   * going to that session: it is the one in front — what the list
+   * highlights, the status bar names, and "add selection" adds to. In the
+   * chat layout a tab is apart from the view, which stays on its own. */
+  sessionTabFocused(patchbaySessionId: PatchbaySessionId): void {
+    if (this.listLayout() && this.orchestrator.agentView.current.activePatchbaySessionId !== patchbaySessionId) {
+      this.wentToTab = patchbaySessionId;
+      this.orchestrator.sessionGates.open(patchbaySessionId);
+    }
+  }
+
+  /** A change of preferences, from wherever it is made — the Preferences
+   * page, the Agent View's header, a command. One truth, both channels:
+   * the page and the agent view render the same stored object. The view's
+   * layout going to the list opens the session in front as a tab, so its
+   * chat doesn't leave the screen with the switch; going back leaves the
+   * tabs as they are. */
+  private async setPreferences(patch: Partial<PreferencesView>): Promise<void> {
+    const wasList = this.listLayout();
+    const preferences = await this.orchestrator.preferences.set(patch);
+    this.orchestrator.settings.emit({ kind: "preferencesChanged", preferences });
+    this.orchestrator.agentView.emit({ kind: "preferencesChanged", preferences });
+    this.syncDetachContext();
+    const inFront = this.orchestrator.agentView.current.activePatchbaySessionId;
+    if (!wasList && this.listLayout() && inFront !== null) await this.openApart(inFront, "tab");
+  }
+
+  async toggleSessionsLayoutCommand(): Promise<void> {
+    const sessionsLayout: SessionsLayout = this.listLayout() ? "chat" : "list";
+    await this.setPreferences({ sessionsLayout });
   }
 
   /** Enable goes through the disclosure prompt — every entry point (Audit
@@ -962,14 +1017,7 @@ export class OrchestratorHost {
         await this.pickWriteFolder(action.layer);
         break;
       case "setPreferences":
-        {
-          const preferences = await this.orchestrator.preferences.set(action.patch);
-          // One truth, both channels: the Preferences page and the agent
-          // view (composer stats) render the same stored object.
-          this.orchestrator.settings.emit({ kind: "preferencesChanged", preferences });
-          this.orchestrator.agentView.emit({ kind: "preferencesChanged", preferences });
-          this.syncDetachContext();
-        }
+        await this.setPreferences(action.patch);
         break;
       case "surfaceActivation":
         this.orchestrator.noteSurfaceActivation(action.surface, action.activated);

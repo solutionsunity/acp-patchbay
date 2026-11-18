@@ -50,7 +50,9 @@ export function activate(context: vscode.ExtensionContext): {
   // same channel as the sidebar; pinned panels follow the sessions list
   // (dispose on close, retitle on rename) and are idle-reaper exempt.
   const reportSurface: SurfaceReporter = (surface, report) => orchestrator.noteSurface(surface, report);
-  const agentPanelHost = new AgentPanelHost(context.extensionUri, orchestrator.agentView, reportSurface);
+  const agentPanelHost = new AgentPanelHost(context.extensionUri, orchestrator.agentView, reportSurface, (patchbaySessionId) =>
+    host.sessionTabFocused(patchbaySessionId),
+  );
   host.pinnedSessions = () => agentPanelHost.pinnedPatchbaySessionIds();
   const agentViewProvider = new AgentViewProvider(context.extensionUri, orchestrator.agentView, reportSurface);
   const unsubscribeViewSync = orchestrator.agentView.onChange(() => {
@@ -85,6 +87,7 @@ export function activate(context: vscode.ExtensionContext): {
     }),
     vscode.commands.registerCommand("acpPatchbay.newSession", () => host.newSessionCommand()),
     vscode.commands.registerCommand("acpPatchbay.switchSession", () => host.switchSessionCommand()),
+    vscode.commands.registerCommand("acpPatchbay.toggleSessionsLayout", () => host.toggleSessionsLayoutCommand()),
     vscode.commands.registerCommand("acpPatchbay.connectAgent", () => host.connectAgentCommand()),
     vscode.commands.registerCommand("acpPatchbay.addSelectionToContext", () =>
       host.addSelectionToContextCommand(),

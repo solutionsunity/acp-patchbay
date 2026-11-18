@@ -1693,6 +1693,9 @@ export type GaugeDisplay = "off" | "on" | "details";
  * edit them, and so the agent view can gate its own furniture (the
  * composer's stats read-outs). Declared above AgentViewState because initialAgentViewState
  * seeds from DEFAULT_PREFERENCES. */
+export const SESSIONS_LAYOUTS = ["chat", "list"] as const;
+export type SessionsLayout = (typeof SESSIONS_LAYOUTS)[number];
+
 export interface PreferencesView {
   /** A chime when a prompt turn finishes, played by one Agent View
    * surface (`chime`) — a cancelled turn never chimes: the user was present
@@ -1721,6 +1724,12 @@ export interface PreferencesView {
    * window" and the whole-view detach command. Off hides the entry points;
    * panels already open stay open — the pref gates opening, not existence. */
   detachWindows: boolean;
+  /** What the Agent View is: the chat of the session in front, its list a
+   * drawer away — or the sessions list itself, in place, each session's
+   * chat an editor tab a click opens. One switch in the view's header;
+   * going to the list opens the session in front as a tab, so its chat
+   * doesn't leave the screen with the click. */
+  sessionsLayout: SessionsLayout;
   /** Per-attachment size cap in MB (pre-encode bytes), enforced at the
    * composer's ingress — oversize is refused with a visible message, never
    * silently truncated. Bytes travel the webview bridge as base64, so the
@@ -1750,6 +1759,7 @@ export const DEFAULT_PREFERENCES: PreferencesView = {
   statsPlanGauge: "details",
   statsCost: true,
   detachWindows: true,
+  sessionsLayout: "chat",
   attachmentMaxMB: 10,
   openThinking: false,
   executeCalls: "grouped",

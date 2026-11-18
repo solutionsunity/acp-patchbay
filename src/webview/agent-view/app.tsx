@@ -7,7 +7,7 @@
 // furniture (which drawer is open, the toast); components own their markup
 // and send their own actions; everything durable comes from snapshots.
 import { restartOffered } from "../shared/agent-work";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { attaching, type AgentViewState, type SubagentView, type UserBlock } from "../../shared/protocol";
 import { elsewhere, sessionMark, waitingOn } from "../../shared/attention";
 import { useActions } from "../shared/actions";
@@ -21,7 +21,7 @@ import { newChatInFlight } from "./composer/composer-controls";
 import { AttentionIndicators } from "./attention";
 import { rootsControls } from "./composer/roots-controls";
 import { mcpChipControls } from "./composer/mcp-chip-controls";
-import { AgentsDrawer, SessionsDrawer } from "./drawers";
+import { AgentsDrawer, SessionsDrawer, SessionsList } from "./drawers";
 import { Header } from "./header";
 import { QueueBand } from "./queue-band";
 import { ReadoutStrip } from "./readout-strip";
@@ -102,6 +102,15 @@ export function App({
     [active, roster],
   );
   const detach = state.preferences?.detachWindows ?? true;
+  // The view as the sessions list, each chat in a tab — never a session's
+  // own panel, which is the chat whatever the view is.
+  const layout = state.preferences?.sessionsLayout ?? "chat";
+  const listLayout = !pinned && layout === "list";
+  // The list reads the agents' own session/list as it comes on view, as
+  // the drawer does on opening.
+  useEffect(() => {
+    if (listLayout) send({ kind: "syncSessions" });
+  }, [listLayout, send]);
   // The durable draft is empty — the only state a held prompt is taken back
   // into, or an earlier one reused into.
   const composerEmpty = active === null || (state.drafts[active.id] ?? "") === "";
@@ -144,22 +153,54 @@ export function App({
     setDrawer("sessions");
   };
 
+  const header = (
+    <Header
+      agent={activeAgent}
+      onUpgrade={() => activeAgent !== null && send({ kind: "upgradeAgent", patchbayAgentId: activeAgent.id })}
+      layout={layout}
+      onLayout={(sessionsLayout) => send({ kind: "setPreferences", patch: { sessionsLayout } })}
+      onSessions={openSessions}
+      onNew={newChat}
+    >
+      <AttentionIndicators elsewhere={elsewhere(state)} agents={state.agents} waitingOn={(s) => waitingOn(state, s)} />
+    </Header>
+  );
+  const toastLine = toast !== null && (
+    <div className={`toast ${toast.kind === "warning" ? "warning" : ""}`}>
+      {toast.kind === "warning" && <Icon name="warning" />} {toast.msg}
+    </div>
+  );
+
+  // The list layout: the sessions, in place — their marks always on view —
+  // and each chat in the tab a pick opens. The header keeps its read-out of
+  // the other sessions: a count reads faster than a list that may be
+  // scrolled or narrowed.
+  if (listLayout) {
+    return (
+      <div className="sidebar">
+        {header}
+        <div className="sessions-home">
+          <SessionsList
+            sessions={state.sessions}
+            transcripts={state.transcripts}
+            agents={state.agents}
+            activePatchbaySessionId={state.activePatchbaySessionId}
+            markOf={(s) => sessionMark(state, s)}
+            detach={detach}
+            inTabs
+            onNew={newChat}
+            onPicked={() => {}}
+          />
+        </div>
+        {drawer === "agents" && <AgentsDrawer agents={state.agents} onDone={closeDrawer} />}
+        {toastLine}
+      </div>
+    );
+  }
+
   return (
     <div className="sidebar">
-      {!pinned && (
-        <Header
-          agent={activeAgent}
-          onUpgrade={() => activeAgent !== null && send({ kind: "upgradeAgent", patchbayAgentId: activeAgent.id })}
-          onSessions={openSessions}
-          onNew={newChat}
-        >
-          <AttentionIndicators
-            elsewhere={elsewhere(state)}
-            agents={state.agents}
-            waitingOn={(s) => waitingOn(state, s)}
-          />
-        </Header>
-      )}
+      {!pinned && header}
       {active !== null && (
         <SessionRow
           session={active}
@@ -280,11 +321,7 @@ export function App({
           onDone={() => setDrawer(null)}
         />
       )}
-      {toast !== null && (
-        <div className={`toast ${toast.kind === "warning" ? "warning" : ""}`}>
-          {toast.kind === "warning" && <Icon name="warning" />} {toast.msg}
-        </div>
-      )}
+      {toastLine}
     </div>
   );
 }

@@ -200,6 +200,19 @@ export function PreferencesSection(props: {
       </PrefCard>
 
       <PrefCard
+        title="Agent View layout"
+        help="What the Agent View shows: the chat of the session you are in, its sessions a click away —
+        or the sessions list itself, always in place with each session's status, where a click opens that
+        session's chat as an editor tab. The same switch is in the view's header."
+      >
+        <Toggle
+          checked={prefs.sessionsLayout === "list"}
+          label={prefs.sessionsLayout === "list" ? "sessions list, chats in tabs" : "chat"}
+          onChange={(list) => props.onSet({ sessionsLayout: list ? "list" : "chat" })}
+        />
+      </PrefCard>
+
+      <PrefCard
         title="Detached windows"
         help='Open a session — or the whole agent view — in its own floating window (the session
         menu&apos;s "Open in new window" and the view&apos;s detach command), multi-screen usable.

@@ -5,11 +5,13 @@
 // read-out (passed in as children), errors chip, session/new buttons. The
 // agent chip is a read-out, not a picker — agent choice happens where it
 // matters, in the new-chat flow; beside its name, the version chip — the
-// upgrade itself while the agent has a newer version. Settings lives in the
+// upgrade itself while the agent has a newer version; and the layout
+// switch — the chat here, or the sessions list here with each chat in a
+// tab. Settings lives in the
 // native view title bar (package.json view/title), not here. The usage
 // gauge lives in the composer's stats strip (composer/stats.tsx).
 import type { ReactNode } from "react";
-import type { AgentSummary } from "../../shared/protocol";
+import type { AgentSummary, SessionsLayout } from "../../shared/protocol";
 import { versionChip } from "../shared/agent-work";
 import { Dot } from "../shared/dot";
 import { ErrorsChip } from "../shared/errors-chip";
@@ -20,10 +22,16 @@ import { Button } from "@/components/ui/button";
 export function Header(props: {
   agent: AgentSummary | null;
   onUpgrade(): void;
+  /** The view's layout, and its switch. In the list the Sessions button
+   * is left out: the list it opens is the view. */
+  layout: SessionsLayout;
+  onLayout(layout: SessionsLayout): void;
   onSessions(): void;
   onNew(): void;
   children?: ReactNode;
 }) {
+  const list = props.layout === "list";
+  const switchTitle = list ? "Show the chat here" : "Show the sessions list here, each chat in a tab";
   const chip = versionChip(props.agent ?? undefined);
   return (
     <div className="hdr">
@@ -40,9 +48,22 @@ export function Header(props: {
       {props.children}
       <div className="spacer" />
       <ErrorsChip />
-      <Button variant="ghost" size="icon" className="h-6 w-6" title="Sessions" aria-label="Sessions" onClick={props.onSessions}>
-        <Icon name="history" />
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6"
+        title={switchTitle}
+        aria-label={switchTitle}
+        aria-pressed={list}
+        onClick={() => props.onLayout(list ? "chat" : "list")}
+      >
+        <Icon name={list ? "comment-discussion" : "list-unordered"} />
       </Button>
+      {!list && (
+        <Button variant="ghost" size="icon" className="h-6 w-6" title="Sessions" aria-label="Sessions" onClick={props.onSessions}>
+          <Icon name="history" />
+        </Button>
+      )}
       <Button variant="ghost" size="icon" className="h-6 w-6" title="New session" aria-label="New session" onClick={props.onNew}>
         <Icon name="add" />
       </Button>

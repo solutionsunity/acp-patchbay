@@ -1459,6 +1459,7 @@ body {
  * keyboard — dressed as the rows they were */
 .a-row,
 .s-row-pick,
+.sessions-home .foot,
 .drawer .foot {
   width: 100%;
   text-align: start;
@@ -1485,6 +1486,7 @@ body {
 
 .a-row:focus-visible,
 .s-row-pick:focus-visible,
+.sessions-home .foot:focus-visible,
 .drawer .foot:focus-visible {
   outline: 1px solid var(--ring);
   outline-offset: -1px;
@@ -1518,6 +1520,7 @@ body {
   color: var(--pb-text-faint);
 }
 
+.sessions-home .foot,
 .drawer .foot {
   display: block;
   padding: 8px 6px 2px;
@@ -1556,13 +1559,24 @@ body {
   }
 }
 
-/* The drawer's filter and what it shows, above the rows. */
+/* The sessions list as the view itself: it takes the view's height and
+ * scrolls within it, the header above it staying put. */
+.sessions-home {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 4px;
+}
+
+/* The list's filter and what it shows, above the rows. */
+.sessions-home .s-filter,
 .drawer .s-filter {
   display: flex;
   gap: 6px;
   padding: 0 8px 6px;
 }
 
+.sessions-home .s-shown,
 .drawer .s-shown {
   padding: 0 8px 6px;
   font-size: 11px;

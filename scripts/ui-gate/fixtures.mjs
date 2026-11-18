@@ -197,7 +197,7 @@ const unlistedMatrix = matrixOf({ "session.load": { declared: true, used: false 
 export const preferences = {
   soundOnDone: true, knobSource: "agent-default", idleCloseMinutes: 60,
   statsToolCalls: true, statsContextGauge: "details", statsPlanGauge: "details", statsCost: true,
-  detachWindows: true, attachmentMaxMB: 10, openThinking: false, executeCalls: "grouped",
+  detachWindows: true, sessionsLayout: "chat", attachmentMaxMB: 10, openThinking: false, executeCalls: "grouped",
   checkAgentUpdates: true,
 };
 

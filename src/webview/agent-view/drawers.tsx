@@ -102,8 +102,10 @@ export function AgentsDrawer(props: {
  * title or — for the ones loaded here, whose conversation is in this
  * window — of what was said in it; narrowed to one agent's. A row says
  * whether it is loaded, the line above the rows how many are: that is how
- * far a search of the conversations reaches. */
-export function SessionsDrawer(props: {
+ * far a search of the conversations reaches. One list, wherever it is
+ * shown: in the drawer over the chat, or in place as the view itself,
+ * where a pick opens the session's tab. */
+export function SessionsList(props: {
   sessions: readonly SessionSummary[];
   transcripts: AgentViewState["transcripts"];
   agents: readonly AgentSummary[];
@@ -111,8 +113,12 @@ export function SessionsDrawer(props: {
   markOf(session: SessionSummary): SessionMark | null;
   /** detachWindows preference — off hides "Open in new window". */
   detach: boolean;
+  /** The list is the view, and a pick opens the session's tab: a row
+   * offers no second way to do that. */
+  inTabs?: boolean;
   onNew(): void;
-  onDone(): void;
+  /** A session was picked. */
+  onPicked(): void;
 }) {
   const send = useActions();
   // One id, not one bool per row: switching straight from one row's menu to
@@ -130,7 +136,7 @@ export function SessionsDrawer(props: {
   const loaded = all.filter((r) => r.loaded).length;
   const narrowed = rows.length !== all.length;
   return (
-    <Drawer title="Sessions" onClose={props.onDone}>
+    <>
       {all.length > 0 && (
         <>
           <div className="s-filter">
@@ -184,7 +190,7 @@ export function SessionsDrawer(props: {
               aria-current={isActive ? "true" : undefined}
               onClick={() => {
                 send({ kind: "switchSession", patchbaySessionId: s.id });
-                props.onDone();
+                props.onPicked();
               }}
             >
               <MarkDot mark={props.markOf(s)} />
@@ -202,6 +208,7 @@ export function SessionsDrawer(props: {
                 session={s}
                 agent={agent}
                 detach={props.detach}
+                inTabs={props.inTabs === true}
                 open={openMenuId === s.id}
                 // Radix's DismissableLayer defers an outside-pointerdown
                 // dismiss to the following click event (deferPointerDownOutside,
@@ -233,6 +240,15 @@ export function SessionsDrawer(props: {
       <button type="button" className="foot" onClick={props.onNew}>
         <Icon name="add" /> New session
       </button>
+    </>
+  );
+}
+
+export function SessionsDrawer(props: Omit<Parameters<typeof SessionsList>[0], "onPicked" | "inTabs"> & { onDone(): void }) {
+  const { onDone, ...list } = props;
+  return (
+    <Drawer title="Sessions" onClose={onDone}>
+      <SessionsList {...list} onPicked={onDone} />
     </Drawer>
   );
 }

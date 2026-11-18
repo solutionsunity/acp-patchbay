@@ -138,6 +138,11 @@
         "category": "Patchbay"
       },
       {
+        "command": "acpPatchbay.toggleSessionsLayout",
+        "title": "Toggle Sessions Layout (Chat / List with Tabs)",
+        "category": "Patchbay"
+      },
+      {
         "command": "acpPatchbay.connectAgent",
         "title": "Connect Agent",
         "category": "Patchbay"

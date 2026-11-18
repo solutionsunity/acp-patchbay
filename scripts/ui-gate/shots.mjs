@@ -2094,6 +2094,62 @@ for (const theme of Object.keys(THEMES)) {
   await narrow.close();
 }
 
+// ── the Agent View's two layouts: the chat, or the sessions list in place
+// with each chat in a tab — one switch in the header, either way. The list
+// keeps the header's read-out of the other sessions and leaves out what it
+// already is (the Sessions button, a second way to open a tab).
+// Theme-independent. ──
+{
+  const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".prompt-editor");
+  const toList = 'button[aria-label="Show the sessions list here, each chat in a tab"]';
+  check("[layout] the chat's header offers the list", (await p.$(toList)) !== null && (await p.getAttribute(toList, "aria-pressed")) === "false");
+  await p.click(toList);
+  const asked = await p.evaluate(() => window.__actions.at(-1));
+  check(`[layout] the switch asks for the list (${JSON.stringify(asked)})`, asked?.kind === "setPreferences" && asked.patch.sessionsLayout === "list");
+  // the host's answer
+  await p.evaluate((prefs) => window.__patch([{ kind: "preferencesChanged", preferences: { ...prefs, sessionsLayout: "list" } }]), preferences);
+  await p.waitForSelector(".sessions-home .s-row");
+  const rows = await p.$$eval(".sessions-home .s-row .nm", (els) => els.map((el) => el.textContent));
+  check(
+    `[layout] the list is the view: every session in place, no chat and no composer (${rows})`,
+    rows.length === 4 && (await p.$(".prompt-editor")) === null && (await p.$(".chat")) === null && (await p.$(".drawer")) === null,
+  );
+  check(
+    "[layout] each row carries its mark, and the session in front is the row marked",
+    (await p.$(".sessions-home .unseen-dot")) !== null &&
+      (await p.$('.sessions-home [title="Waiting on you"]')) !== null &&
+      (await p.$eval(".sessions-home .s-row.active .nm", (el) => el.textContent)) === "find foo",
+  );
+  check(
+    "[layout] the header keeps its read-out of the other sessions and its New session, and leaves the Sessions button out",
+    (await p.$('.hdr button[aria-label^="Other sessions:"]')) !== null && (await p.$('.hdr button[aria-label="New session"]')) !== null && (await p.$('.hdr button[aria-label="Sessions"]')) === null,
+  );
+  check("[layout] the list finds a session as the drawer does", (await p.$('.sessions-home [aria-label="Find a session"]')) !== null && (await p.$eval(".sessions-home .s-shown", (el) => el.textContent.trim())) === "4 sessions · 2 loaded");
+  const row = p.locator(".sessions-home .s-row", { hasText: "refactor bar" });
+  await row.locator(".s-row-pick").click();
+  const picked = await p.evaluate(() => window.__actions.at(-1));
+  check(`[layout] a pick puts the session in front — the host opens its tab (${JSON.stringify(picked)})`, picked?.kind === "switchSession" && picked.patchbaySessionId === "s2" && (await p.$(".sessions-home .s-row")) !== null);
+  check(
+    "[layout] a row offers the window, and no second way to open its tab",
+    (await row.locator('button[aria-label="Open in new window"]').count()) === 1 && (await row.locator('button[aria-label="Open in tab"]').count()) === 0,
+  );
+  await row.locator('button[aria-label="Session actions"]').click();
+  const entries = await p.$$eval('[data-slot="dropdown-menu-content"] [role="menuitem"]', (els) => els.map((el) => el.textContent.trim()));
+  check(`[layout] …nor does its menu (${entries.slice(0, 2)})`, entries[0] === "Open in new window" && !entries.includes("Open in tab"));
+  await p.keyboard.press("Escape");
+  await p.screenshot({ path: `${OUT}/sessions-list-layout.png` });
+  const toChat = 'button[aria-label="Show the chat here"]';
+  check("[layout] the list's header offers the chat back", (await p.getAttribute(toChat, "aria-pressed")) === "true");
+  await p.click(toChat);
+  const back = await p.evaluate(() => window.__actions.at(-1));
+  check(`[layout] and one click asks for it (${JSON.stringify(back)})`, back?.kind === "setPreferences" && back.patch.sessionsLayout === "chat");
+  await p.evaluate((prefs) => window.__patch([{ kind: "preferencesChanged", preferences: { ...prefs, sessionsLayout: "chat" } }]), preferences);
+  check("[layout] the chat is back where it was", await p.waitForSelector(".prompt-editor", { timeout: 3000 }).then(() => true, () => false));
+  await p.close();
+}
+
 // ── only the view the user is in gives an arriving attachment its token: a
 // session open in two views gets it once, and a view without focus gives it
 // when focus comes. Theme-independent. ──

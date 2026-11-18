@@ -236,6 +236,8 @@ export class AgentPanelHost {
     private readonly extensionUri: vscode.Uri,
     private readonly channel: ChannelEndpoint,
     private readonly reportSurface: SurfaceReporter,
+    /** A session's own panel took the focus — the user is in that session. */
+    private readonly pinnedFocused: (patchbaySessionId: PatchbaySessionId) => void = () => {},
   ) {}
 
   /** The reaper-exemption surface: a session shown in its own window is
@@ -251,7 +253,6 @@ export class AgentPanelHost {
       return;
     }
     this.main = this.createPanel("Patchbay — Agents", undefined);
-    this.main.onDidDispose(() => (this.main = null));
     await this.floatActiveEditor();
   }
 
@@ -262,12 +263,8 @@ export class AgentPanelHost {
   async openPinned(patchbaySessionId: PatchbaySessionId, title: string, into: "tab" | "window"): Promise<void> {
     let panel = this.pinned.get(patchbaySessionId);
     if (panel === undefined) {
-      const created = (panel = this.createPanel(title, patchbaySessionId));
-      this.pinned.set(patchbaySessionId, created);
-      created.onDidDispose(() => {
-        this.floated.delete(created);
-        if (this.pinned.get(patchbaySessionId) === created) this.pinned.delete(patchbaySessionId);
-      });
+      panel = this.createPanel(title, patchbaySessionId);
+      this.pinned.set(patchbaySessionId, panel);
     } else {
       panel.reveal();
     }
@@ -296,8 +293,19 @@ export class AgentPanelHost {
     });
     const pinned = pinPatchbaySessionId ?? null;
     this.reportSurface(surface, { visible: panel.visible, pinned });
-    panel.onDidChangeViewState(() => this.reportSurface(surface, { visible: panel.visible, pinned }));
-    panel.onDidDispose(() => this.reportSurface(surface, null));
+    panel.onDidChangeViewState(() => {
+      this.reportSurface(surface, { visible: panel.visible, pinned });
+      if (panel.active && pinned !== null) this.pinnedFocused(pinned);
+    });
+    // Forgotten first, then reported gone: the report reaches every
+    // listener of the view's state, this host among them (syncSessions),
+    // which must not find a panel that no longer exists among its own.
+    panel.onDidDispose(() => {
+      this.floated.delete(panel);
+      if (this.main === panel) this.main = null;
+      if (pinned !== null && this.pinned.get(pinned) === panel) this.pinned.delete(pinned);
+      this.reportSurface(surface, null);
+    });
     return panel;
   }
 

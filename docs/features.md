@@ -114,6 +114,14 @@ deliverable.
   no strip of sessions inside it *(decided 2026-10-16, built 2026-11-18,
   #133 — a strip there would be a second switcher in the narrowest
   surface)*.
+- The Agent View has two layouts, one click apart in its header: the chat
+  of the session the user is in, as it always was — or the sessions list
+  itself, always in place with each session's status, where a click opens
+  that session's chat as an editor tab and the tab the user is in is the
+  session in front. A second way of working beside the first, never in its
+  place: the chat layout is the default and loses nothing *(decided
+  2026-11-19, #133: the list in place is what shows, while working in one
+  session, which other one wants the user)*.
 - User can find a session in the Sessions drawer by a word of its title,
   narrow the list to one agent's, and — for the sessions loaded in this
   window, whose conversation is here — by a word of what was said. Each

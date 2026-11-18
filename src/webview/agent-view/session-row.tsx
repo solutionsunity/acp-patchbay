@@ -36,6 +36,7 @@ export function SessionActions({
   session,
   agent,
   detach,
+  inTabs = false,
   reloading = false,
   open,
   onOpenChange,
@@ -44,6 +45,9 @@ export function SessionActions({
   /** The session's agent — what it declares decides what the menu offers. */
   agent: AgentSummary | undefined;
   detach: boolean;
+  /** The row's own pick opens the session's tab (the list layout): the
+   * row offers the window alone. */
+  inTabs?: boolean;
   /** The session is being attached (an open or a reload on its attachment
    * line) — Reload disables rather than queueing a second read behind the
    * first. */
@@ -57,9 +61,11 @@ export function SessionActions({
   return (
     <>
       <span className="open-apart">
-        <Button variant="ghost" size="icon" className="h-6 w-6" title="Open in tab" aria-label="Open in tab" onClick={() => openApart("tab")}>
-          <Icon name="window" />
-        </Button>
+        {!inTabs && (
+          <Button variant="ghost" size="icon" className="h-6 w-6" title="Open in tab" aria-label="Open in tab" onClick={() => openApart("tab")}>
+            <Icon name="window" />
+          </Button>
+        )}
         {detach && (
           <Button variant="ghost" size="icon" className="h-6 w-6" title="Open in new window" aria-label="Open in new window" onClick={() => openApart("window")}>
             <Icon name="multiple-windows" />
@@ -73,7 +79,7 @@ export function SessionActions({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => openApart("tab")}>Open in tab</DropdownMenuItem>
+          {!inTabs && <DropdownMenuItem onSelect={() => openApart("tab")}>Open in tab</DropdownMenuItem>}
           {detach && <DropdownMenuItem onSelect={() => openApart("window")}>Open in new window</DropdownMenuItem>}
           <DropdownMenuItem
             disabled={reloading}

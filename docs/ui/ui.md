@@ -40,7 +40,8 @@ never split panels.
 |---|---|---|
 | Agent chip | ● dot + name (+ ⬆ version) | live status of the session's agent — a read-out, not a picker. While the agent has a newer registry version, an amber `⬆ 1.2.0` chip inside it upgrades on click (asking first when open conversations would be disconnected) |
 | Other sessions | ● n per session mark, centered in the header | appears only when a session other than the ones on screen is waiting on you, finished unseen, or running; one trigger — click → a list grouped waiting / finished / running (a waiting row names what it is blocked on); a row opens that session. Always the list, even for one: the counts move, and the list names the session before the user leaves the one they are reading |
-| Sessions | 🕘 | click → **Sessions drawer** |
+| Layout | ☰ / 💬 | the view's two layouts, one click apart: the chat (default), or the sessions list in place with each chat in a tab (below). Also the palette's *Toggle Sessions Layout* and Preferences › Agent View layout |
+| Sessions | 🕘 | click → **Sessions drawer** (chat layout; in the list layout the list is the view) |
 | New chat | ＋ | one intent, one click: zero agents → Settings; exactly one → starts it directly, connecting in-pane if needed; several → Agents drawer as the picker |
 | Settings | ⚙ | opens the Settings editor tab **directly** — no menu until a menu earns it |
 
@@ -208,6 +209,21 @@ title. Then, per session: session mark (waiting on you / turn or sub-agent under
 handshake declared no `session/list`: `{agent} doesn't report its sessions —
 only the ones open in this window are listed`. Footer: `＋ New session` (the
 same smart ＋).
+
+**The list layout** — the Agent View as the sessions list itself: the header (agent
+chip, the read-out of the other sessions, the layout switch, New session), then the
+list the drawer shows — find box, agent filter, "n sessions · m loaded", a row per
+session with its mark — in place, scrolling under the header. A pick opens that
+session's chat as an editor tab, or brings its tab to the front; New session opens
+into a tab. The session in front is the tab the user is in: its row is the one
+marked, and the status bar and "add selection" follow it. Whatever puts a session
+in front opens its tab — Switch Session, a notice's Open, the status bar. A row
+offers Open in new window, and no second way to open its tab. Switching to the list
+opens the session in front as a tab, so its chat stays on screen; switching back
+leaves the tabs as they are, apart from the view again. After a window reload the
+session the user was in comes back in its tab; the others reopen from the list.
+The title-bar *Open Agent View in New Window* mirrors the view in whichever layout
+it is in.
 
 **Switch Session** (the palette command; the user binds its key) is the keyboard's
 way between sessions, in VS Code's own pick: each row the session's mark as an icon

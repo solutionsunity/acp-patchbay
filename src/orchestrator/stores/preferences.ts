@@ -9,7 +9,7 @@
 // on every read, so a version that adds a preference never invalidates an
 // older stored object and an absent key is honestly "the default".
 import { z } from "zod";
-import { DEFAULT_PREFERENCES, type GaugeDisplay, type PreferencesView, type ToolCallDisplay } from "../../shared/protocol";
+import { DEFAULT_PREFERENCES, SESSIONS_LAYOUTS, type GaugeDisplay, type PreferencesView, type ToolCallDisplay } from "../../shared/protocol";
 import { DISPLAY_LADDER } from "../../shared/tool-display";
 import { type KV, type StoredEntry, rewriteAtOpen } from "./kv";
 import { STORAGE_KEYS } from "./storage-keys";
@@ -34,6 +34,7 @@ const PREFERENCE_SCHEMAS: { [K in keyof PreferencesView]: z.ZodType<PreferencesV
   statsPlanGauge: gaugeDisplay,
   statsCost: z.boolean(),
   detachWindows: z.boolean(),
+  sessionsLayout: z.enum(SESSIONS_LAYOUTS),
   attachmentMaxMB: z.number().finite(),
   openThinking: z.boolean(),
   executeCalls: z.custom<ToolCallDisplay>((v) => DISPLAY_LADDER.includes(v as ToolCallDisplay)),
