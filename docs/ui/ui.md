@@ -573,8 +573,8 @@ carry no command a rule could match, so those always ask (decided 2026-10-17, #9
 #104).
 
 First, **Test a command**: a line in, run as *No shell* (the program and its
-arguments, as `terminal/create` runs them — `&&` is an argument) or *bash* (the
-script `bash -c` is handed), and how the rules of both layers judge it —
+arguments, as `terminal/create` runs them — `&&` is an argument) or *bash* or *zsh* (the
+script that shell's `-c` is handed, read with that shell's grammar), and how the rules of both layers judge it —
 each command it runs with its verdict, the rule that decided it (with its layer, or
 "no rule matched") and the rules that matched and lost; each part that can't be
 seen, with why; the line's verdict. The rule being typed in either card's add row

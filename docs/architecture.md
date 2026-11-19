@@ -1736,14 +1736,21 @@ supplies each agent in its own standard — and ACP carries no channel for it
 - **Command rules judge every command a line runs** (decided 2026-10-17,
   #104, superseding whole-line patterns where the first match in list order
   won). A run is read into the commands it runs (`shell-reading.ts`): plain
-  argv is one command, no shell between; a bash, sh or dash handed a script
-  is transparent — the script's commands are what run, read by tree-sitter's
-  bash grammar as WebAssembly (`@vscode/tree-sitter-wasm`, the parser Gemini
+  argv is one command, no shell between; a shell handed a script
+  is transparent — the script's commands are what run, read by tree-sitter
+  as WebAssembly (`@vscode/tree-sitter-wasm`, the parser Gemini
   CLI and Codex use for this) wherever they sit: chains, pipelines, loops,
-  subshells, functions, a shell further along (`sudo bash -c …`). A part whose
+  subshells, functions, a shell further along (`sudo bash -c …`). The
+  grammar is that of the shell handed the script, known only from the
+  program named: bash's for bash, sh and dash; zsh's own for zsh
+  *(decided 2026-11-19, #165 — zsh is macOS's default shell, and a script
+  no grammar reads always asks, whatever the rules say)* — so zsh's forms
+  are read as zsh reads them (`for f (a b) cmd`, `repeat`, `{ } always { }`,
+  `=name` as the program `name`). A rule names no shell. A part whose
   commands can't be seen from its text asks: a computed command name, `eval`,
   a command substitution, a shell reading its input, a script only known when
-  it runs, another shell's script — only bash is read. Two kinds of rule
+  it runs, a script for a shell with no grammar here (fish, PowerShell,
+  cmd). Two kinds of rule
   (`command-judge.ts`): a **command** pattern over one command's whole text,
   `*` matching anything, and a **word** — one word wherever it sits in a
   command, the program by its own name too (`/usr/bin/sudo` holds `sudo`),

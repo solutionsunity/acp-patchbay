@@ -3077,8 +3077,8 @@ export type CommandRuleView = AgentScoped &
 
 /** What the Commands page's tester runs a typed line as: the program and
  * its arguments, no shell between — as `terminal/create` runs — or a
- * script handed to bash. */
-export type TesterShell = "none" | "bash";
+ * script handed to a shell whose scripts are read. */
+export type TesterShell = "none" | "bash" | "zsh";
 
 /** A rule and the layer it sits in — one that bore on a command, or the
  * one being typed. */

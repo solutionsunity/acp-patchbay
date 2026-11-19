@@ -1,0 +1,8 @@
+{
+  "package": "tree-sitter-zsh",
+  "version": "0.64.3",
+  "source": "https://www.npmjs.com/package/tree-sitter-zsh",
+  "file": "tree-sitter-zsh.wasm",
+  "sha256": "1ae4f8acd7b67468098f9f4c98cdace9536afa45d56e6c9853411e197f748217",
+  "license": "MIT"
+}

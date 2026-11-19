@@ -362,7 +362,7 @@ export function CommandsSection(props: {
         <h2 className="mt-0">Test a command</h2>
         <div className="note mx-0 mt-0 mb-2">
           As the gate would judge it for the agent chosen, the rule being typed below counted as
-          added. No shell: a program and its arguments; bash: a script.
+          added. No shell: a program and its arguments; bash or zsh: a script, read as that shell reads it.
         </div>
         <div className="row">
           <Select value={shell} onValueChange={(v) => setShell(v as TesterShell)}>
@@ -372,6 +372,7 @@ export function CommandsSection(props: {
             <SelectContent>
               <SelectItem value="none">No shell</SelectItem>
               <SelectItem value="bash">bash</SelectItem>
+              <SelectItem value="zsh">zsh</SelectItem>
             </SelectContent>
           </Select>
           {state.agents.length > 0 && (

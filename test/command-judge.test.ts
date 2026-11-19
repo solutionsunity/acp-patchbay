@@ -108,9 +108,10 @@ describe("reading through a shell", () => {
   it.each([
     [["bash"], "bash reads its commands from its input"],
     [["bash", "-s", "x"], "bash reads its commands from its input"],
-    [["zsh", "-c", "ls"], "a zsh script — only bash is read"],
-    [["pwsh", "-Command", "ls"], "a pwsh script — only bash is read"],
-    [["cmd.exe", "/c", "dir"], "a cmd script — only bash is read"],
+    [["zsh"], "zsh reads its commands from its input"],
+    [["fish", "-c", "ls"], "a fish script — only bash and zsh are read"],
+    [["pwsh", "-Command", "ls"], "a pwsh script — only bash and zsh are read"],
+    [["cmd.exe", "/c", "dir"], "a cmd script — only bash and zsh are read"],
   ])("%j asks: %s", async (argv, reason) => {
     const reading = await reader.readRun(argv[0]!, argv.slice(1));
     expect(reading.unreadable.map((u) => u.reason)).toEqual([reason]);
@@ -122,14 +123,71 @@ describe("reading through a shell", () => {
   });
 
   it("a grammar that can't load reads every script as unreadable — plain argv needs none", async () => {
-    const lost = new ShellReader("/nowhere");
+    const lost = new ShellReader({ runtime: "/nowhere/tree-sitter.wasm", grammars: { bash: "/nowhere/bash.wasm", zsh: "/nowhere/zsh.wasm" } });
     expect((await lost.readRun("bash", ["-c", "ls"])).unreadable).toEqual([{ text: "ls", reason: "the bash reader didn't load" }]);
+    expect((await lost.readRun("zsh", ["-c", "ls"])).unreadable).toEqual([{ text: "ls", reason: "the zsh reader didn't load" }]);
     expect((await lost.readRun("npm", ["test"])).commands.map((c) => c.text)).toEqual(["npm test"]);
   });
 
   it("plain argv is one command, whatever its arguments hold — no shell reads them", async () => {
     const reading = await reader.readRun("echo", ["a; rm -rf /", "$(id)"]);
     expect(reading).toEqual({ commands: [{ text: 'echo "a; rm -rf /" $(id)', words: ["echo", "a; rm -rf /", "$(id)"] }], unreadable: [] });
+  });
+});
+
+describe("reading a zsh script — with zsh's own grammar (#165)", () => {
+  const zsh = async (text: string) => reader.readRun("/bin/zsh", ["-l", "-c", text]);
+  const ran = async (text: string) => (await zsh(text)).commands.map((c) => c.text);
+  const asks = async (text: string) => (await zsh(text)).unreadable.map((u) => u.reason);
+
+  it("the script's commands are what run, as with bash", async () => {
+    expect(await ran("printf '%s\\n' hello")).toEqual(["printf %s\\n hello"]);
+    expect(await ran("npm test && rm -rf build; FOO=1 git push")).toEqual(["npm test", "rm -rf build", "git push"]);
+    expect(await asks("npm test && rm -rf build")).toEqual([]);
+  });
+
+  it.each([
+    ["for f (a b) rm $f", ["rm $f"]],
+    ["foreach f (a b); rm $f; end", ["rm $f"]],
+    ["repeat 3 curl example.com", ["curl example.com"]],
+    ["() { rm -rf x }; function f { echo hi }", ["rm -rf x", "echo hi"]],
+    ["{ make } always { rm -rf tmp }", ["make", "rm -rf tmp"]],
+    ["if [[ -n $x ]] { echo yes } else { rm no }", ["echo yes", "rm no"]],
+    ["for f in *.txt(N); do print -r -- ${f:t}; done", ["print -r -- ${f:t}"]],
+    ["sleep 1 &! ; make &|", ["sleep 1", "make"]],
+  ])("zsh's own forms are read: %s", async (script, commands) => {
+    expect(await ran(script)).toEqual(commands);
+    expect(await asks(script)).toEqual([]);
+  });
+
+  it("`=name` is the program `name`: a rule on it holds", async () => {
+    expect(await ran("=rm -rf x")).toEqual(["rm -rf x"]);
+    expect(judgeCommands(await zsh("=rm -rf x"), layers([allow("*"), denyWord("rm")])).verdict).toBe("deny");
+    // bash has no such reading: there the word is the program's name as written
+    expect((await readLine("=rm -rf x")).commands.map((c) => c.text)).toEqual(["=rm -rf x"]);
+  });
+
+  it.each([
+    ["echo $(id)", "a command substitution — its output is only known when it runs"],
+    ["x=`whoami`", "a command substitution — its output is only known when it runs"],
+    ["diff =(ls a) <(ls b)", "a command substitution — its output is only known when it runs"],
+    ["$=cmd arg", "the command's name is only known when it runs"],
+    ["${(e)x}", "the command's name is only known when it runs"],
+    ['eval "ls"', "eval runs its arguments as a command"],
+    ["if [[ -d x ]] rm -rf x", "not zsh this reader can follow"],
+  ])("what the text can't show asks: %s", async (script, reason) => {
+    expect(await asks(script)).toContain(reason);
+  });
+
+  it("each script is read as the shell handed it: zsh inside bash, bash inside zsh", async () => {
+    expect((await readLine(`zsh -c 'for f (a b) rm $f'`)).commands.map((c) => c.text)).toEqual(["rm $f"]);
+    // the same words handed to bash are not bash: it asks
+    expect(await asks(`bash -c 'for f (a b) rm $f'`)).toContain("not bash this reader can follow");
+  });
+
+  it("a wildcard allow covers a zsh script, and a deny inside it still wins", async () => {
+    expect(judgeCommands(await zsh("printf hello"), layers([allow("*")])).verdict).toBe("allow");
+    expect(judgeCommands(await zsh("make && rm -rf /"), layers([allow("*"), deny("rm *")])).verdict).toBe("deny");
   });
 });
 

@@ -340,7 +340,7 @@ deliverable.
   Claude in Auto, its default since adapter 0.101.0, is one (#169). Neither layer ever rides the
   repo.
 - Every command a line runs is judged — inside a chain, a pipeline, a loop,
-  a `bash -c` script — by a pattern over the command or by a word wherever
+  a `bash -c` or `zsh -c` script, each read as its own shell reads it — by a pattern over the command or by a word wherever
   it sits (`sudo`, `--watch`); a rejected word rejects the line, the order
   rules were added in decides nothing, and a line whose commands can't be
   seen from its text asks. A rule's decision shows its card, settled, naming

@@ -149,8 +149,10 @@ const configs = [
 
 // Font assets aren't JS/CSS esbuild bundles — copied straight from the
 // installed package so both webviews share one codicon.css/.ttf pair. The
-// bash grammar the command rules read lines with is WebAssembly the parser
-// loads at run time — copied the same way, the parser and the one grammar.
+// grammars the command rules read scripts with are WebAssembly the parser
+// loads at run time — copied the same way: the parser and bash's grammar
+// from their package, zsh's from this repository, which keeps the file
+// its author publishes, with its license beside it.
 function copyAssets() {
   mkdirSync("out/codicons", { recursive: true });
   for (const file of ["codicon.css", "codicon.ttf"]) {
@@ -159,6 +161,9 @@ function copyAssets() {
   mkdirSync("out/tree-sitter", { recursive: true });
   for (const file of ["tree-sitter.wasm", "tree-sitter-bash.wasm"]) {
     copyFileSync(`node_modules/@vscode/tree-sitter-wasm/wasm/${file}`, `out/tree-sitter/${file}`);
+  }
+  for (const file of ["tree-sitter-zsh.wasm", "tree-sitter-zsh.LICENSE"]) {
+    copyFileSync(`data/grammars/${file}`, `out/tree-sitter/${file}`);
   }
 }
 

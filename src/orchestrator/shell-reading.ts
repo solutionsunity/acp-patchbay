@@ -6,11 +6,13 @@
 // part whose commands can't be known from the text. One reading for every
 // command patchbay judges: a run handed over as argv, and a shell line.
 //
-// The line is parsed by tree-sitter's bash grammar, run as WebAssembly —
-// the parser Gemini CLI and Codex use for the same job. Only bash is read:
-// a line for another shell is unreadable, and so asks. Plain argv needs no
-// parser at all — the grammar loads the first time a shell script shows up.
-import { join } from "node:path";
+// A script is parsed by tree-sitter, run as WebAssembly — the parser Gemini
+// CLI and Codex use for the same job — with the grammar of the shell that
+// will run it: bash's for bash, sh and dash, zsh's for zsh. Which shell
+// that is, is only ever known from the program handed the script; a script
+// for a shell with no grammar here is unreadable, and so asks. Plain argv
+// needs no parser at all — a grammar loads the first time a script for its
+// shell shows up.
 import { Language, type Node, Parser } from "@vscode/tree-sitter-wasm";
 import { quoteArg } from "../shared/command-line";
 
@@ -40,15 +42,26 @@ interface Word {
   literal: boolean;
 }
 
-/** Shells whose `-c` script is read as bash: the grammar is bash, and sh
- * and dash speak a subset of it. */
-const BASH = new Set(["bash", "sh", "dash"]);
+/** The grammars a script is read with. */
+export type ShellGrammar = "bash" | "zsh";
+
+/** Where the parser's own WebAssembly and each grammar's are. */
+export interface ShellGrammarFiles {
+  runtime: string;
+  grammars: Readonly<Record<ShellGrammar, string>>;
+}
+
+/** The grammar each shell's script is read with: sh and dash speak a
+ * subset of bash. */
+const GRAMMAR_OF: Readonly<Record<string, ShellGrammar>> = { bash: "bash", sh: "bash", dash: "bash", zsh: "zsh" };
 /** Shells whose scripts this reader can't follow. */
-const OTHER_SHELLS = new Set(["zsh", "ksh", "mksh", "fish", "csh", "tcsh", "pwsh", "powershell", "cmd"]);
+const OTHER_SHELLS = new Set(["ksh", "mksh", "fish", "csh", "tcsh", "pwsh", "powershell", "cmd"]);
+/** What the reader reads, as a refusal names it. */
+const READ = `only ${[...new Set(Object.values(GRAMMAR_OF))].join(" and ")} are read`;
 
 function isShell(word: string): boolean {
   const name = programName(word);
-  return BASH.has(name) || OTHER_SHELLS.has(name);
+  return Object.hasOwn(GRAMMAR_OF, name) || OTHER_SHELLS.has(name);
 }
 
 /** A program's own name: its path and a Windows `.exe` left off. */
@@ -58,25 +71,27 @@ export function programName(word: string): string {
 
 const parsers = new Map<string, Promise<Parser | null>>();
 
-/** The bash parser, loaded once per process from `grammarDir`; null when
- * it can't load — every script then reads as unreadable, and asks. */
-function bashParser(grammarDir: string): Promise<Parser | null> {
-  let loading = parsers.get(grammarDir);
+/** A grammar's parser, loaded once per process from its file; null when
+ * it can't load — every script for it then reads as unreadable, and asks. */
+function parserFor(files: ShellGrammarFiles, grammar: ShellGrammar): Promise<Parser | null> {
+  const file = files.grammars[grammar];
+  let loading = parsers.get(file);
   if (loading === undefined) {
     loading = (async () => {
-      await Parser.init({ locateFile: (file: string) => join(grammarDir, file) });
+      await Parser.init({ locateFile: () => files.runtime });
       const parser = new Parser();
-      parser.setLanguage(await Language.load(join(grammarDir, "tree-sitter-bash.wasm")));
+      parser.setLanguage(await Language.load(file));
       return parser;
     })().catch(() => null);
-    parsers.set(grammarDir, loading);
+    parsers.set(file, loading);
   }
   return loading;
 }
 
+type Parsers = Readonly<Partial<Record<ShellGrammar, Parser | null>>>;
+
 export class ShellReader {
-  /** `grammarDir` holds `tree-sitter.wasm` and `tree-sitter-bash.wasm`. */
-  constructor(private readonly grammarDir: string) {}
+  constructor(private readonly files: ShellGrammarFiles) {}
 
   /** A program run with its arguments, no shell between — each argument
    * is one word, whatever it holds. A shell among them is read through:
@@ -84,7 +99,17 @@ export class ShellReader {
    * will run it. */
   async readRun(command: string, args: readonly string[]): Promise<ShellReading> {
     const words = [command, ...args].map((value) => ({ value, literal: true }));
-    const reading = new Reading(words.some((w) => isShell(w.value)) ? await bashParser(this.grammarDir) : null);
+    // The walk is one pass with no waiting in it, so every grammar it can
+    // come to need is loaded before it starts: a script names the shell of
+    // a script inside it in its own text, and nowhere else.
+    const parsers: Partial<Record<ShellGrammar, Parser | null>> = {};
+    if (words.some((w) => isShell(w.value))) {
+      const said = words.map((w) => w.value).join(" ");
+      for (const [shell, grammar] of Object.entries(GRAMMAR_OF)) {
+        if (!(grammar in parsers) && said.includes(shell)) parsers[grammar] = await parserFor(this.files, grammar);
+      }
+    }
+    const reading = new Reading(parsers);
     reading.run(words);
     return reading.result();
   }
@@ -93,31 +118,36 @@ export class ShellReader {
 class Reading {
   private readonly commands: ReadCommand[] = [];
   private readonly unreadable: UnreadPart[] = [];
+  /** The grammar of the script being walked. */
+  private grammar: ShellGrammar = "bash";
 
-  constructor(private readonly parser: Parser | null) {}
+  constructor(private readonly parsers: Parsers) {}
 
   result(): ShellReading {
     return { commands: this.commands, unreadable: this.unreadable };
   }
 
-  script(text: string): void {
-    const tree = this.parser?.parse(text) ?? null;
+  script(text: string, grammar: ShellGrammar): void {
+    const tree = this.parsers[grammar]?.parse(text) ?? null;
     if (tree === null) {
-      this.unreadable.push({ text, reason: "the bash reader didn't load" });
+      this.unreadable.push({ text, reason: `the ${grammar} reader didn't load` });
       return;
     }
+    const outer = this.grammar;
+    this.grammar = grammar;
     try {
-      if (tree.rootNode.hasError) this.unreadable.push({ text, reason: "not bash this reader can follow" });
+      if (tree.rootNode.hasError) this.unreadable.push({ text, reason: `not ${grammar} this reader can follow` });
       this.walk(tree.rootNode);
     } finally {
+      this.grammar = outer;
       tree.delete();
     }
   }
 
   /** A program and its words: judged as itself — unless it is a shell
    * handed a script, which is transparent: the script's commands are what
-   * run. A bash further along (`sudo bash -c …`) is read through too; any
-   * other shell started here asks — its scripts aren't read. */
+   * run. A shell further along (`sudo bash -c …`) is read through too; one
+   * with no grammar here, started here, asks — its scripts aren't read. */
   run(words: readonly Word[]): void {
     const at = words.findIndex((w) => w.literal && isShell(w.value));
     if (at === -1) {
@@ -127,8 +157,9 @@ class Reading {
     const shell = words.slice(at);
     const name = programName(shell[0]!.value);
     const text = shell.map(textOf).join(" ");
-    if (!BASH.has(name)) {
-      if (at === 0) this.unreadable.push({ text, reason: `a ${name} script — only bash is read` });
+    const grammar = GRAMMAR_OF[name];
+    if (grammar === undefined) {
+      if (at === 0) this.unreadable.push({ text, reason: `a ${name} script — ${READ}` });
       else this.commands.push(commandOf(words));
       return;
     }
@@ -137,7 +168,7 @@ class Reading {
     if (script === null || script.kind === "file") return;
     if (script.kind === "input") this.unreadable.push({ text, reason: `${name} reads its commands from its input` });
     else if (!script.script.literal) this.unreadable.push({ text, reason: "the script is only known when it runs" });
-    else this.script(script.script.value);
+    else this.script(script.script.value, grammar);
   }
 
   private walk(node: Node): void {
@@ -168,7 +199,7 @@ class Reading {
     const head = name?.namedChildren[0] ?? null;
     if (head === null) return;
     this.walk(head);
-    const program = wordOf(head);
+    const program = this.programOf(head);
     if (!program.literal) {
       this.unreadable.push({ text: node.text, reason: "the command's name is only known when it runs" });
       return;
@@ -178,6 +209,13 @@ class Reading {
       return;
     }
     this.run([program, ...args.map(wordOf)]);
+  }
+
+  /** The word a command is named by. zsh reads `=name` as the path of the
+   * program `name`, so that is the program it runs. */
+  private programOf(head: Node): Word {
+    const word = wordOf(head);
+    return this.grammar === "zsh" && word.literal && /^=[^=(]/.test(word.value) ? { value: word.value.slice(1), literal: true } : word;
   }
 
   /** `export`, `declare`, `unset` and their kin: a command named by its

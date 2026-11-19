@@ -174,7 +174,13 @@ export class OrchestratorHost {
           editorServer: vscode.Uri.joinPath(context.extensionUri, "out", "mcp-server.js").fsPath,
           bridge: vscode.Uri.joinPath(context.extensionUri, "out", "mcp-bridge.js").fsPath,
         },
-        shellGrammar: vscode.Uri.joinPath(context.extensionUri, "out", "tree-sitter").fsPath,
+        shellGrammar: {
+          runtime: vscode.Uri.joinPath(context.extensionUri, "out", "tree-sitter", "tree-sitter.wasm").fsPath,
+          grammars: {
+            bash: vscode.Uri.joinPath(context.extensionUri, "out", "tree-sitter", "tree-sitter-bash.wasm").fsPath,
+            zsh: vscode.Uri.joinPath(context.extensionUri, "out", "tree-sitter", "tree-sitter-zsh.wasm").fsPath,
+          },
+        },
       },
       {
         handleAction: (action) => this.handleAction(action),

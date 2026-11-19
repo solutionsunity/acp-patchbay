@@ -89,7 +89,7 @@ import { LastActiveSessionStore } from "./stores/last-active-session";
 import { LastConnectedStore } from "./stores/last-connected";
 import { DefaultAgentFoldStore } from "./stores/default-agent-fold";
 import { type CommandRule, MachineRulesStore, PermissionRulesStore } from "./stores/permission-rules";
-import { ShellReader } from "./shell-reading";
+import { ShellReader, type ShellGrammarFiles } from "./shell-reading";
 import { MachineWriteScopeStore, withWriteEntry, withWriteScope, writeScopeRows } from "./stores/write-scope";
 import type { AgentScope } from "../shared/agent-scope";
 import { SavedRootsStore } from "./stores/saved-roots";
@@ -142,9 +142,8 @@ export interface OrchestratorPlace {
   workspace: WorkspaceId | null;
   /** The bundled scripts an agent spawns as MCP servers. */
   scripts: { editorServer: string; bridge: string };
-  /** The folder holding the bash grammar the command rules read lines
-   * with (`tree-sitter.wasm`, `tree-sitter-bash.wasm`). */
-  shellGrammar: string;
+  /** The parser and the grammars the command rules read scripts with. */
+  shellGrammar: ShellGrammarFiles;
   /** The name of the IPC host's socket — one per window. */
   ipcName: string;
 }

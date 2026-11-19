@@ -51,9 +51,10 @@ export function sameCommandLine(
 /** What a typed line runs as, the way the Commands page's tester takes it:
  * with no shell, the line is the program and its arguments, read as a
  * command line is (null when it isn't one — a quote left open, nothing
- * typed); under bash, the line is the script `bash -c` is handed. */
+ * typed); under a shell, the line is the script that shell's `-c` is
+ * handed. */
 export function typedRun(line: string, shell: TesterShell): { command: string; args: string[] } | null {
-  return shell === "bash" ? { command: "bash", args: ["-c", line] } : parseCommandLine(line);
+  return shell === "none" ? parseCommandLine(line) : { command: shell, args: ["-c", line] };
 }
 
 /** The command line a person reads — and `parseCommandLine` reads back to

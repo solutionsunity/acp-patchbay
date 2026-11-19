@@ -17,3 +17,12 @@ record heritage:
   approach were checked against vscode-acp and re-implemented here on the ACP
   SDK 1.x client API. See src/orchestrator/webview-host.ts and
   src/orchestrator/pool.ts for the in-source acknowledgements.
+
+--------------------------------------------------------------------------------
+
+This product bundles the following third-party file, unmodified:
+
+  tree-sitter-zsh.wasm, the zsh grammar of tree-sitter-zsh
+  (https://github.com/georgeharker/tree-sitter-zsh), version 0.64.3
+  Licensed under the MIT License; its text ships beside the file as
+  tree-sitter-zsh.LICENSE.

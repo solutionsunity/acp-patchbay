@@ -105,6 +105,13 @@
   because they carried no `readOnlyHint` and MCP treats a silent tool as one
   that may write. Every tool now states that it changes nothing and stays
   inside the editor. (#162)
+- **zsh scripts are read.** A command run through zsh (`/bin/zsh -l -c
+  '…'`, the default shell on macOS) always asked, whatever your command
+  rules said, because Patchbay read only bash; the card could offer no
+  rule to keep. A zsh script is now read with zsh's own grammar, so your
+  rules judge each command in it, as in a bash script. What can't be known
+  from the text (a command substitution, `eval`) still asks. The Commands
+  page's tester can run a line as zsh. (#165)
 - **Add files to the chat from where they already are.** A new right-click
   entry, "Add to Patchbay Context", in the Explorer (files and folders,
   several at once) and on an editor tab, and "Add File to Patchbay
