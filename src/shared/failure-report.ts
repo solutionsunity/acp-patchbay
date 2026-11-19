@@ -26,7 +26,7 @@ export const FAILURE_SURFACES = {
   mcpSession: { shown: "the chat, an MCP server failing for a session", words: "server" },
   registry: { shown: "Settings › Agents, the registry that couldn't be read", words: "patchbay" },
   configImport: { shown: "Settings › Import/Export, an import", words: "patchbay" },
-  notification: { shown: "a warning notification", words: "patchbay" },
+  notification: { shown: "a notification", words: "patchbay" },
   viewError: { shown: "a Patchbay view, an error of its own", words: "patchbay" },
 } as const satisfies Record<string, { shown: string; words: FailureWords }>;
 

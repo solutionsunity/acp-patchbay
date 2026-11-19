@@ -107,16 +107,20 @@ export class OrchestratorHost {
   private readonly selfVersion: SelfVersionHost;
   private readonly failureSurfaces: FailureSurfaces = {
     logCatch: (context) => this.orchestrator.logCatch(context),
-    // A failure said here can be reported from here, as from any surface.
-    warn: (message) => {
-      vscode.window.showWarningMessage(message, REPORT_FAILURE.label).then(
-        (picked) => {
-          if (picked === REPORT_FAILURE.label) this.reportFailure({ where: "notification", said: message }).catch(this.orchestrator.logCatch("report a failure"));
-        },
-        () => {},
-      );
-    },
+    warn: (message) => this.sayFailure(message, "warning"),
   };
+
+  /** A failure said in a notification — and reportable from it, as from
+   * any surface that shows one. */
+  private sayFailure(message: string, as: "warning" | "error"): void {
+    const show = as === "error" ? vscode.window.showErrorMessage : vscode.window.showWarningMessage;
+    show(message, REPORT_FAILURE.label).then(
+      (picked) => {
+        if (picked === REPORT_FAILURE.label) this.reportFailure({ where: "notification", said: message }).catch(this.orchestrator.logCatch("report a failure"));
+      },
+      () => {},
+    );
+  }
   /** The one door a view's action comes in by. */
   private readonly handleAction = actionDoor((action) => this.perform(action), this.failureSurfaces);
   /** Sessions shown in their own detached panels (AgentPanelHost, assigned
@@ -315,7 +319,7 @@ export class OrchestratorHost {
       else await vscode.workspace.fs.writeFile(target, Buffer.from(configurationText(file), "utf8"));
     } catch (err) {
       this.log.error(`export to ${target.toString()}: ${agentErrorText(err)}`);
-      vscode.window.showErrorMessage(`Export failed — ${agentErrorText(err)}`);
+      this.sayFailure(`Export failed — ${agentErrorText(err)}`, "error");
       return;
     }
     vscode.window.showInformationMessage(
