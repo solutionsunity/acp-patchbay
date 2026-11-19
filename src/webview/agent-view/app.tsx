@@ -204,132 +204,134 @@ export function App({
   }
 
   return (
-    <div className="sidebar">
-      {!pinned && header}
-      {active !== null && (
-        <SessionRow
-          session={active}
-          agent={activeAgent ?? undefined}
-          original={active.forkedFrom === undefined ? undefined : state.sessions.find((s) => s.id === active.forkedFrom)}
-          onTitle={pinned ? () => {} : openSessions}
-          detach={detach && !pinned}
-          reloading={attaching(active)}
-        />
-      )}
-      {activeAgent !== null && restartOffered(activeAgent) && (
-        <div className="crash-banner">
-          <Icon name="warning" /> {activeAgent.name} crashed
-          {activeAgent.detail !== undefined ? ` — ${activeAgent.detail}` : ""}
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => {
-              send({ kind: "restartAgent", patchbayAgentId: activeAgent.id });
-              showToast("restarting…");
+    // Everything a session's view shows concerns that session's agent — its
+    // chat and its composer alike: a failure reported from either names it.
+    <FailuresOfAgent.Provider value={active?.patchbayAgentId}>
+      <div className="sidebar">
+        {!pinned && header}
+        {active !== null && (
+          <SessionRow
+            session={active}
+            agent={activeAgent ?? undefined}
+            original={active.forkedFrom === undefined ? undefined : state.sessions.find((s) => s.id === active.forkedFrom)}
+            onTitle={pinned ? () => {} : openSessions}
+            detach={detach && !pinned}
+            reloading={attaching(active)}
+          />
+        )}
+        {activeAgent !== null && restartOffered(activeAgent) && (
+          <div className="crash-banner">
+            <Icon name="warning" /> {activeAgent.name} crashed
+            {activeAgent.detail !== undefined ? ` — ${activeAgent.detail}` : ""}
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                send({ kind: "restartAgent", patchbayAgentId: activeAgent.id });
+                showToast("restarting…");
+              }}
+            >
+              Restart
+            </Button>
+            <ReportFailure failure={crashOf(activeAgent)} />
+            {activeAgent.stderr !== undefined && activeAgent.stderr.length > 0 && (
+              <pre className="stderr-tail">{activeAgent.stderr.join("\n")}</pre>
+            )}
+          </div>
+        )}
+        <SessionLinks.Provider value={links}>
+          <Chat
+            state={state}
+            activeSession={active}
+            blocks={viewed !== null ? viewedBlocks : blocks}
+            derived={viewed !== null ? viewedDerived : derived}
+            onNewChat={newChat}
+            goTo={goTo}
+            {...(viewed !== null && active !== null ? { subagent: { view: viewed, path: [active.id, ...subagentAncestors(roster, viewed).map((s) => s.id)] } } : {})}
+          />
+        </SessionLinks.Provider>
+        {active !== null && (
+          // keyed by session: which panel is open is per-session render state,
+          // not something a session switch should inherit
+          <ReadoutStrip
+            key={active.id}
+            patchbaySessionId={active.id}
+            plan={state.activePlan[active.id] ?? null}
+            subagents={roster}
+            onOpenSubagent={(subagent) => setViewing({ session: active.id, subagent })}
+            prompts={derived.totals.prompts}
+            composerEmpty={composerEmpty}
+            onGoTo={(prompt) => {
+              setViewing(null);
+              setGoTo((g) => ({ seq: (g?.seq ?? 0) + 1, id: prompt.id }));
             }}
-          >
-            Restart
-          </Button>
-          <ReportFailure failure={crashOf(activeAgent)} />
-          {activeAgent.stderr !== undefined && activeAgent.stderr.length > 0 && (
-            <pre className="stderr-tail">{activeAgent.stderr.join("\n")}</pre>
-          )}
-        </div>
-      )}
-      <SessionLinks.Provider value={links}>
-        <FailuresOfAgent.Provider value={active?.patchbayAgentId}>
-        <Chat
-          state={state}
-          activeSession={active}
-          blocks={viewed !== null ? viewedBlocks : blocks}
-          derived={viewed !== null ? viewedDerived : derived}
-          onNewChat={newChat}
-          goTo={goTo}
-          {...(viewed !== null && active !== null ? { subagent: { view: viewed, path: [active.id, ...subagentAncestors(roster, viewed).map((s) => s.id)] } } : {})}
-        />
-        </FailuresOfAgent.Provider>
-      </SessionLinks.Provider>
-      {active !== null && (
-        // keyed by session: which panel is open is per-session render state,
-        // not something a session switch should inherit
-        <ReadoutStrip
-          key={active.id}
-          patchbaySessionId={active.id}
-          plan={state.activePlan[active.id] ?? null}
-          subagents={roster}
-          onOpenSubagent={(subagent) => setViewing({ session: active.id, subagent })}
-          prompts={derived.totals.prompts}
-          composerEmpty={composerEmpty}
-          onGoTo={(prompt) => {
-            setViewing(null);
-            setGoTo((g) => ({ seq: (g?.seq ?? 0) + 1, id: prompt.id }));
-          }}
-          onReuse={(prompt) => setReuse((r) => ({ seq: (r?.seq ?? 0) + 1, prompt }))}
-          files={derived.totals.files}
-          openEditors={state.openEditors}
+            onReuse={(prompt) => setReuse((r) => ({ seq: (r?.seq ?? 0) + 1, prompt }))}
+            files={derived.totals.files}
+            openEditors={state.openEditors}
+            workspaceRoots={state.workspaceRoots}
+            contextRoots={state.contextRoots[active.id] ?? []}
+          />
+        )}
+        {active !== null && (
+          <QueueBand
+            patchbaySessionId={active.id}
+            queued={state.promptQueue[active.id] ?? []}
+            composerEmpty={composerEmpty}
+          />
+        )}
+        <Composer
+          agent={activeAgent}
+          focusRequest={state.composerFocus}
+          session={active}
+          incoming={incoming}
+          commands={active !== null ? (state.commandsBySession[active.id] ?? []) : []}
+          contextChips={active !== null ? (state.contextChips[active.id] ?? []) : []}
+          contextRoots={active !== null ? (state.contextRoots[active.id] ?? []) : []}
           workspaceRoots={state.workspaceRoots}
-          contextRoots={state.contextRoots[active.id] ?? []}
+          savedRoots={state.savedRoots}
+          workspace={state.workspace}
+          rootsControls={rootsControls({
+            advertised: activeMatrix?.["session.additionalDirectories"]?.declared === true,
+            resumeDeclared: activeMatrix?.["session.resume"]?.declared === true,
+            loadDeclared: activeMatrix?.["session.load"]?.declared === true,
+            hasTurns: active?.hasTurns === true,
+          })}
+          mcpControls={mcpChipControls({
+            mcp: active !== null ? state.sessionMcp[active.id] : undefined,
+            servers: state.mcpServers,
+            here: state.workspace,
+            canReopen: activeMatrix?.["session.load"]?.declared === true || activeMatrix?.["session.resume"]?.declared === true,
+          })}
+          mcpServers={state.mcpServers}
+          liveSelection={state.liveSelection}
+          openEditors={state.openEditors}
+          workspaceFiles={state.workspaceFiles}
+          knobs={active !== null ? (state.sessionKnobs[active.id] ?? []) : []}
+          draft={active !== null ? (state.drafts[active.id] ?? "") : ""}
+          reuse={reuse}
+          preferences={state.preferences}
+          totals={derived.totals}
+          usage={active !== null ? (state.sessionUsage[active.id] ?? null) : null}
+          onNotice={(msg) => showToast(msg, "warning")}
+          onSent={() => setViewing(null)}
         />
-      )}
-      {active !== null && (
-        <QueueBand
-          patchbaySessionId={active.id}
-          queued={state.promptQueue[active.id] ?? []}
-          composerEmpty={composerEmpty}
-        />
-      )}
-      <Composer
-        agent={activeAgent}
-        focusRequest={state.composerFocus}
-        session={active}
-        incoming={incoming}
-        commands={active !== null ? (state.commandsBySession[active.id] ?? []) : []}
-        contextChips={active !== null ? (state.contextChips[active.id] ?? []) : []}
-        contextRoots={active !== null ? (state.contextRoots[active.id] ?? []) : []}
-        workspaceRoots={state.workspaceRoots}
-        savedRoots={state.savedRoots}
-        workspace={state.workspace}
-        rootsControls={rootsControls({
-          advertised: activeMatrix?.["session.additionalDirectories"]?.declared === true,
-          resumeDeclared: activeMatrix?.["session.resume"]?.declared === true,
-          loadDeclared: activeMatrix?.["session.load"]?.declared === true,
-          hasTurns: active?.hasTurns === true,
-        })}
-        mcpControls={mcpChipControls({
-          mcp: active !== null ? state.sessionMcp[active.id] : undefined,
-          servers: state.mcpServers,
-          here: state.workspace,
-          canReopen: activeMatrix?.["session.load"]?.declared === true || activeMatrix?.["session.resume"]?.declared === true,
-        })}
-        mcpServers={state.mcpServers}
-        liveSelection={state.liveSelection}
-        openEditors={state.openEditors}
-        workspaceFiles={state.workspaceFiles}
-        knobs={active !== null ? (state.sessionKnobs[active.id] ?? []) : []}
-        draft={active !== null ? (state.drafts[active.id] ?? "") : ""}
-        reuse={reuse}
-        preferences={state.preferences}
-        totals={derived.totals}
-        usage={active !== null ? (state.sessionUsage[active.id] ?? null) : null}
-        onNotice={(msg) => showToast(msg, "warning")}
-        onSent={() => setViewing(null)}
-      />
-      {drawer === "agents" && (
-        <AgentsDrawer agents={state.agents} onDone={closeDrawer} />
-      )}
-      {drawer === "sessions" && (
-        <SessionsDrawer
-          sessions={state.sessions}
-          transcripts={state.transcripts}
-          agents={state.agents}
-          activePatchbaySessionId={state.activePatchbaySessionId}
-          markOf={(s) => sessionMark(state, s)}
-          detach={detach}
-          onNew={newChat}
-          onDone={() => setDrawer(null)}
-        />
-      )}
-      {toastLine}
-    </div>
+        {drawer === "agents" && (
+          <AgentsDrawer agents={state.agents} onDone={closeDrawer} />
+        )}
+        {drawer === "sessions" && (
+          <SessionsDrawer
+            sessions={state.sessions}
+            transcripts={state.transcripts}
+            agents={state.agents}
+            activePatchbaySessionId={state.activePatchbaySessionId}
+            markOf={(s) => sessionMark(state, s)}
+            detach={detach}
+            onNew={newChat}
+            onDone={() => setDrawer(null)}
+          />
+        )}
+        {toastLine}
+      </div>
+    </FailuresOfAgent.Provider>
   );
 }

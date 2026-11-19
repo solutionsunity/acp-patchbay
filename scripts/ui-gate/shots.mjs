@@ -2044,7 +2044,9 @@ if (runs("settings-forms")) {
 // agent" on one the agent connects to itself. Theme-independent. ──
 if (runs("mcp-chip-failure")) {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
-  await renderView(p, "agent-view", agentViewState({ live: false }));
+  const mcpView = agentViewState({ live: false });
+  const mcpAgent = mcpView.sessions.find((session) => session.id === "s1").patchbayAgentId;
+  await renderView(p, "agent-view", mcpView);
   await p.waitForSelector(".prompt-editor");
   const at = "2026-11-19T10:00:00.000Z";
   const servers = [
@@ -2088,6 +2090,8 @@ if (runs("mcp-chip-failure")) {
     `[mcp chip] the failure is reported from its row, naming its server (${JSON.stringify(reported)})`,
     reported?.where === "mcpSession" && reported.patchbayMcpServerId === "gh" && reported.said === "github: failing for this session: HTTP 401 — unauthorized",
   );
+  // the composer is the session's as much as its chat is: the report names the session's agent
+  check(`[mcp chip] …and the session's agent, though the chip sits in the composer (${reported?.patchbayAgentId})`, reported?.patchbayAgentId === mcpAgent);
   await p.screenshot({ path: `${OUT}/mcp-chip-failure.png` });
   // the popover with its failures stays inside a narrow panel — it follows
   // the panel's width a moment after it changes
