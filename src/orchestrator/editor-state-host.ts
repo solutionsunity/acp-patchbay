@@ -65,14 +65,21 @@ export class EditorStateHost implements EditorReads {
     // whose tab is hidden reports the selection it had when it was last
     // shown, which the user can neither see nor is pointing at.
     const editor = this.currentEditor();
-    if (editor === undefined || editor.selection.isEmpty) return null;
-    if (!vscode.window.visibleTextEditors.includes(editor)) return null;
-    return {
-      file: editor.document.uri.fsPath,
-      startLine: editor.selection.start.line + 1,
-      endLine: editor.selection.end.line + 1,
-      text: editor.document.getText(editor.selection),
-    };
+    if (editor === undefined || !vscode.window.visibleTextEditors.includes(editor)) return null;
+    // Every selection of that one editor that holds text — several cursors
+    // make several, and the first made may be a bare cursor among them —
+    // read down the file: the order they were made in says nothing to a
+    // reader. Another editor's selection is what was last selected there,
+    // not what the user is pointing at.
+    const selections = editor.selections
+      .filter((selection) => !selection.isEmpty)
+      .sort((a, b) => a.start.compareTo(b.start))
+      .map((selection) => ({
+        startLine: selection.start.line + 1,
+        endLine: selection.end.line + 1,
+        text: editor.document.getText(selection),
+      }));
+    return selections.length === 0 ? null : { file: editor.document.uri.fsPath, selections };
   }
 
   getCurrentFile(): CurrentFileInfo | null {

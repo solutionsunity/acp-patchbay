@@ -99,8 +99,16 @@ export function isIpcNotification(message: unknown): message is IpcNotification 
   );
 }
 
+/** What the user has selected in the editor they are in: every selection
+ * holding text, from the top of the file down — never none; nothing
+ * selected is no SelectionInfo at all. */
 export interface SelectionInfo {
   file: string;
+  selections: SelectedText[];
+}
+
+/** One selection: the lines it spans (from 1) and the text it holds. */
+export interface SelectedText {
   startLine: number;
   endLine: number;
   text: string;

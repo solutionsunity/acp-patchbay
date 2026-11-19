@@ -12,9 +12,7 @@ import { internals } from "./patchbay";
 
 interface SelectionInfo {
   file: string;
-  startLine: number;
-  endLine: number;
-  text: string;
+  selections: { startLine: number; endLine: number; text: string }[];
 }
 interface CurrentFileInfo {
   file: string;
@@ -58,9 +56,24 @@ suite("EditorStateHost — real vscode data", () => {
 
     const selection = host.editorStateHost.getSelection();
     assert.ok(selection);
-    assert.strictEqual(selection.text, "line two");
-    assert.strictEqual(selection.startLine, 2); // 1-based
-    assert.strictEqual(selection.endLine, 2);
+    assert.strictEqual(selection.file, doc.uri.fsPath);
+    assert.deepStrictEqual(selection.selections, [{ startLine: 2, endLine: 2, text: "line two" }]); // lines from 1
+  });
+
+  test("getSelection reports every selection holding text, down the file, whichever was made first", async function () {
+    this.timeout(20000);
+    const { host } = await internals<Internal>();
+    const doc = await vscode.workspace.openTextDocument({ content: "one\ntwo\nthree\nfour\n", language: "plaintext" });
+    const editor = await vscode.window.showTextDocument(doc);
+    const at = (line: number, from: number, to: number) => new vscode.Selection(new vscode.Position(line, from), new vscode.Position(line, to));
+    // the first made is a bare cursor; the others hold text, the lower one made before the upper
+    editor.selections = [at(1, 0, 0), at(3, 0, 4), at(0, 0, 3), new vscode.Selection(new vscode.Position(2, 2), new vscode.Position(1, 1))];
+
+    assert.deepStrictEqual(host.editorStateHost.getSelection()?.selections, [
+      { startLine: 1, endLine: 1, text: "one" },
+      { startLine: 2, endLine: 3, text: "wo\nth" },
+      { startLine: 4, endLine: 4, text: "four" },
+    ]);
   });
 
   test("a webview taking the editor area keeps the last text editor current; closing its tab ends that (issue #7)", async function () {
@@ -94,7 +107,7 @@ suite("EditorStateHost — real vscode data", () => {
       // Its tab is still on screen in column one, so its selection counts too.
       const selection = host.editorStateHost.getSelection();
       assert.ok(selection);
-      assert.strictEqual(selection.text, "beta");
+      assert.deepStrictEqual(selection.selections.map((s) => s.text), ["beta"]);
 
       // Close the text editor's tab: no current file, no selection.
       await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);

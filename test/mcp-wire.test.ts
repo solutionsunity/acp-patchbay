@@ -21,7 +21,7 @@ import { waitFor } from "./support/wait-for";
 
 /** The editor as the server's tools read it. */
 const editor = {
-  getSelection: vi.fn(() => ({ file: "/ws/a.ts", startLine: 1, endLine: 2, text: "const x = 1;" })),
+  getSelection: vi.fn(() => ({ file: "/ws/a.ts", selections: [{ startLine: 1, endLine: 2, text: "const x = 1;" }] })),
   getCurrentFile: vi.fn(() => ({ file: "/ws/a.ts", content: "const x = 1;\n" })),
   getDiagnostics: vi.fn(() => [{ file: "/ws/a.ts", line: 1, severity: "error" as const, message: "boom" }]),
   getOpenEditors: vi.fn(() => [{ file: "/ws/a.ts", dirty: false }]),
@@ -195,7 +195,7 @@ describe("local MCP server (real bundled subprocess)", () => {
   it("get_selection forwards over IPC and returns real-shaped data", async () => {
     await client.initialize();
     const parsed = JSON.parse(await toolText(client, "get_selection"));
-    expect(parsed).toEqual({ file: "/ws/a.ts", startLine: 1, endLine: 2, text: "const x = 1;" });
+    expect(parsed).toEqual({ file: "/ws/a.ts", selections: [{ startLine: 1, endLine: 2, text: "const x = 1;" }] });
     expect(editor.getSelection).toHaveBeenCalled();
   });
 

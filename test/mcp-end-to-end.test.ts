@@ -27,7 +27,7 @@ import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
 /** An editor with one selection and one problem in it — what the host would
  * read from VS Code for the IPC host to answer with. */
 const EDITOR: EditorReads = {
-  getSelection: () => ({ file: "/ws/pool.ts", startLine: 42, endLine: 87, text: "class AgentPool { ... }" }),
+  getSelection: () => ({ file: "/ws/pool.ts", selections: [{ startLine: 42, endLine: 87, text: "class AgentPool { ... }" }] }),
   getCurrentFile: () => null,
   getDiagnostics: () => [{ file: "/ws/pool.ts", line: 10, severity: "error", message: "unused import" }],
   getOpenEditors: () => [],
@@ -61,9 +61,7 @@ describe("local MCP server, end to end through a real agent process", () => {
 
     expect(echoed(h.state(), patchbaySessionId)).toEqual({
       file: "/ws/pool.ts",
-      startLine: 42,
-      endLine: 87,
-      text: "class AgentPool { ... }",
+      selections: [{ startLine: 42, endLine: 87, text: "class AgentPool { ... }" }],
     });
     await h.pool.stop("e1" as PatchbayAgentId);
   });

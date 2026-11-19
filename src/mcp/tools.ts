@@ -34,12 +34,13 @@ const READS_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
  * to the model: what this server knows that the agent can't see from where
  * it runs. It names no tool — the list above is the one place they are. */
 export const SERVER_INSTRUCTIONS =
-  "This server reads the user's editor live: the folders this session works in, the open editors, the active file with its unsaved changes, the current selection, and the problems the editor reports. Read these from its tools rather than inferring them from a shell command's current directory or from files on disk. A session may work in several folders, and a shell command's current directory is only one directory.";
+  "This server reads the user's editor live: the folders this session works in, the open editors, the active file with its unsaved changes, what is selected in it, and the problems the editor reports. Read these from its tools rather than inferring them from a shell command's current directory or from files on disk. A session may work in several folders, and a shell command's current directory is only one directory.";
 
 export const TOOL_DEFS: McpToolDef[] = [
   {
     name: "get_selection",
-    description: "The user's current editor selection: file, line range, and text. Empty if nothing is selected.",
+    description:
+      "What the user has selected in the editor they are in: the file, and every selection in it with its line range and text, from the top of the file down. Several cursors make several selections, so expect more than one. Empty if nothing is selected.",
     inputSchema: { type: "object" },
     annotations: READS_ONLY,
   },
@@ -64,7 +65,7 @@ export const TOOL_DEFS: McpToolDef[] = [
   {
     name: "get_workspace_state",
     description:
-      "A combined snapshot: the folders this session works in (the list get_roots returns), open editors, diagnostics, and current selection.",
+      "A combined snapshot: the folders this session works in (the list get_roots returns), open editors, diagnostics, and what is selected in the active editor.",
     inputSchema: { type: "object" },
     annotations: READS_ONLY,
   },

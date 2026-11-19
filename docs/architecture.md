@@ -1305,7 +1305,11 @@ The differentiator (the PRD's current-release scope), shipped complete:
   the composer's adders and the tools ask. The editor-state host remembers
   the last text editor from the change event and validates on read: the
   file counts while its document is open, the selection only while its tab
-  is on screen.
+  is on screen. "The selection" is that one editor's, and all of it: every
+  selection holding text, read down the file — several cursors make several.
+  Another editor's selection is never reported: every editor keeps what was
+  last selected in it, and only one is what the user points at *(decided
+  2026-11-19, #174)*.
 - **One socket, admitted by token.** The subprocesses an agent spawns from a
   session's `mcpServers` — the local server, the bridge — reach the editor
   and patchbay's facts over one local socket, which every process of the

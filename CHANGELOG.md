@@ -105,6 +105,12 @@
   because they carried no `readOnlyHint` and MCP treats a silent tool as one
   that may write. Every tool now states that it changes nothing and stays
   inside the editor. (#162)
+- **An agent hears every selection, not only the first.** With several
+  selections in a file (multi-cursor, Alt+drag), `get_selection` reported
+  one — and nothing at all when the first cursor placed held no text. It
+  now reports each selection in the editor you are in, with its lines and
+  text, from the top of the file down; its answer names the file once and
+  lists the selections under it. (#174)
 - **A long queue of held prompts no longer takes the panel.** Each prompt
   sent while a turn runs added a row above the composer with no limit, so a
   deep queue pushed the chat and the composer out of view. The band now

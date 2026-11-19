@@ -226,10 +226,12 @@ export class OrchestratorHost {
     // is read host-side at the moment the user solidifies it. High-frequency
     // sources; the channel's coalescing keeps only the latest.
     const pushEditorContext = () => {
+      // the composer offers one selection: the first down the file
       const s = this.editorStateHost.getSelection();
+      const first = s?.selections[0];
       this.orchestrator.agentView.emit({
         kind: "editorContextChanged",
-        selection: s === null ? null : { file: s.file, startLine: s.startLine, endLine: s.endLine },
+        selection: s === null || first === undefined ? null : { file: s.file, startLine: first.startLine, endLine: first.endLine },
         openEditors: this.editorStateHost.getOpenEditors(),
       });
     };
@@ -1058,11 +1060,15 @@ export class OrchestratorHost {
         this.orchestrator.asks.reopenLink(action.patchbayAskId);
         break;
       case "addSelectionContext": {
-        const selection = this.editorStateHost.getSelection();
-        if (selection === null) {
+        // one selection is added: the first down the file, the one the
+        // composer offers
+        const selected = this.editorStateHost.getSelection();
+        const first = selected?.selections[0];
+        if (selected === null || first === undefined) {
           vscode.window.showInformationMessage("No selection — select text in a visible editor first.");
           break;
         }
+        const selection = { file: selected.file, ...first };
         await this.orchestrator.sessions
           .addContext(action.patchbaySessionId, {
             id: chipId(),
