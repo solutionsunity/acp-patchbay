@@ -11,7 +11,8 @@ import { filesUnder } from "./support/source-files";
 
 const facts: ReportFacts = { patchbayVersion: "0.92.0", editor: "Visual Studio Code", editorVersion: "1.147.0", os: "Linux 6.18 x64", host: "wsl" };
 const ISSUES = "https://github.com/solutionsunity/acp-patchbay/issues";
-const FORM = readFileSync(join(process.cwd(), ".github", "ISSUE_TEMPLATE", "bug_report.yml"), "utf8");
+// read by its lines, however this checkout ends them
+const FORM = readFileSync(join(process.cwd(), ".github", "ISSUE_TEMPLATE", "bug_report.yml"), "utf8").replaceAll("\r\n", "\n");
 const fieldsOf = (link: string) => new URL(link).searchParams;
 
 describe("buildFailureReport", () => {
