@@ -45,6 +45,9 @@ export function gateRefusal(outcome: Exclude<GateOutcome, "accepted">, what: str
   }
   if (outcome === "rejected") return refusal(new RequestError(REQUEST_FAILED, `The user rejected the ${what}`));
   const labels = [...new Set(outcome.denied.map((rule) => `\`${ruleLabel(rule)}\``))];
+  if (labels.length === 0) {
+    return refusal(new RequestError(REQUEST_FAILED, `No rule allows the ${what}: the user's setting refuses what no rule allows, without asking`));
+  }
   return refusal(new RequestError(REQUEST_FAILED, `A rule denies the ${what} (${labels.length === 1 ? "rule" : "rules"}: ${labels.join(", ")})`));
 }
 

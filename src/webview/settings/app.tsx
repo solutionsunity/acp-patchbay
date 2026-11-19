@@ -185,6 +185,8 @@ export function App({ state }: { state: SettingsState }) {
               send({ kind: "setCommandRulesScope", rules: rules.map(({ kind, pattern }) => ({ kind, pattern })), layer, agents })
             }
             onTest={(line, shell, agent, draft) => send({ kind: "testCommand", line, shell, agent, draft })}
+            onAlwaysAllow={(layer, on) => send({ kind: "setAlwaysAllowCommands", layer, on })}
+            onUnruled={(layer, verdict) => send({ kind: "setUnruledCommands", layer, verdict })}
           />
         )}
         {section === "audit" && (

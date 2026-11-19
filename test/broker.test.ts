@@ -1,4 +1,6 @@
 // P6 gate: automated broker tests — rule precedence, audit trail.
+import { gateRefusal } from "../src/orchestrator/client-replies";
+import { DEFAULT_COMMAND_POLICY } from "../src/shared/protocol";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -81,8 +83,10 @@ function harness(agents: "none" | "one" | "two" = "none") {
           const agent = TWO_AGENTS[patchbaySessionId.charAt(1)];
           return agent === undefined ? null : { ...agent, amongOthers: agents === "two" };
         };
-  const broker = new PermissionBroker(rules, asks, roots, (text) => text.split(HANDED_OUT).join("•••"), reader, machineRules, machineWriteScope, undefined, agentOf);
-  return { broker, asks, roots, rules, machineRules, machineWriteScope, audit, events, opened, refreshCount: () => auditRefreshes };
+  // what stands around the rules, as a test sets it — asking, until it does
+  const policy = { now: DEFAULT_COMMAND_POLICY };
+  const broker = new PermissionBroker(rules, asks, roots, (text) => text.split(HANDED_OUT).join("•••"), reader, machineRules, machineWriteScope, undefined, agentOf, () => policy.now);
+  return { broker, asks, roots, rules, machineRules, machineWriteScope, audit, events, opened, policy, refreshCount: () => auditRefreshes };
 }
 
 describe("PermissionBroker.judgeRun", () => {
@@ -373,6 +377,55 @@ describe("PermissionBroker.resolveAgentPermissionRequest — an edit is judged b
     asks.answerOption(asked.patchbayAskId, "y"); // too late: nothing moves
     expect(events.filter((e) => e.kind === "permissionResolved")).toHaveLength(1);
     expect((await audit.tail(5)).some((e) => e.kind === "withdraw")).toBe(true);
+  });
+});
+
+describe("PermissionBroker — commands without asking (#165)", () => {
+  const s1 = { patchbaySessionId: "s1" as PatchbaySessionId };
+  const factsOf = (events: AgentViewEvent[]) => events.flatMap((e) => (e.kind === "permissionRequested" ? e.facts ?? [] : []));
+
+  it("a command no rule decides runs unasked once the user chose allow — on record, its card saying why", async () => {
+    const { broker, audit, events, policy } = harness();
+    policy.now = { alwaysAllow: false, unruled: "allow" };
+    expect(await broker.gateCommand(s1, run("curl example.com"))).toBe("accepted");
+    expect((await audit.tail(10))[0]).toMatchObject({ kind: "auto-allow", command: "curl example.com" });
+    expect(factsOf(events)).toContainEqual({ label: "allowed", value: 'curl example.com — no rule matched — "When no rule decides" is allow' });
+  });
+
+  it("under allow a deny rule still refuses, naming itself", async () => {
+    const { broker, rules, policy } = harness();
+    policy.now = { alwaysAllow: false, unruled: "allow" };
+    await rules.set({ commandRules: [deny("rm *")], writeScope: [] });
+    expect(await broker.gateCommand(s1, run("rm -rf build"))).toEqual({ denied: [deny("rm *")] });
+  });
+
+  it("under deny a command no rule allows is refused with no rule to name, and the agent is told so", async () => {
+    const { broker, rules, audit, policy } = harness();
+    policy.now = { alwaysAllow: false, unruled: "deny" };
+    await rules.set({ commandRules: [allow("npm *")], writeScope: [] });
+    expect(await broker.gateCommand(s1, run("npm test"))).toBe("accepted");
+    const refused = await broker.gateCommand(s1, run("curl example.com"));
+    expect(refused).toEqual({ denied: [] });
+    expect((await audit.tail(10)).at(-1)).toMatchObject({ kind: "auto-deny", command: "curl example.com" });
+    expect(gateRefusal({ denied: [] }, "command `curl example.com`").message).toBe(
+      "No rule allows the command `curl example.com`: the user's setting refuses what no rule allows, without asking",
+    );
+  });
+
+  it("a script the reader can't follow runs under allow, where it asked before", async () => {
+    const { broker, events, policy } = harness();
+    policy.now = { alwaysAllow: false, unruled: "allow" };
+    expect(await broker.gateCommand(s1, { ...run("x"), command: "fish", args: ["-c", "ls"] })).toBe("accepted");
+    expect(factsOf(events).some((f) => f.label === "allowed" && f.value.includes("only bash and zsh are read"))).toBe(true);
+  });
+
+  it("always allow runs what a deny rule names, and says the switch did it", async () => {
+    const { broker, rules, audit, events, policy } = harness();
+    await rules.set({ commandRules: [deny("rm *")], writeScope: [] });
+    policy.now = { alwaysAllow: true, unruled: "deny" };
+    expect(await broker.gateCommand(s1, run("rm -rf build"))).toBe("accepted");
+    expect((await audit.tail(10))[0]).toMatchObject({ kind: "auto-allow", command: "rm -rf build" });
+    expect(factsOf(events)).toContainEqual({ label: "allowed", value: 'rm -rf build — "Always allow commands" is on' });
   });
 });
 

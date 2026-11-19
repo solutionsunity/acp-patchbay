@@ -270,6 +270,13 @@ export type Action =
   /** The agents one layer's answer for a place is for. A place the layer
    * doesn't answer yet is answered as it stands, for those agents. */
   | { kind: "setWriteLocationScope"; location: WriteLocation; layer: "workspace" | "machine"; agents: AgentScope }
+  /** One layer's always-allow switch. */
+  | { kind: "setAlwaysAllowCommands"; layer: "workspace" | "machine"; on: boolean }
+  /** What a command no rule decides gets, at one layer — null (a
+   * workspace only): as the machine has it. */
+  | { kind: "setUnruledCommands"; layer: "workspace" | "machine"; verdict: RuleVerdictView | null }
+  /** Always-allow off wherever it is on — the indicator's one click. */
+  | { kind: "stopAlwaysAllowCommands" }
   /** File writes' add: the folder picker opens host-side, and the folder
    * lands switched on at `layer` — one added for this workspace is this
    * workspace's own, never on the machine's list. */
@@ -828,6 +835,43 @@ export type AgentWork =
        * the new pin once saved. */
       to?: string;
     };
+
+/** What stands around the rules. `alwaysAllow`: every command runs, the
+ * rules and `unruled` set aside without being forgotten. `unruled`: what
+ * a command no rule decides gets — and a part of a line whose commands
+ * can't be seen, which no rule can decide either. Ask is how it starts. */
+export interface CommandPolicyView {
+  alwaysAllow: boolean;
+  unruled: RuleVerdictView;
+}
+
+export const DEFAULT_COMMAND_POLICY: CommandPolicyView = { alwaysAllow: false, unruled: "ask" };
+
+/** The policy as each layer holds it, and as it comes out for this
+ * workspace: always-allow on where either layer has it on; a command no
+ * rule decides gets the workspace's answer where it gives one (null: it
+ * follows the machine's). */
+export interface CommandPolicyLayersView {
+  machine: CommandPolicyView;
+  workspace: { alwaysAllow: boolean; unruled: RuleVerdictView | null };
+  effective: CommandPolicyView;
+}
+
+export const DEFAULT_COMMAND_POLICY_LAYERS: CommandPolicyLayersView = {
+  machine: DEFAULT_COMMAND_POLICY,
+  workspace: { alwaysAllow: false, unruled: null },
+  effective: DEFAULT_COMMAND_POLICY,
+};
+
+export function effectiveCommandPolicy(machine: CommandPolicyView, workspace: CommandPolicyLayersView["workspace"]): CommandPolicyView {
+  return { alwaysAllow: machine.alwaysAllow || workspace.alwaysAllow, unruled: workspace.unruled ?? machine.unruled };
+}
+
+/** Commands run without anyone being asked: always-allow is on, or a
+ * command no rule decides is allowed. */
+export function commandsRunUnasked(policy: CommandPolicyView): boolean {
+  return policy.alwaysAllow || policy.unruled === "allow";
+}
 
 /** The live-selection indicator's data (the ghost chip): every selection
  * of the editor the user is in, down the file — never none. Position only,
@@ -1910,6 +1954,9 @@ export interface AgentViewState {
   /** The saved roots, with where each is saved — the chip names the save of
    * a row saved for this workspace and offers it on the rest. */
   savedRoots: SavedRootsView;
+  /** What stands around the command rules, at each layer and as it comes
+   * out here — the same event feeds both channels. */
+  commandPolicy: CommandPolicyLayersView;
   /** Live IDE selection — the ghost chip's presence signal (appears
    * only while the IDE has a selection). Position only; never the text. */
   liveSelection: LiveSelectionView | null;
@@ -2059,6 +2106,7 @@ export const initialAgentViewState: AgentViewState = {
   drafts: {},
   workspaceRoots: [],
   savedRoots: NO_SAVED_ROOTS,
+  commandPolicy: DEFAULT_COMMAND_POLICY_LAYERS,
   workspace: null,
   liveSelection: null,
   openEditors: [],
@@ -2302,7 +2350,8 @@ export type AgentViewEvent =
   | { kind: "preferencesChanged"; preferences: PreferencesView }
   /** Both saved lists, complete — one event, both channels: Settings
    * manages them, the roots chip reads them. */
-  | { kind: "savedRootsChanged"; savedRoots: SavedRootsView };
+  | { kind: "savedRootsChanged"; savedRoots: SavedRootsView }
+  | { kind: "commandPolicyChanged"; commandPolicy: CommandPolicyLayersView };
 
 function reduceAgents(
   agents: readonly AgentSummary[],
@@ -2980,6 +3029,8 @@ export function reduceAgentView(
       return { ...state, preferences: event.preferences };
     case "savedRootsChanged":
       return { ...state, savedRoots: event.savedRoots };
+    case "commandPolicyChanged":
+      return { ...state, commandPolicy: event.commandPolicy };
     default:
       return state; // events belonging only to the settings channel (same shared union)
   }
@@ -3088,7 +3139,7 @@ export interface RuleMatchView {
 }
 
 /** How the rules judged one command a line runs: its verdict, the rule
- * that decided it (null: no rule matched, so it asks), and every other rule
+ * that decided it (null: none did — the policy's answer stands), and every other rule
  * that matched and lost. */
 export interface CommandVerdictView {
   text: string;
@@ -3097,13 +3148,15 @@ export interface CommandVerdictView {
   also: readonly RuleMatchView[];
 }
 
-/** How the rules judged a line: every command it runs, every part whose
- * commands can't be seen from its text — each asks — and the line's own
- * verdict, the most severe of them. */
+/** How a line was judged: every command it runs with its verdict, every
+ * part whose commands can't be seen from its text, the policy it was
+ * judged under — what a command no rule decided got, and those parts with
+ * it — and the line's own verdict, the most severe of them. */
 export interface CommandJudgementView {
   verdict: RuleVerdictView;
   commands: readonly CommandVerdictView[];
   unreadable: readonly { text: string; reason: string }[];
+  policy: CommandPolicyView;
 }
 
 /** A place where an agent's writes are approved without asking — or, first
@@ -3249,6 +3302,9 @@ export interface SettingsState {
   preferences: PreferencesView;
   /** Saved roots page snapshot — same event as the agent view's copy. */
   savedRoots: SavedRootsView;
+  /** What stands around the command rules, at each layer and as it comes
+   * out here — the same event feeds both channels. */
+  commandPolicy: CommandPolicyLayersView;
   /** The workspace this window has open — null with none: "this
    * workspace" in every scope control. A constant of the window. */
   workspace: WorkspaceId | null;
@@ -3299,6 +3355,7 @@ export const initialSettingsState: SettingsState = {
   commandTest: null,
   preferences: DEFAULT_PREFERENCES,
   savedRoots: NO_SAVED_ROOTS,
+  commandPolicy: DEFAULT_COMMAND_POLICY_LAYERS,
   workspace: null,
 };
 
@@ -3414,6 +3471,8 @@ export function reduceSettings(
       return { ...state, preferences: event.preferences };
     case "savedRootsChanged":
       return { ...state, savedRoots: event.savedRoots };
+    case "commandPolicyChanged":
+      return { ...state, commandPolicy: event.commandPolicy };
     case "sectionChanged":
       return { ...state, section: event.section };
     default:

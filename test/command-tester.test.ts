@@ -1,6 +1,7 @@
 // The Commands page's tester judges a typed line as the approval gate would
 // judge the run it makes: with no shell, the program and its arguments; under
 // bash, the script `bash -c` is handed.
+import { DEFAULT_COMMAND_POLICY } from "../src/shared/protocol";
 import { describe, expect, it } from "vitest";
 import { orchestratorHarness } from "./support/orchestrator-harness";
 import { tempDir } from "./support/teardown";
@@ -50,6 +51,7 @@ describe("the Commands tester", () => {
       verdict: "ask",
       commands: [],
       unreadable: [{ text: 'rm "x', reason: "not a command line — a quote is left open" }],
+      policy: DEFAULT_COMMAND_POLICY,
     });
   });
 });

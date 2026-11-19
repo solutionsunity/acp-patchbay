@@ -105,6 +105,20 @@
   because they carried no `readOnlyHint` and MCP treats a silent tool as one
   that may write. Every tool now states that it changes nothing and stays
   inside the editor. (#162)
+- **Unattended runs: two new choices on the Commands page.** A long task
+  no longer has to wait on a card. **Always allow commands** runs every
+  terminal command without asking, with your rules set aside while it is
+  on. **When no rule decides** sets what a command gets when no rule
+  matches it — ask (as before, and the default), allow or deny — so your
+  rules can work as a blacklist (allow, plus deny rules) or a whitelist
+  (deny, plus allow rules); a part of a line Patchbay can't read gets the
+  same answer. Each is set per machine or per workspace, kept in
+  Patchbay's own storage — never in a repository file or an export — and
+  off until you turn it on. Turning one on says what will run unasked
+  first; under "allow", a deny rule stops only what Patchbay can read.
+  While commands run unasked, the Agent View's header shows it, and one
+  click turns "Always allow commands" off. File writes and an agent's
+  other requests are not affected. (#165)
 - **zsh scripts are read.** A command run through zsh (`/bin/zsh -l -c
   '…'`, the default shell on macOS) always asked, whatever your command
   rules said, because Patchbay read only bash; the card could offer no

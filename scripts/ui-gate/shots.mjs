@@ -2103,6 +2103,27 @@ for (const theme of Object.keys(THEMES)) {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
   await renderView(p, "agent-view", agentViewState({ live: false }));
   await p.waitForSelector(".prompt-editor");
+  // the header says so while commands run without asking (#165) — and only then
+  {
+    const asking = { machine: { alwaysAllow: false, unruled: "ask" }, workspace: { alwaysAllow: false, unruled: null }, effective: { alwaysAllow: false, unruled: "ask" } };
+    const always = { ...asking, machine: { alwaysAllow: true, unruled: "ask" }, effective: { alwaysAllow: true, unruled: "ask" } };
+    const blacklist = { ...asking, machine: { alwaysAllow: false, unruled: "allow" }, effective: { alwaysAllow: false, unruled: "allow" } };
+    const set = (commandPolicy) => p.evaluate((cp) => window.__patch([{ kind: "commandPolicyChanged", commandPolicy: cp }]), commandPolicy);
+    const last = (kind) => p.evaluate((k) => window.__actions.filter((a) => a.kind === k).at(-1), kind);
+    check("[unasked] the header shows no mark while commands ask", (await p.$("[data-unasked]")) === null);
+    await set(always);
+    await p.waitForSelector('[data-unasked="stopAlwaysAllow"]');
+    await p.click("[data-unasked]");
+    check("[unasked] with always-allow on, the header's mark turns it off in one click", (await last("stopAlwaysAllowCommands")) !== undefined);
+    await set(blacklist);
+    await p.waitForSelector('[data-unasked="openCommands"]');
+    await p.click("[data-unasked]");
+    const opened = await last("openSettings");
+    check(`[unasked] with only "no rule: allow", the mark opens the page that holds the choice (${JSON.stringify(opened)})`, opened?.section === "commands");
+    await p.screenshot({ path: `${OUT}/header-unasked.png` });
+    await set(asking);
+    await p.waitForSelector("[data-unasked]", { state: "detached" });
+  }
   const toList = 'button[aria-label="Show the sessions list here, each chat in a tab"]';
   check("[layout] the chat's header offers the list", (await p.$(toList)) !== null && (await p.getAttribute(toList, "aria-pressed")) === "false");
   await p.click(toList);
@@ -2831,10 +2852,19 @@ for (const theme of Object.keys(THEMES)) {
     ...Array.from({ length: 11 }, (_, i) => ({ kind: "word", pattern: `word-${i}`, verdict: i % 2 === 0 ? "deny" : "ask" })),
   ];
   p = await page(browser, theme0, { width: 900, height: 900 });
+  const topOf = (selector) => p.locator(selector).first().evaluate((el) => el.getBoundingClientRect().top);
+  // where the machine card starts once a list is long enough to scroll:
+  // every rule after that must leave it there
+  await renderView(p, "settings", { ...many, commandRules: many.commandRules.slice(0, 30) });
+  await p.waitForSelector("[data-rule-list]");
+  const machineTopAt30 = await topOf('h2:text("Command rules — this machine")');
   await renderView(p, "settings", many);
   await p.waitForSelector("[data-rule-list]");
-  const topOf = (selector) => p.locator(selector).first().evaluate((el) => el.getBoundingClientRect().top);
-  check("[commands] 341 workspace rules: the machine card still starts on screen", (await topOf('h2:text("Command rules — this machine")')) < 900);
+  const machineTop = await topOf('h2:text("Command rules — this machine")');
+  check(
+    `[commands] 341 workspace rules: the machine card starts where it does with 30 — a short scroll away, never pushed off by the list (${Math.round(machineTop)} vs ${Math.round(machineTopAt30)})`,
+    Math.abs(machineTop - machineTopAt30) <= 1 && machineTop < 2 * 900,
+  );
   check("[commands] 341 workspace rules: the list's own add row stays on screen", (await topOf('button:has-text("Add rule")')) < 900);
   check(
     "[commands] the long list scrolls within itself, every rule kept",
@@ -2927,6 +2957,63 @@ for (const theme of Object.keys(THEMES)) {
   await p.locator('[role="option"]:has-text("as Augment")').click();
   const tested = await p.waitForFunction(() => window.__actions.filter((a) => a.kind === "testCommand").find((a) => a.agent === "aug"), null, { timeout: 3000 }).then((h) => h.jsonValue(), () => null);
   check("[commands] the tester judges the line as the agent chosen", tested?.line === "npm test" && tested.agent === "aug");
+  // ── without asking (#165): the always-allow switch and the choice for a
+  // command no rule decides, each at both layers; a change that lets
+  // commands run unasked says so first ──
+  const alwaysCard = p.locator("[data-always-allow]");
+  const policyCard = p.locator("[data-unruled]");
+  check("[unasked] the page starts asking, and says so", (await policyCard.locator("[data-policy-summary]").innerText()).includes("a command no rule decides asks"));
+  const before = (await p.evaluate(() => window.__actions.length));
+  await alwaysCard.locator('label:has-text("This workspace") [role="switch"]').click();
+  const warned = p.locator('[role="alertdialog"]');
+  await warned.waitFor();
+  check(
+    "[unasked] turning always-allow on first says what it means — nothing sent yet",
+    (await warned.innerText()).includes("deny rules included") && (await p.evaluate((n) => window.__actions.slice(n).every((a) => a.kind !== "setAlwaysAllowCommands"), before)),
+  );
+  await warned.locator('button:has-text("Turn on")').click();
+  const turnedOn = await lastAction("setAlwaysAllowCommands");
+  check(`[unasked] …and is sent on the second click (${JSON.stringify(turnedOn)})`, turnedOn?.layer === "workspace" && turnedOn.on === true);
+  const policyNow = (machine, workspace) => ({
+    machine,
+    workspace,
+    effective: { alwaysAllow: machine.alwaysAllow || workspace.alwaysAllow, unruled: workspace.unruled ?? machine.unruled },
+  });
+  await p.evaluate((commandPolicy) => window.__patch([{ kind: "commandPolicyChanged", commandPolicy }]), policyNow({ alwaysAllow: false, unruled: "ask" }, { alwaysAllow: true, unruled: null }));
+  await p.waitForSelector("[data-rules-set-aside]");
+  check(
+    "[unasked] while it is on, the rules and the other choice are shown set aside, not to be worked on",
+    (await p.locator("[data-rule-cards]").getAttribute("inert")) !== null &&
+      (await policyCard.locator("[data-unruled-choices]").getAttribute("inert")) !== null &&
+      (await policyCard.locator("[data-policy-summary]").innerText()).includes("every command runs without asking"),
+  );
+  // off again needs no warning
+  await alwaysCard.locator('label:has-text("This workspace") [role="switch"]').click();
+  const turnedOff = await lastAction("setAlwaysAllowCommands");
+  check("[unasked] turning it off asks nothing", turnedOff?.on === false && (await warned.count()) === 0);
+  await p.evaluate((commandPolicy) => window.__patch([{ kind: "commandPolicyChanged", commandPolicy }]), policyNow({ alwaysAllow: false, unruled: "ask" }, { alwaysAllow: false, unruled: null }));
+  await p.waitForSelector("[data-rules-set-aside]", { state: "detached" });
+  const choose = async (label, option) => {
+    await policyCard.locator(`[aria-label="${label}"]`).click();
+    await p.locator(`[role="option"]:has-text("${option}")`).click();
+  };
+  await choose("When no rule decides — this machine", "deny —");
+  const denied = await lastAction("setUnruledCommands");
+  check(`[unasked] deny for what no rule decides is a tightening: sent at once (${JSON.stringify(denied)})`, denied?.layer === "machine" && denied.verdict === "deny" && (await warned.count()) === 0);
+  await choose("When no rule decides — this workspace", "allow —");
+  await warned.waitFor();
+  check("[unasked] allow says a deny rule stops only what can be read", (await warned.innerText()).includes("a deny rule stops only what Patchbay can read"));
+  await warned.locator('button:has-text("Allow")').click();
+  const allowed = await lastAction("setUnruledCommands");
+  check(`[unasked] …then is sent for the layer chosen (${JSON.stringify(allowed)})`, allowed?.layer === "workspace" && allowed.verdict === "allow");
+  await p.evaluate((commandPolicy) => window.__patch([{ kind: "commandPolicyChanged", commandPolicy }]), policyNow({ alwaysAllow: false, unruled: "deny" }, { alwaysAllow: false, unruled: "allow" }));
+  await p.waitForFunction(() => document.querySelector("[data-policy-summary]")?.textContent?.includes("runs without asking (this workspace's choice)"));
+  check("[unasked] the page says how the two layers come out here", true);
+  await choose("When no rule decides — this workspace", "as this machine (deny)");
+  const followed = await lastAction("setUnruledCommands");
+  check("[unasked] a workspace can leave the choice to the machine", followed?.layer === "workspace" && followed.verdict === null);
+  await p.screenshot({ path: `${OUT}/settings-commands-unasked.png` });
+  await p.evaluate((commandPolicy) => window.__patch([{ kind: "commandPolicyChanged", commandPolicy }]), policyNow({ alwaysAllow: false, unruled: "ask" }, { alwaysAllow: false, unruled: null }));
   await sweep(p, "settings › Commands with agent scopes");
   await p.screenshot({ path: `${OUT}/settings-commands-scoped.png` });
   await p.close();
@@ -2970,6 +3057,7 @@ for (const theme of Object.keys(THEMES)) {
                 { text: "rm -rf build", verdict: "ask", by: null, also: [] },
               ],
               unreadable: [{ text: "$(id)", reason: "a command substitution — its output is only known when it runs" }],
+              policy: { alwaysAllow: false, unruled: "ask" },
             },
           },
         ]),

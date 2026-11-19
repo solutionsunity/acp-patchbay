@@ -8,9 +8,10 @@
 // verb per page, one subject per rules page.
 import { type ReactNode, useEffect, useState } from "react";
 import { scopeOf, withScope, type AgentScope } from "../../shared/agent-scope";
-import { matchLabel, ruleLabel } from "../../shared/command-rules";
+import { ALWAYS_ALLOW_COMMANDS, matchLabel, ruleLabel, unruledVerdict, unruledWhy } from "../../shared/command-rules";
 import type { PatchbayAgentId } from "../../shared/ids";
-import { RULE_VERDICTS, type CommandJudgementView, type CommandRuleView, type RuleMatchView, type SettingsState, type TesterShell } from "../../shared/protocol";
+import { RULE_VERDICTS, type CommandJudgementView, type CommandRuleView, type RuleMatchView, type RuleVerdictView, type SettingsState, type TesterShell } from "../../shared/protocol";
+import { AlwaysAllowCard, UnruledCard } from "./command-policy";
 import { Icon } from "../shared/icon";
 import { filteredRules, filtering, NO_FILTER, ruleCounts, sortedRules, type RuleFilter } from "./command-rules-view";
 import { ScopeChip, ScopeChoice, scopeText } from "./rule-scope";
@@ -295,7 +296,7 @@ function JudgementView({ judgement, draft }: { judgement: CommandJudgementView; 
           `c${i}`,
           c.verdict,
           c.text,
-          c.by === null ? "no rule matched" : <MatchText match={c.by} draft={draft} />,
+          c.by === null ? unruledWhy(judgement.policy) : <MatchText match={c.by} draft={draft} />,
           c.also.length > 0 && (
             <div className="text-xs text-[var(--pb-text-faint)]">
               also matched:{" "}
@@ -309,8 +310,10 @@ function JudgementView({ judgement, draft }: { judgement: CommandJudgementView; 
           ),
         ),
       )}
-      {judgement.unreadable.map((u, i) => row(`u${i}`, "ask", u.text, u.reason))}
-      {judgement.commands.length === 0 && judgement.unreadable.length === 0 && <div className="note mx-0">Runs no command — asks.</div>}
+      {judgement.unreadable.map((u, i) => row(`u${i}`, unruledVerdict(judgement.policy), u.text, u.reason))}
+      {judgement.commands.length === 0 && judgement.unreadable.length === 0 && (
+        <div className="note mx-0">Runs no command — as a command no rule decides: {unruledVerdict(judgement.policy)}.</div>
+      )}
       <div className="mt-2 text-sm">
         Line: <span className={`verdict ${judgement.verdict}`}>{judgement.verdict}</span>
       </div>
@@ -327,8 +330,13 @@ export function CommandsSection(props: {
   onRemoveRule(rule: CommandRuleView, layer: Layer): void;
   onScopeRules(rules: readonly CommandRuleView[], layer: Layer, scope: AgentScope): void;
   onTest(line: string, shell: TesterShell, agent: PatchbayAgentId | null, draft: Draft | null): void;
+  onAlwaysAllow(layer: Layer, on: boolean): void;
+  onUnruled(layer: Layer, verdict: RuleVerdictView | null): void;
 }) {
   const { state, onTest } = props;
+  // While every command is allowed, the rules are kept and not applied:
+  // shown, and not to be worked on.
+  const setAside = state.commandPolicy.effective.alwaysAllow;
   const [line, setLine] = useState("");
   const [shell, setShell] = useState<TesterShell>("none");
   // The agent the line is judged for — one since removed is no agent.
@@ -341,7 +349,7 @@ export function CommandsSection(props: {
   // answer shown is always for what is on the page now.
   useEffect(() => {
     if (line.trim() !== "") onTest(line, shell, agent, draft);
-  }, [line, shell, agent, draft, state.commandRules, state.machineCommandRules]);
+  }, [line, shell, agent, draft, state.commandRules, state.machineCommandRules, state.commandPolicy]);
   const shown = state.commandTest;
   const result = shown !== null && shown.line === line && shown.shell === shell && shown.agent === agent ? shown.judgement : null;
 
@@ -349,9 +357,10 @@ export function CommandsSection(props: {
     <section className="section">
       <h1>Commands</h1>
       <div className="sub">
-        Terminal commands an agent runs through patchbay ask first, unless a rule answers. Each
+        Terminal commands an agent runs through patchbay ask first, unless a rule answers or you
+        chose otherwise in the two cards around the rules. Each
         command in a line is judged — in a chain, a loop, a <code>bash -c</code> script — and the
-        line takes the most severe verdict; what the text can&apos;t show asks. This workspace&apos;s
+        line takes the most severe verdict; what the text can&apos;t show is something no rule decides. This workspace&apos;s
         rules answer first, then the machine&apos;s; within a layer deny beats ask beats allow. A
         rule applies to every agent unless it names the agents it is for: for any other agent it
         isn&apos;t there. An agent running commands itself asks through its own requests, which
@@ -406,12 +415,20 @@ export function CommandsSection(props: {
         )}
       </div>
 
+      <AlwaysAllowCard policy={state.commandPolicy} onAlwaysAllow={props.onAlwaysAllow} onUnruled={props.onUnruled} />
+
+      {setAside && (
+        <div className="note text-warn" data-rules-set-aside>
+          The rules below are set aside while &quot;{ALWAYS_ALLOW_COMMANDS}&quot; is on: every command runs.
+        </div>
+      )}
+      <div className={setAside ? "opacity-50" : undefined} inert={setAside} data-rule-cards>
       <CommandRulesCard
         title="Command rules — this workspace"
         note="Evaluated first — this repo's own tightening or loosening of the machine floor."
         rules={state.commandRules}
         agents={state.agents}
-        emptyText="No workspace rules — the machine layer (below) answers, then ask."
+        emptyText="No workspace rules — the machine layer (below) answers, then the choice after it."
         onAdd={(rule) => props.onAddRule(rule, "workspace")}
         onRemove={(rule) => props.onRemoveRule(rule, "workspace")}
         onScope={(rules, scope) => props.onScopeRules(rules, "workspace", scope)}
@@ -423,12 +440,15 @@ export function CommandsSection(props: {
         note="The fallback floor for every workspace on this machine — consulted only where the workspace layer stays silent."
         rules={state.machineCommandRules}
         agents={state.agents}
-        emptyText="No machine rules — every unmatched command asks."
+        emptyText="No machine rules — every unmatched command gets the choice below."
         onAdd={(rule) => props.onAddRule(rule, "machine")}
         onRemove={(rule) => props.onRemoveRule(rule, "machine")}
         onScope={(rules, scope) => props.onScopeRules(rules, "machine", scope)}
         onDraft={draftFrom("machine")}
       />
+      </div>
+
+      <UnruledCard policy={state.commandPolicy} onAlwaysAllow={props.onAlwaysAllow} onUnruled={props.onUnruled} />
 
       <div className="note good">
         Workspace rules live in workspaceState (per user, per workspace), machine rules in global

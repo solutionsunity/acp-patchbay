@@ -1044,6 +1044,16 @@ export class OrchestratorHost {
         await this.orchestrator.setWriteLocation(action.location, action.layer, action.on);
         this.orchestrator.publishRules();
         break;
+      case "setAlwaysAllowCommands":
+        await this.orchestrator.setCommandPolicy(action.layer, { alwaysAllow: action.on });
+        break;
+      case "setUnruledCommands":
+        await this.orchestrator.setCommandPolicy(action.layer, { unruled: action.verdict });
+        break;
+      case "stopAlwaysAllowCommands":
+        await this.orchestrator.setCommandPolicy("workspace", { alwaysAllow: false });
+        await this.orchestrator.setCommandPolicy("machine", { alwaysAllow: false });
+        break;
       case "setWriteLocationScope":
         await this.orchestrator.setWriteLocationScope(action.location, action.layer, action.agents);
         this.orchestrator.publishRules();

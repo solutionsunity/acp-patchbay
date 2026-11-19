@@ -25,6 +25,13 @@ const workspaceRules = (raw: unknown): string => {
   return `${count(size(rules.commandRules), "rule")} · ${count(size(rules.writeScope), "file-write override")}`;
 };
 
+/** What a command-policy record says, in a few words. */
+const commandPolicy = (raw: unknown): string => {
+  if (raw === undefined) return "never set";
+  const { alwaysAllow, unruled } = (raw ?? {}) as { alwaysAllow?: unknown; unruled?: unknown };
+  return `always allow ${alwaysAllow === true ? "on" : "off"} · no rule: ${typeof unruled === "string" ? unruled : "as the machine has it"}`;
+};
+
 /** Each key: its label, where it lives — this machine (globalStorage) or
  * this workspace (workspaceState) — and what its detail counts. */
 const ROWS: Record<StorageKey, { label: string; scope: "machine" | "workspace"; detail: (raw: unknown) => string }> = {
@@ -36,6 +43,8 @@ const ROWS: Record<StorageKey, { label: string; scope: "machine" | "workspace"; 
   [STORAGE_KEYS.preferences]: { label: "Preferences", scope: "machine", detail: counted("preference set") },
   [STORAGE_KEYS.machineCommandRules]: { label: "Command rules — this machine", scope: "machine", detail: counted("rule") },
   [STORAGE_KEYS.machineCommandRulesBefore092]: { label: "Command rules — this machine, as 0.90 kept them", scope: "machine", detail: counted("rule") },
+  [STORAGE_KEYS.machineCommandPolicy]: { label: "Commands without asking — this machine", scope: "machine", detail: commandPolicy },
+  [STORAGE_KEYS.commandPolicy]: { label: "Commands without asking — this workspace", scope: "workspace", detail: commandPolicy },
   [STORAGE_KEYS.machineWriteScope]: { label: "File writes — this machine", scope: "machine", detail: counted("place set") },
   [STORAGE_KEYS.machineWriteScopeBefore092]: { label: "File writes — this machine, as 0.90 kept them", scope: "machine", detail: counted("place set") },
   [STORAGE_KEYS.savedRoots]: { label: "Saved roots", scope: "machine", detail: counted("folder") },

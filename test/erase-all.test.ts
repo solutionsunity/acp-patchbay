@@ -13,7 +13,8 @@ import { LastActiveSessionStore } from "../src/orchestrator/stores/last-active-s
 import { LastConnectedStore } from "../src/orchestrator/stores/last-connected";
 import { DefaultAgentFoldStore } from "../src/orchestrator/stores/default-agent-fold";
 import { PreferencesStore } from "../src/orchestrator/stores/preferences";
-import { DEFAULT_PREFERENCES } from "../src/shared/protocol";
+import { MachineCommandPolicyStore, WorkspaceCommandPolicyStore } from "../src/orchestrator/stores/command-policy";
+import { DEFAULT_COMMAND_POLICY, DEFAULT_COMMAND_POLICY_LAYERS, DEFAULT_PREFERENCES } from "../src/shared/protocol";
 import { DEFAULT_PERMISSION_RULES, MachineRulesStore, PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
 import { MachineWriteScopeStore } from "../src/orchestrator/stores/write-scope";
 import { commandOf } from "../src/orchestrator/process-tree";
@@ -38,6 +39,8 @@ describe("eraseAllData", () => {
     const permissionRules = new PermissionRulesStore(workspaceKv);
     const machineRules = new MachineRulesStore(globalKv);
     const machineWriteScope = new MachineWriteScopeStore(globalKv);
+    const machineCommandPolicy = new MachineCommandPolicyStore(globalKv);
+    const commandPolicy = new WorkspaceCommandPolicyStore(workspaceKv);
     const decisionAudit = new DecisionAuditStore(dir);
     const lastConnected = new LastConnectedStore(workspaceKv);
     const defaultAgentFold = new DefaultAgentFoldStore(globalKv);
@@ -55,6 +58,8 @@ describe("eraseAllData", () => {
     await permissionRules.set({ commandRules: [{ kind: "command", pattern: "npm *", verdict: "allow" }], writeScope: [{ location: { kind: "alwaysAsk" }, on: true }] });
     await machineRules.set([{ kind: "command", pattern: "git status", verdict: "allow" }]);
     await machineWriteScope.set([{ location: { kind: "path", path: "/home/me/.hermes" }, on: true }]);
+    await machineCommandPolicy.set({ alwaysAllow: true, unruled: "allow" });
+    await commandPolicy.set({ alwaysAllow: true, unruled: "deny" });
     await decisionAudit.append({ kind: "permission", decision: "allow" });
     await lastConnected.write(["claude" as PatchbayAgentId]);
     await lastActiveSession.set({ patchbayAgentId: "a" as PatchbayAgentId, sessionId: "s1" });
@@ -72,6 +77,7 @@ describe("eraseAllData", () => {
     await eraseAllData({
       agents: owner("agents"), mcpServers: owner("mcpServers"), sessions: owner("sessions"),
       spawnRegistry, permissionRules, machineRules, machineWriteScope,
+      machineCommandPolicy, commandPolicy,
       decisionAudit, lastConnected, defaultAgentFold, lastActiveSession,
       seenVersion, preferences, savedRoots,
       tempStashes: { wipe: async () => { stashWiped = true; } },
@@ -85,6 +91,9 @@ describe("eraseAllData", () => {
     expect(permissionRules.get()).toEqual(DEFAULT_PERMISSION_RULES);
     expect(machineRules.get()).toEqual({ commandRules: [] });
     expect(machineWriteScope.get()).toEqual([]);
+    // back to asking: nothing runs unasked after an erase
+    expect(machineCommandPolicy.get()).toEqual(DEFAULT_COMMAND_POLICY);
+    expect(commandPolicy.get()).toEqual(DEFAULT_COMMAND_POLICY_LAYERS.workspace);
     expect(await decisionAudit.tail(5)).toEqual([]);
     expect(await lastConnected.consume()).toEqual([]);
     expect(lastActiveSession.get()).toBeUndefined();

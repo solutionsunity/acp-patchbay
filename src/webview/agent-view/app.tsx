@@ -161,6 +161,9 @@ export function App({
       onLayout={(sessionsLayout) => send({ kind: "setPreferences", patch: { sessionsLayout } })}
       onSessions={openSessions}
       onNew={newChat}
+      commandPolicy={state.commandPolicy.effective}
+      onStopAlwaysAllow={() => send({ kind: "stopAlwaysAllowCommands" })}
+      onOpenCommands={() => send({ kind: "openSettings", section: "commands" })}
     >
       <AttentionIndicators elsewhere={elsewhere(state)} agents={state.agents} waitingOn={(s) => waitingOn(state, s)} />
     </Header>

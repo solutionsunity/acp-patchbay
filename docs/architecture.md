@@ -1757,10 +1757,28 @@ supplies each agent in its own standard — and ACP carries no channel for it
   `*` matching within the word. A word denies or asks, never allows: a word
   anywhere says nothing of what the command does with it (`rm -rf logs` holds
   `logs`). Each command is judged by the workspace layer where it has an
-  answer, else the machine's, else it asks; within a layer, list order
-  decides nothing — deny beats ask beats allow. The line takes its most
-  severe command's verdict; a part that can't be seen asks, and so does a
-  line that runs nothing. A rule matches the command's words; its
+  answer, else the machine's, else it gets the answer chosen for a command
+  no rule decides — ask, unless the user chose otherwise; within a layer,
+  list order decides nothing — deny beats ask beats allow. The line takes
+  its most severe command's verdict; a part that can't be seen is something
+  no rule decided, and so is a line that runs nothing: each gets that same
+  answer. **Two choices stand around the rules** *(decided 2026-11-19,
+  #165 — a long unattended run must not wait on a card, and a `*` allow
+  rule can't say so: no rule matches what isn't read)*, each at both
+  layers, in patchbay's own storage, never a repository file and never an
+  export (`stores/command-policy.ts`): *When no rule decides* — ask, allow
+  or deny, the workspace's answer where it gives one, else the machine's —
+  which makes the rules a blacklist (allow, with deny rules) or a whitelist
+  (deny, with allow rules); and *Always allow commands*, on where either
+  layer has it on, which allows every line with no rule consulted — the
+  rules and the other choice kept, not applied. Under allow a deny rule
+  stops only what is read: a command inside a part that can't be seen runs,
+  and the change says so before it is made. Either choice that lets
+  commands run unasked is made on a second, explicit click, and shows in
+  the Agent View's header while it holds; a decision made this way goes
+  through the same card, audit and history as a rule's. A refusal with no
+  rule behind it tells the agent that no rule allows the command. Both
+  apply to commands only. A rule matches the command's words; its
   assignments and redirects ride the trust as cwd and env do.  The
   shell that reads a line is only ever known from a program: the one the run
   starts, a shell the user picks in the Commands page's tester, or — when an

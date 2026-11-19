@@ -26,15 +26,17 @@ import { basename, dirname, isAbsolute, join, sep } from "node:path";
 import { appliesTo, scopeOf, withScope, type AgentScope } from "../shared/agent-scope";
 import { withOne } from "../shared/reach";
 import { formatCommandLine } from "../shared/command-line";
-import { matchLabel } from "../shared/command-rules";
-import type {
-  CommandJudgementView,
-  ElicitationAnswer,
-  ElicitationAsk,
-  PermissionCallView,
-  PermissionFact,
-  PermissionOptionView,
-  RuleMatchView,
+import { matchLabel, unruledVerdict, unruledWhy } from "../shared/command-rules";
+import {
+  DEFAULT_COMMAND_POLICY,
+  type CommandJudgementView,
+  type CommandPolicyView,
+  type ElicitationAnswer,
+  type ElicitationAsk,
+  type PermissionCallView,
+  type PermissionFact,
+  type PermissionOptionView,
+  type RuleMatchView,
 } from "../shared/protocol";
 import type { AskPlace, AsksStore, LinkCompletion, Proposal, Requester } from "./asks-store";
 import { judgeCommands, type RuleLayers } from "./command-judge";
@@ -88,13 +90,18 @@ function alwaysRules(judgement: CommandJudgementView): CommandRule[] | null {
 const VERDICT_WORD: Readonly<Record<RuleVerdict, string>> = { allow: "allowed", ask: "asks", deny: "rejected" };
 
 /** What a card says of the judgement: each command that set the line's
- * verdict, and the rule that decided it — or, for a line that asks, why:
- * no rule matched, an ask rule, a part that can't be seen. */
+ * verdict, and what decided it — a rule, or, where none did, the policy's
+ * answer for it — and each part that can't be seen, which got that answer
+ * too. */
 function judgementFacts(judgement: CommandJudgementView): PermissionFact[] {
+  const unruled = unruledVerdict(judgement.policy);
   const deciding = judgement.commands
     .filter((c) => c.verdict === judgement.verdict)
-    .map((c) => ({ label: VERDICT_WORD[c.verdict], value: `${c.text} — ${c.by === null ? "no rule matched" : matchLabel(c.by)}` }));
-  const unseen = judgement.verdict === "ask" ? judgement.unreadable.map((u) => ({ label: "asks", value: `${u.text} — ${u.reason}` })) : [];
+    .map((c) => ({ label: VERDICT_WORD[c.verdict], value: `${c.text} — ${c.by === null ? unruledWhy(judgement.policy) : matchLabel(c.by)}` }));
+  const unseen =
+    judgement.verdict === unruled
+      ? judgement.unreadable.map((u) => ({ label: VERDICT_WORD[unruled], value: `${u.text} — ${u.reason}${unruled === "ask" ? "" : `; ${unruledWhy(judgement.policy)}`}` }))
+      : [];
   return [...deciding, ...unseen];
 }
 
@@ -152,6 +159,9 @@ export class PermissionBroker {
     /** The agent an ask comes from — null where none is known (tests that
      * don't exercise agents): the rules for every agent then judge it. */
     private readonly agentOf: (requester: Requester) => AskingAgent | null = () => null,
+    /** What stands around the rules now: the always-allow switch, and
+     * what a command no rule decides gets. */
+    private readonly commandPolicy: () => CommandPolicyView = () => DEFAULT_COMMAND_POLICY,
   ) {}
 
   /** A run judged by the rules, as the gate judges one for `agent` (null:
@@ -164,7 +174,7 @@ export class PermissionBroker {
   ): Promise<CommandJudgementView> {
     const stored = this.stored();
     if (draft !== undefined) stored[draft.layer] = withRule(stored[draft.layer], draft.rule);
-    return judgeCommands(await this.reader.readRun(run.command, run.args), this.layersFor(stored, agent));
+    return judgeCommands(await this.reader.readRun(run.command, run.args), this.layersFor(stored, agent), this.commandPolicy());
   }
 
   private stored(): { -readonly [L in keyof RuleLayers]: readonly CommandRule[] } {
@@ -385,7 +395,8 @@ export class PermissionBroker {
     const ended = await ending;
     if (ended.end === "rule") {
       if (ended.allowed) return "accepted";
-      // a command's deny verdict is always a rule's: no rule matched asks
+      // the rules that said no — none where the line was refused only
+      // because no rule decided it, and the user chose that such are
       return { denied: judgement.commands.flatMap((c) => (c.verdict === "deny" && c.by !== null ? [c.by.rule] : [])) };
     }
     if (ended.end !== "user" || ended.choice.kind !== "option") return "cancelled";

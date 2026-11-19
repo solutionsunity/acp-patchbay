@@ -334,7 +334,13 @@ deliverable.
   one agent's routine work lower the floor for all the others.)*
 - Command rules layer: machine-level defaults (every workspace on this machine)
   with per-workspace rules evaluated first — a workspace can tighten or loosen
-  its own floor, and no rule anywhere means ask. Rules answer what the agent
+  its own floor, and no rule anywhere means ask — unless the user chose
+  otherwise: *When no rule decides* (ask, allow or deny, per machine and per
+  workspace) turns the rules into a blacklist or a whitelist, and *Always
+  allow commands* runs every command with the rules set aside, for an
+  unattended run. Both start off, warn before they let commands run
+  unasked, show in the Agent View's header while they do, and never ride a
+  repository or an export *(#165)*. Rules answer what the agent
   asks about; the agent's own mode decides what that is. A mode that decides
   for itself asks about nothing, so no rule or write place sees its actions —
   Claude in Auto, its default since adapter 0.101.0, is one (#169). Neither layer ever rides the

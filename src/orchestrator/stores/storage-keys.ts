@@ -29,6 +29,9 @@ export const STORAGE_KEYS = {
    * would read a rule for one agent as a rule for all. Read once, to fill
    * `machineCommandRules` where it is empty. */
   machineCommandRulesBefore092: "acpPatchbay.machineCommandRules",
+  /** This machine's choices around the command rules: the always-allow
+   * switch, and what a command no rule decides gets. */
+  machineCommandPolicy: "acpPatchbay.commandPolicyMachine",
   machineWriteScope: "acpPatchbay.writeScopeMachine",
   /** This machine's file-write places as 0.90 and before kept them —
    * read once, to fill `machineWriteScope` where it is empty. */
@@ -53,6 +56,9 @@ export const STORAGE_KEYS = {
    * in its workspaceState — read once, to fill `permissionRules` where it
    * is empty. */
   permissionRulesBefore092: "acpPatchbay.permissionRules",
+  /** A workspace's own choices around the command rules, in its
+   * workspaceState. */
+  commandPolicy: "acpPatchbay.commandPolicy",
   /** A workspace's own saved folders, as 0.88 and before kept them in its
    * workspaceState — moved into `savedRoots`, for that workspace, the first
    * time it opens on a later version. */

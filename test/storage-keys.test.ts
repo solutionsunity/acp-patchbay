@@ -17,6 +17,8 @@ describe("storage keys", () => {
       mcpServersBefore090: "acpPatchbay.integrations",
       preferences: "acpPatchbay.preferences",
       machineCommandRules: "acpPatchbay.commandRulesMachine",
+      machineCommandPolicy: "acpPatchbay.commandPolicyMachine",
+      commandPolicy: "acpPatchbay.commandPolicy",
       machineCommandRulesBefore092: "acpPatchbay.machineCommandRules",
       machineWriteScope: "acpPatchbay.writeScopeMachine",
       machineWriteScopeBefore092: "acpPatchbay.machineWriteScope",

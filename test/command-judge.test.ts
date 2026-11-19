@@ -4,6 +4,8 @@
 import { describe, expect, it } from "vitest";
 import { judgeCommands, type RuleLayers } from "../src/orchestrator/command-judge";
 import { ShellReader } from "../src/orchestrator/shell-reading";
+import { unruledWhy } from "../src/shared/command-rules";
+import { commandsRunUnasked, DEFAULT_COMMAND_POLICY, effectiveCommandPolicy, type CommandPolicyView } from "../src/shared/protocol";
 import type { CommandRule } from "../src/orchestrator/stores/permission-rules";
 import { SHELL_GRAMMAR } from "./support/shell-grammar";
 
@@ -188,6 +190,76 @@ describe("reading a zsh script — with zsh's own grammar (#165)", () => {
   it("a wildcard allow covers a zsh script, and a deny inside it still wins", async () => {
     expect(judgeCommands(await zsh("printf hello"), layers([allow("*")])).verdict).toBe("allow");
     expect(judgeCommands(await zsh("make && rm -rf /"), layers([allow("*"), deny("rm *")])).verdict).toBe("deny");
+  });
+});
+
+describe("judging — what stands around the rules (#165)", () => {
+  const under = async (text: string, rules: RuleLayers, policy: CommandPolicyView) => judgeCommands(await readLine(text), rules, policy);
+  const unruled = (verdict: CommandPolicyView["unruled"]): CommandPolicyView => ({ alwaysAllow: false, unruled: verdict });
+  const ALWAYS: CommandPolicyView = { alwaysAllow: true, unruled: "ask" };
+
+  it("ask is how it starts: a command no rule decides asks", async () => {
+    expect(judgeCommands(await readLine("ls"), layers([])).policy).toEqual(DEFAULT_COMMAND_POLICY);
+    expect((await under("ls", layers([]), DEFAULT_COMMAND_POLICY)).verdict).toBe("ask");
+  });
+
+  it("allow is a blacklist: what no rule decides runs, a deny rule still denies, an ask rule still asks", async () => {
+    const rules = layers([deny("rm *"), ask("git push*")]);
+    expect((await under("npm test", rules, unruled("allow"))).verdict).toBe("allow");
+    expect((await under("npm test && rm -rf build", rules, unruled("allow"))).verdict).toBe("deny");
+    expect((await under("npm test && git push", rules, unruled("allow"))).verdict).toBe("ask");
+    const judged = await under("npm test", rules, unruled("allow"));
+    expect(judged.commands).toEqual([{ text: "npm test", verdict: "allow", by: null, also: [] }]);
+  });
+
+  it("deny is a whitelist: only what an allow rule names runs", async () => {
+    const rules = layers([allow("npm *")]);
+    expect((await under("npm test", rules, unruled("deny"))).verdict).toBe("allow");
+    expect((await under("npm test && curl example.com", rules, unruled("deny"))).verdict).toBe("deny");
+  });
+
+  it("what can't be seen is what no rule decided: it gets the same answer", async () => {
+    const rules = layers([allow("echo *")]);
+    expect((await under("echo $(id)", rules, unruled("ask"))).verdict).toBe("ask");
+    expect((await under("echo $(id)", rules, unruled("allow"))).verdict).toBe("allow");
+    expect((await under("echo $(id)", rules, unruled("deny"))).verdict).toBe("deny");
+    // and so is a line that runs nothing
+    expect((await under("", layers([]), unruled("allow"))).verdict).toBe("allow");
+    expect((await under("", layers([]), unruled("deny"))).verdict).toBe("deny");
+  });
+
+  it("under allow a deny rule stops what is read — and only that", async () => {
+    const rules = layers([deny("rm *")]);
+    expect((await under("rm -rf x", rules, unruled("allow"))).verdict).toBe("deny");
+    expect((await under("echo $(id); rm -rf x", rules, unruled("allow"))).verdict).toBe("deny");
+    // hidden where the reader can't see, it runs: the deny rule never met it
+    expect((await under('eval "rm -rf x"', rules, unruled("allow"))).verdict).toBe("allow");
+  });
+
+  it("always allow sets the rules and the choice aside: every line runs, no rule consulted", async () => {
+    const rules = layers([deny("rm *"), ask("git push*")]);
+    for (const text of ["rm -rf /", "git push", "echo $(id)", 'eval "x"', ""]) {
+      const judged = await under(text, rules, ALWAYS);
+      expect(judged.verdict).toBe("allow");
+      expect(judged.commands.every((c) => c.verdict === "allow" && c.by === null && c.also.length === 0)).toBe(true);
+    }
+    expect((await under("rm -rf /", rules, { alwaysAllow: true, unruled: "deny" })).verdict).toBe("allow");
+  });
+
+  it("says why, for a command no rule decided", () => {
+    expect(unruledWhy(DEFAULT_COMMAND_POLICY)).toBe("no rule matched");
+    expect(unruledWhy(unruled("allow"))).toBe('no rule matched — "When no rule decides" is allow');
+    expect(unruledWhy(unruled("deny"))).toBe('no rule matched — "When no rule decides" is deny');
+    expect(unruledWhy(ALWAYS)).toBe('"Always allow commands" is on');
+  });
+
+  it("each layer holds its own; a workspace's choice wins where it makes one, and either layer's switch is on", () => {
+    const machine: CommandPolicyView = { alwaysAllow: false, unruled: "allow" };
+    expect(effectiveCommandPolicy(machine, { alwaysAllow: false, unruled: null })).toEqual({ alwaysAllow: false, unruled: "allow" });
+    expect(effectiveCommandPolicy(machine, { alwaysAllow: false, unruled: "ask" })).toEqual({ alwaysAllow: false, unruled: "ask" });
+    expect(effectiveCommandPolicy(machine, { alwaysAllow: true, unruled: "deny" })).toEqual({ alwaysAllow: true, unruled: "deny" });
+    expect(effectiveCommandPolicy({ alwaysAllow: true, unruled: "ask" }, { alwaysAllow: false, unruled: null }).alwaysAllow).toBe(true);
+    expect([DEFAULT_COMMAND_POLICY, unruled("deny"), unruled("allow"), ALWAYS].map(commandsRunUnasked)).toEqual([false, false, true, true]);
   });
 });
 

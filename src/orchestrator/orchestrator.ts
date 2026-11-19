@@ -27,7 +27,11 @@ import {
   type ConnectAgentSource,
   type DataInventoryRow,
   type ElicitationAnswer,
+  type CommandPolicyLayersView,
+  DEFAULT_COMMAND_POLICY,
+  effectiveCommandPolicy,
   type RuleMatchView,
+  type RuleVerdictView,
   type SavedRootsView,
   type SettingsEvent,
   type SettingsSectionId,
@@ -89,6 +93,7 @@ import { LastActiveSessionStore } from "./stores/last-active-session";
 import { LastConnectedStore } from "./stores/last-connected";
 import { DefaultAgentFoldStore } from "./stores/default-agent-fold";
 import { type CommandRule, MachineRulesStore, PermissionRulesStore } from "./stores/permission-rules";
+import { MachineCommandPolicyStore, WorkspaceCommandPolicyStore } from "./stores/command-policy";
 import { ShellReader, type ShellGrammarFiles } from "./shell-reading";
 import { MachineWriteScopeStore, withWriteEntry, withWriteScope, writeScopeRows } from "./stores/write-scope";
 import type { AgentScope } from "../shared/agent-scope";
@@ -210,6 +215,8 @@ export class Orchestrator {
   readonly permissionRules: PermissionRulesStore;
   readonly machinePermissionRules: MachineRulesStore;
   readonly machineWriteScope: MachineWriteScopeStore;
+  readonly machineCommandPolicy: MachineCommandPolicyStore;
+  readonly commandPolicy: WorkspaceCommandPolicyStore;
   readonly savedRoots: SavedRootsStore;
   readonly preferences: PreferencesStore;
   /** The newest Patchbay version this machine has run — the host weighs
@@ -296,6 +303,8 @@ export class Orchestrator {
     this.permissionRules = new PermissionRulesStore(place.workspaceKV);
     this.machinePermissionRules = new MachineRulesStore(machineKV);
     this.machineWriteScope = new MachineWriteScopeStore(machineKV);
+    this.machineCommandPolicy = new MachineCommandPolicyStore(machineKV);
+    this.commandPolicy = new WorkspaceCommandPolicyStore(place.workspaceKV);
     this.savedRoots = new SavedRootsStore(
       machineKV,
       place.workspace === null ? null : { id: place.workspace, kv: place.workspaceKV },
@@ -394,6 +403,7 @@ export class Orchestrator {
         workspaceRoots: workspaceRootsView(),
         workspace: this.workspace,
         savedRoots: this.savedRootsView(),
+        commandPolicy: this.commandPolicyView(),
         preferences: this.preferences.get(),
       },
       reduceAgentView,
@@ -410,6 +420,7 @@ export class Orchestrator {
         mcpCatalog: this.mcpServers.catalogViews(),
         preferences: this.preferences.get(),
         savedRoots: this.savedRootsView(),
+        commandPolicy: this.commandPolicyView(),
         workspace: this.workspace,
       },
       reduceSettings,
@@ -827,6 +838,7 @@ export class Orchestrator {
         const name = id === undefined ? undefined : this.agents.name(id);
         return id === undefined || name === undefined ? null : { id, name, amongOthers: this.agentConfigs.list().length > 1 };
       },
+      () => this.commandPolicyView().effective,
     );
     this.clientHost = new ClientHost({
       broker: this.broker,
@@ -933,6 +945,8 @@ export class Orchestrator {
       permissionRules: this.permissionRules,
       machineRules: this.machinePermissionRules,
       machineWriteScope: this.machineWriteScope,
+      machineCommandPolicy: this.machineCommandPolicy,
+      commandPolicy: this.commandPolicy,
       decisionAudit: this.decisionAudit,
       lastActiveSession: this.lastActiveSession,
       lastConnected: this.lastConnected,
@@ -1414,6 +1428,31 @@ export class Orchestrator {
       void this.mcpServerGates.checkBuiltin().catch(this.logCatch("check the built-in MCP servers"));
   }
 
+  /** The command policy as each layer holds it now, and as it comes out. */
+  commandPolicyView(): CommandPolicyLayersView {
+    const machine = this.machineCommandPolicy.get();
+    const workspace = this.commandPolicy.get();
+    return { machine, workspace, effective: effectiveCommandPolicy(machine, workspace) };
+  }
+
+  publishCommandPolicy(): void {
+    const event = { kind: "commandPolicyChanged", commandPolicy: this.commandPolicyView() } as const;
+    this.settings.emit(event);
+    this.agentView.emit(event);
+  }
+
+  /** One layer's switch or choice, written through that layer's store,
+   * then shown. Only a workspace may leave the choice to the machine: a
+   * machine told to is left as it was. */
+  async setCommandPolicy(layer: "workspace" | "machine", change: { alwaysAllow?: boolean; unruled?: RuleVerdictView | null }): Promise<void> {
+    if (layer === "workspace") await this.commandPolicy.set({ ...this.commandPolicy.get(), ...change });
+    else {
+      const { unruled, ...rest } = change;
+      await this.machineCommandPolicy.set({ ...this.machineCommandPolicy.get(), ...rest, ...(unruled != null ? { unruled } : {}) });
+    }
+    this.publishCommandPolicy();
+  }
+
   publishSavedRoots(): void {
     const event = { kind: "savedRootsChanged", savedRoots: this.savedRootsView() } as const;
     this.settings.emit(event);
@@ -1441,7 +1480,7 @@ export class Orchestrator {
     const run = typedRun(line, shell);
     const judgement: CommandJudgementView =
       run === null
-        ? { verdict: "ask", commands: [], unreadable: [{ text: line, reason: "not a command line — a quote is left open" }] }
+        ? { verdict: "ask", commands: [], unreadable: [{ text: line, reason: "not a command line — a quote is left open" }], policy: DEFAULT_COMMAND_POLICY }
         : await this.broker.judgeRun(run, draft ?? undefined, agent);
     this.settings.emit({ kind: "commandJudged", line, shell, agent, judgement });
   }

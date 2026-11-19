@@ -2,7 +2,8 @@
 // Copyright 2026 Solutions Unity
 
 // Top bar: current-session agent indicator, the other sessions' attention
-// read-out (passed in as children), errors chip, session/new buttons. The
+// read-out (passed in as children), the mark that commands run unasked,
+// errors chip, session/new buttons. The
 // agent chip is a read-out, not a picker — agent choice happens where it
 // matters, in the new-chat flow; beside its name, the version chip — the
 // upgrade itself while the agent has a newer version; and the layout
@@ -11,7 +12,8 @@
 // native view title bar (package.json view/title), not here. The usage
 // gauge lives in the composer's stats strip (composer/stats.tsx).
 import type { ReactNode } from "react";
-import type { AgentSummary, SessionsLayout } from "../../shared/protocol";
+import type { AgentSummary, CommandPolicyView, SessionsLayout } from "../../shared/protocol";
+import { UnaskedChip } from "./unasked-chip";
 import { versionChip } from "../shared/agent-work";
 import { Dot } from "../shared/dot";
 import { ErrorsChip } from "../shared/errors-chip";
@@ -28,6 +30,11 @@ export function Header(props: {
   onLayout(layout: SessionsLayout): void;
   onSessions(): void;
   onNew(): void;
+  /** What stands around the command rules here — the header says so while
+   * commands run without asking. */
+  commandPolicy: CommandPolicyView;
+  onStopAlwaysAllow(): void;
+  onOpenCommands(): void;
   children?: ReactNode;
 }) {
   const list = props.layout === "list";
@@ -47,6 +54,7 @@ export function Header(props: {
       <div className="spacer" />
       {props.children}
       <div className="spacer" />
+      <UnaskedChip policy={props.commandPolicy} onStop={props.onStopAlwaysAllow} onOpen={props.onOpenCommands} />
       <ErrorsChip />
       <Button variant="ghost" size="icon" className="h-6 w-6" title="New session" aria-label="New session" onClick={props.onNew}>
         <Icon name="add" />

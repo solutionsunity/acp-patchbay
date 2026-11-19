@@ -31,6 +31,8 @@ export const STORED_KEYS: Readonly<Record<StorageKey, ExportPart | { never: stri
   [STORAGE_KEYS.preferences]: "settings",
   [STORAGE_KEYS.machineCommandRules]: "settings",
   [STORAGE_KEYS.machineCommandRulesBefore092]: { readInto: "settings" },
+  [STORAGE_KEYS.machineCommandPolicy]: { never: "a choice to run commands unasked is made on each machine, never carried in by a file" },
+  [STORAGE_KEYS.commandPolicy]: { never: "this workspace's own" },
   [STORAGE_KEYS.machineWriteScope]: "settings",
   [STORAGE_KEYS.machineWriteScopeBefore092]: { readInto: "settings" },
   [STORAGE_KEYS.savedRoots]: "settings",

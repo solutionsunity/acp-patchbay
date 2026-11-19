@@ -27,6 +27,8 @@ export interface EraseTargets {
   spawnRegistry: Wipeable;
   permissionRules: Wipeable;
   machineRules: Wipeable;
+  machineCommandPolicy: Wipeable;
+  commandPolicy: Wipeable;
   machineWriteScope: Wipeable;
   decisionAudit: Wipeable;
   lastConnected: Wipeable;
@@ -60,6 +62,8 @@ const ERASED_BY: Readonly<
   [STORAGE_KEYS.preferences]: "preferences",
   [STORAGE_KEYS.machineCommandRules]: "machineRules",
   [STORAGE_KEYS.machineCommandRulesBefore092]: "machineRules",
+  [STORAGE_KEYS.machineCommandPolicy]: "machineCommandPolicy",
+  [STORAGE_KEYS.commandPolicy]: "commandPolicy",
   [STORAGE_KEYS.machineWriteScope]: "machineWriteScope",
   [STORAGE_KEYS.machineWriteScopeBefore092]: "machineWriteScope",
   [STORAGE_KEYS.savedRoots]: "savedRoots",
