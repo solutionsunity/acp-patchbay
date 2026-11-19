@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 — 2026-11-20
+
+1.0.0 numbers what Patchbay has been for some time. New: sessions as a list
+with each chat in a tab, unattended command runs, zsh reading, and Report on any failure.
 
 - **The Agent View can be the sessions list, with each chat in a tab.** A
   new button in the view's header switches between two layouts, one click
