@@ -1991,6 +1991,53 @@ if (runs("report-failure")) {
   await p.close();
 }
 
+// ── Settings says what to do and keeps why a hover away: the add card's Add
+// sits where the card begins, its standing notes behind one mark, and a
+// pasted JSON shows the name agents will get; the matrix leaves an agent
+// that hasn't connected here blank — nothing known is not "not declared".
+// Theme-independent. ──
+if (runs("settings-forms")) {
+  const p = await page(browser, Object.keys(THEMES)[0], { width: 900, height: 1000 });
+  const st = settingsState();
+  await renderView(p, "settings", { ...st, section: "mcpServers" });
+  const card = p.locator("[data-add-card]").first();
+  if ((await card.count()) === 0) await p.click("button[aria-expanded]");
+  await card.waitFor();
+  await card.locator('button:has-text("Your own server")').click();
+  const add = card.locator('button:text-is("Add")');
+  const top = async (locator) => (await locator.first().boundingBox())?.y ?? -1;
+  check(
+    "[forms] Add sits in the card's first row, above every field",
+    Math.abs((await top(add)) - (await top(card.locator('button[aria-label="Close this card"]')))) < 12 && (await top(add)) < (await top(card.locator('[role="radiogroup"]'))),
+  );
+  check("[forms] an add that can't go yet says why beside its button", (await card.locator(".row").first().innerText()).includes("a command is needed"));
+  await card.locator('button[aria-label="About this form"]').hover();
+  await p.waitForSelector('[role="tooltip"]');
+  check("[forms] the form's standing notes sit behind its mark", (await p.locator('[role="tooltip"]').first().innerText()).includes("SecretStorage"));
+  await p.mouse.move(0, 0);
+  check("[forms] …and are not spelled out in the card", !(await card.innerText()).includes("SecretStorage"));
+  await card.locator('[role="radio"]:has-text("JSON")').click();
+  await card.locator('[aria-label="server JSON"]').fill('{"mcpServers": {"My Files": {"command": "npx", "args": ["-y", "files-server"]}}}');
+  await card.locator(".note .font-mono").waitFor();
+  check(
+    `[forms] a pasted JSON shows the name agents will get ("${await card.locator(".note .font-mono").innerText()}")`,
+    (await card.locator(".note .font-mono").innerText()) === "My_Files" && !(await add.isDisabled()),
+  );
+  await p.screenshot({ path: `${OUT}/settings-mcp-add-json.png` });
+
+  // the matrix: an agent that hasn't connected in this window
+  const never = { ...st.agents[0], id: "never", name: "Never Connected", status: "stopped", capabilities: undefined, protocolVersion: undefined, capabilitiesResetAt: undefined };
+  await renderView(p, "settings", { ...st, section: "matrix", agents: [...st.agents, never] });
+  await p.waitForSelector('[data-slot="table"]');
+  const column = await p.locator('[data-slot="table"] thead th').evaluateAll((ths) => ths.findIndex((th) => th.textContent.includes("Never Connected")));
+  const cells = await p.locator(`[data-slot="table"] tbody tr td:nth-child(${column + 1})`).evaluateAll((tds) => tds.map((td) => td.textContent.trim()));
+  check(`[forms] an agent not connected here has blank cells — every one of ${cells.length}`, column > 0 && cells.length > 5 && cells.every((text) => text === ""));
+  check("[forms] …and the legend says what blank means", (await p.locator(".legend").innerText()).includes("blank: not connected in this window"));
+  check("[forms] an agent that has connected still shows what it didn't declare", (await p.locator('[data-slot="table"] .st-n').count()) > 0);
+  await p.screenshot({ path: `${OUT}/settings-matrix-blank.png` });
+  await p.close();
+}
+
 // ── a session's MCP chip says which of its servers is failing, and which
 // it can't see into (#175): a failure the bridge saw for this session, the
 // last check's where nothing nearer is known — each reportable — and "by

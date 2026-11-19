@@ -10,8 +10,7 @@ import { useState } from "react";
 import { RULE_VERDICTS, type CommandPolicyLayersView, type RuleVerdictView } from "../../shared/protocol";
 import { ALWAYS_ALLOW_COMMANDS, WHEN_NO_RULE_DECIDES } from "../../shared/command-rules";
 import { ALWAYS_ALLOW_HELP, policyWarning, UNRULED_HELP, UNRULED_MEANS, type PolicyLayer } from "./command-policy-view";
-import { Icon } from "../shared/icon";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Info } from "./info";
 import { Toggle } from "./controls";
 import {
   AlertDialog,
@@ -29,23 +28,6 @@ type Change = Parameters<typeof policyWarning>[0];
 
 /** A workspace's "as the machine has it", as its select spells it. */
 const AS_MACHINE = "machine";
-
-/** What a control means, behind a mark beside it — reached by the pointer
- * and by the keyboard alike. */
-function Info({ about, text }: { about: string; text: string }) {
-  return (
-    <TooltipProvider delayDuration={150}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button type="button" className="inline-flex opacity-60 hover:opacity-100 focus-visible:opacity-100" aria-label={`About "${about}"`}>
-            <Icon name="info" size={14} />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-80">{text}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
-}
 
 /** One layer's two choices, in that layer's rules card. While every
  * command is allowed — by either layer's switch — the choice for a command
@@ -75,7 +57,7 @@ export function PolicyRow(props: {
     <div className="row mb-2 flex-wrap items-center gap-x-4" data-command-policy={layer}>
       <span className="inline-flex items-center gap-1.5">
         <Toggle checked={policy[layer].alwaysAllow} label={ALWAYS_ALLOW_COMMANDS} onChange={(on) => ask({ kind: "alwaysAllow", on })} />
-        <Info about={ALWAYS_ALLOW_COMMANDS} text={ALWAYS_ALLOW_HELP[layer]} />
+        <Info about={`"${ALWAYS_ALLOW_COMMANDS}"`}>{ALWAYS_ALLOW_HELP[layer]}</Info>
       </span>
       <span className={`inline-flex items-center gap-1.5 text-[12px]${muted ? " opacity-50" : ""}`} inert={muted} data-unruled>
         {WHEN_NO_RULE_DECIDES}
@@ -95,7 +77,7 @@ export function PolicyRow(props: {
             ))}
           </SelectContent>
         </Select>
-        <Info about={WHEN_NO_RULE_DECIDES} text={UNRULED_HELP[layer]} />
+        <Info about={`"${WHEN_NO_RULE_DECIDES}"`}>{UNRULED_HELP[layer]}</Info>
       </span>
 
       <AlertDialog open={asking !== null} onOpenChange={(open) => !open && setAsking(null)}>

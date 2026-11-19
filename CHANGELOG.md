@@ -105,6 +105,11 @@
   because they carried no `readOnlyHint` and MCP treats a silent tool as one
   that may write. Every tool now states that it changes nothing and stays
   inside the editor. (#162)
+- **Settings says less and keeps why a hover away.** The MCP add card's
+  Add button sits at the top of the card, its explanations moved behind an
+  info icon, and a pasted JSON shows the name agents will get. The
+  capability matrix leaves an agent that hasn't connected in this window
+  blank, where it used to read "not declared".
 - **A new session keeps its draft when its agent restarts.** With an agent
   that lists its sessions, a session you had not prompted yet was dropped
   when that agent crashed or was stopped and came back — and what you had

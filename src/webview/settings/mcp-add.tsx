@@ -26,6 +26,7 @@ import type { PatchbayMcpServerId } from "../../shared/ids";
 import { Icon } from "../shared/icon";
 import { SearchPicker } from "./add-controls";
 import { mechanismsOf, type Mechanism } from "./catalog-mechanisms";
+import { Info } from "./info";
 import { Field } from "./controls";
 import { cardProblem, draftCard, withField, withJson, withView, type DraftCard, type DraftView } from "./mcp-draft-cards";
 import { AgentScope, WorkspaceScope } from "./scope-control";
@@ -68,29 +69,37 @@ function MechanismChips(props: { entry: CatalogEntryView }) {
 }
 
 /** Why an MCP server's name is typed once — said wherever one is named. */
-const NAME_IS_FINAL = `it can't be changed later: agents keep the server's tools and "always allow" rules under its name`;
+const NAME_IS_FINAL = `It can't be changed later: agents keep the server's tools and "always allow" rules under its name.`;
 
 /** An MCP server's name, typed once: it is the key agents keep the
  * server's tools and "always allow" rules under, so it never changes after
  * the add. Shown as the add will store it, while it is typed. */
 function McpNameField(props: { value: string; taken: readonly string[]; onChange(value: string): void }) {
-  const blank = mcpServerName(props.value) === "";
   return (
     <>
       <Field label="name">
         <Input type="text" placeholder="my-server" value={props.value} onInput={(e) => props.onChange((e.target as HTMLInputElement).value)} />
       </Field>
-      <div className="note m-0 basis-full">
-        {blank ? (
-          "a name is needed"
-        ) : (
-          <>
-            agents get it as <span className="font-mono">{addedMcpServerName(props.value, props.taken)}</span>
-          </>
-        )}{" "}
-        — {NAME_IS_FINAL}
-      </div>
+      <NameAsAdded value={props.value} taken={props.taken} />
     </>
+  );
+}
+
+/** The name as the add will store it — what agents get — with why it is
+ * typed once behind its mark. Shown wherever a server is being named: the
+ * field above, or the JSON whose key names it. */
+function NameAsAdded(props: { value: string; taken: readonly string[] }) {
+  return (
+    <div className="note m-0 flex basis-full items-center gap-1">
+      {mcpServerName(props.value) === "" ? (
+        "a name is needed"
+      ) : (
+        <span>
+          agents get it as <span className="font-mono">{addedMcpServerName(props.value, props.taken)}</span>
+        </span>
+      )}
+      <Info about="the server's name">{NAME_IS_FINAL}</Info>
+    </div>
   );
 }
 
@@ -118,6 +127,13 @@ export function WhoGetsIt(props: {
     </div>
   );
 }
+
+/** What each way of describing a server needs said of it, once. */
+const FORM_NOTES: Readonly<Record<DraftView, string>> = {
+  stdio: "A command the agent starts itself: the executable, its arguments one per line, and KEY=value variables — ${NAME} is filled in from the environment.",
+  http: "A server reached by its URL. A key goes in a header, whole (Authorization: Bearer …); ${NAME} is filled in from the environment. A server that wants a sign-in asks for it when it is checked.",
+  json: 'The shape other clients write — {"mcpServers": {name: {type, command, args, env} or {type, url, headers}}}. Paste several and each gets its own card.',
+};
 
 const VIEWS: readonly { view: DraftView; label: string; icon: string }[] = [
   { view: "stdio", label: "command", icon: "terminal" },
@@ -152,6 +168,10 @@ function DraftForm(props: {
             <Icon name={v.icon} /> {v.label}
           </Button>
         ))}
+        <Info about="this form">
+          {FORM_NOTES[card.view]} Values go to VS Code SecretStorage and are handed to the agent only when it starts this server.
+          {props.naming !== null && " Nothing is stored until the server has been checked."}
+        </Info>
       </div>
       {props.naming !== null && card.view !== "json" && (
         <McpNameField value={card.name} taken={props.naming.taken} onChange={(name) => set({ ...card, name })} />
@@ -172,10 +192,7 @@ function DraftForm(props: {
               {e}
             </div>
           ))}
-          <div className="note m-0">
-            the shape other clients write — {"{"}"mcpServers": {"{"}name: {"{"}type, command, args, env{"}"} or {"{"}type, url, headers{"}}}"}
-            {props.naming !== null && "; paste several and each gets its own card"}
-          </div>
+          {props.naming !== null && card.jsonErrors.length === 0 && card.json.trim() !== "" && <NameAsAdded value={card.name} taken={props.naming.taken} />}
         </div>
       ) : d.type === "stdio" ? (
         <>
@@ -227,12 +244,8 @@ function DraftForm(props: {
               onInput={(e) => set(withField(card, { headers: (e.target as HTMLTextAreaElement).value }))}
             />
           </Field>
-          <div className="note m-0 basis-full">a server that wants a sign-in asks for it when it is checked</div>
         </>
       )}
-      <div className="note m-0 basis-full">
-        values go to VS Code SecretStorage and are handed to the agent only when it starts this server
-      </div>
     </>
   );
 }
@@ -503,10 +516,29 @@ export function McpAddCards(props: {
             <div className="row">
               <h2 className="m-0">Add an MCP server</h2>
               <span className="flex-1" />
+              {card.custom !== null && (
+                <>
+                  {problem !== null && <span className="note m-0 min-w-0 truncate" title={problem}>{problem}</span>}
+                  <Button
+                    size="sm"
+                    disabled={pending || problem !== null || mcpServerName(card.custom.name) === "" || !chosen(reach)}
+                    title={problem ?? undefined}
+                    onClick={() => addCustom(false)}
+                  >
+                    Add
+                  </Button>
+                </>
+              )}
               <Button variant="ghost" size="icon" className="size-7" aria-label="Close this card" onClick={() => close(card.key)}>
                 <Icon name="close" />
               </Button>
             </div>
+            <ConnectStatus
+              connect={connect}
+              onCancel={() => connect !== undefined && props.onCancelConnect(connect.key)}
+              onSignIn={() => addCustom(true)}
+              onPasteLink={(link) => connect !== undefined && props.onPasteSignInLink(connect.key, link)}
+            />
             <div className="connect-form">
               {card.custom === null ? (
                 <>
@@ -581,25 +613,6 @@ export function McpAddCards(props: {
                   onRouting={(routing) => update(card.key, (c) => ({ ...c, routing }))}
                 />
               )}
-              {card.custom !== null && (
-                <div className="form-actions basis-full">
-                  <Button
-                    size="sm"
-                    disabled={pending || problem !== null || mcpServerName(card.custom.name) === "" || !chosen(reach)}
-                    title={problem ?? undefined}
-                    onClick={() => addCustom(false)}
-                  >
-                    Add
-                  </Button>
-                  {problem !== null && <span className="note m-0 self-center">{problem}</span>}
-                </div>
-              )}
-              <ConnectStatus
-                connect={connect}
-                onCancel={() => connect !== undefined && props.onCancelConnect(connect.key)}
-                onSignIn={() => addCustom(true)}
-                onPasteLink={(link) => connect !== undefined && props.onPasteSignInLink(connect.key, link)}
-              />
             </div>
           </div>
         );

@@ -340,7 +340,9 @@ chip: the time of its last handshake, when declared was read again (used carries
 over while the agent's version stays the same). Protocol rows from the handshake. Rows are
 hand-picked against the ACP spec's declared capability surface, not derived
 automatically — noted above the table. Cell tooltips explain consequences ("not
-declared — this capability is unavailable"). Footer note: behavior rows get marked
+declared — this capability is unavailable"). An agent that hasn't connected in this
+window has claimed nothing yet: its cells are blank, never "not declared", and the
+legend says what blank means. Footer note: behavior rows get marked
 used opportunistically during real use; patchbay runs no probe that spends an
 agent turn to mark a row, on a schedule or otherwise.
 
@@ -373,14 +375,19 @@ view of the same server, in the shape other clients write (`{"mcpServers":
 fills the type and fields, and the fields show in it, every field of the type
 present, an unfilled one empty. Pasting several servers opens a card for
 each, after this one, each its own add; one that doesn't read is a card
-saying why. An empty command or URL keeps `Add` off and says so. `${NAME}`
-references stay as typed.
+saying why. `Add` sits in the card's first row, beside Close, with what came
+of it — checking, the reason it wasn't added — right under that row; an empty
+command or URL keeps it off and says so beside it. `${NAME}` references stay
+as typed. The form's standing notes — what each type needs, where values are
+kept, that nothing is stored until the server is checked — sit behind one
+info mark at the end of the type row, as a tooltip.
 
 Every add names its server once — the field starts as the entry's name, or
 as typed or pasted — and shows the name as agents will get it (characters
-agents don't keep become `_`, a taken name gets `-N`), with the note that it
-can't be changed later: agents keep the server's tools and "always allow"
-rules under it. Every add ends on **Who gets it**: the workspaces it is on
+agents don't keep become `_`, a taken name gets `-N`) — under the name field,
+and under a pasted JSON, whose key names the server — with why it can't be
+changed later behind an info mark: agents keep the server's tools and "always
+allow" rules under it. Every add ends on **Who gets it**: the workspaces it is on
 in (this workspace preselected; in a window with no workspace nothing is,
 and the add waits for the pick), then the agents (all, preselected).
 

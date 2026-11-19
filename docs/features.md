@@ -268,7 +268,8 @@ deliverable.
 - User can add, edit, and remove agents, including launch configuration per agent.
 - Capability matrix: every agent × every capability, honest states only — not
   declared / declared but never exercised / exercised on the wire / suspect
-  (the path that should have proven it failed). Claims refresh on every
+  (the path that should have proven it failed) — and blank for an agent that
+  hasn't connected in this window: nothing is known of it yet. Claims refresh on every
   connect; proof is remembered per agent version, never invented. Rows are
   hand-picked against the ACP spec's declared capability surface, not derived
   automatically.

@@ -110,6 +110,7 @@ export function MatrixSection({ state }: { state: SettingsState }) {
               implies declared by construction (the capability tracker
               writes both in one mark). */}
           <div className="legend">
+            <span>blank: not connected in this window — nothing known yet</span>
             <span>
               <span className="st-d"><Icon name="circle" /></span> declared, not used
             </span>
@@ -157,7 +158,11 @@ export function MatrixSection({ state }: { state: SettingsState }) {
                   <TableRow key={id}>
                     <TableCell className="cap">{label}</TableCell>
                     {agents.map((a) => {
-                      const cell = a.capabilities?.[id];
+                      // Not connected in this window: nothing declared and
+                      // nothing refused — the cell says nothing, where a
+                      // dash would say "not declared".
+                      if (a.capabilities === undefined) return <TableCell key={a.id} className="text-center" data-unknown />;
+                      const cell = a.capabilities[id];
                       const st = capabilityState(cell);
                       const icon = STATE_ICON[st];
                       const consequence = ROW_CONSEQUENCE[id];
