@@ -482,11 +482,23 @@ export class McpServersStore {
   /** Patchbay's own handshake with a server about to be stored — the check
    * every add and edit passes before anything is kept. A remote server
    * asking for a sign-in is said as that. */
-  private async check(target: ProbeTarget, signal: AbortSignal | undefined): Promise<ProbeOutcome> {
+  private async check(
+    target: ProbeTarget,
+    signal: AbortSignal | undefined,
+    /** What the check carried that the user's own act put there — a key
+     * they pasted, the token their sign-in just returned. A server turning
+     * that away is refusing it, not asking for a sign-in: there is none to
+     * offer for a key, and one was just made for a token. */
+    presented?: "key" | "sign-in",
+  ): Promise<ProbeOutcome> {
     try {
       return await unlessAborted(this.probeFn(target, signal, this.log), signal);
     } catch (err) {
-      if (signal?.aborted !== true && asksForSignIn(err)) throw new SignInAsked("the server asks you to sign in");
+      if (signal?.aborted !== true && asksForSignIn(err)) {
+        if (presented === "key") throw new Error("the server refused this key (HTTP 401) — check the key and what it is allowed to do");
+        if (presented === "sign-in") throw new Error("the server refused the token its own sign-in returned (HTTP 401)");
+        throw new SignInAsked("the server asks you to sign in");
+      }
       if (signal?.aborted !== true && target.kind === "stdio") throw new Error(`${agentErrorText(err)} (ran in ${target.cwd})`);
       throw err;
     }
@@ -774,6 +786,7 @@ export class McpServersStore {
       const outcome = await this.check(
         { kind: "http", url: endpoint.url, headers: { [header.headerName]: `${header.valuePrefix}${key}` } },
         signal,
+        "key",
       );
       return this.storeCatalog(entry, name, "header", endpoint.url, { accessToken: key }, reach, outcome);
     });
@@ -802,6 +815,7 @@ export class McpServersStore {
       const outcome = await this.check(
         { kind: "http", url: endpoint.url, headers: { Authorization: `Bearer ${token.accessToken}` } },
         signal,
+        "sign-in",
       );
       return this.storeCatalog(entry, name, "oauth", endpoint.url, token, reach, outcome);
     });

@@ -305,6 +305,21 @@ describe("McpServersStore — key connect", () => {
     expect(await published(h)).toEqual([failure("catalog:svc", /forbidden/)]);
   });
 
+  // A key the server answers 401 to was refused. It is not the server
+  // asking for a sign-in: a key's card has no sign-in to offer, and the
+  // one a custom server's card shows would do nothing here.
+  it("a key the server answers 401 to is said to be refused — never \"asks you to sign in\", and no Sign in offered", async () => {
+    const h = harness([entry()]);
+    h.setProbeFn(asksSignIn);
+    await expect(h.gates.connectWithKey("svc", "Service", "wrong-key", undefined, ALL)).rejects.toThrow(/refused this key \(HTTP 401\)/);
+    expect(h.configs.list()).toEqual([]);
+    expect(h.storedKeys).toEqual([]);
+    const [held] = await published(h);
+    expect(held).toMatchObject({ key: "catalog:svc", status: "failed" });
+    expect(held?.reason).toMatch(/refused this key/);
+    expect(held?.signIn).toBeUndefined();
+  });
+
   it("who gets it rides the connect — the workspaces, then the agents", async () => {
     const h = harness([entry()]);
     const id = await h.gates.connectWithKey("svc", "Service", "k", undefined, { routing: ["agent-b" as PatchbayAgentId], workspaces: [HERE] });
