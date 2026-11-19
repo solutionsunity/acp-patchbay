@@ -105,6 +105,10 @@
   because they carried no `readOnlyHint` and MCP treats a silent tool as one
   that may write. Every tool now states that it changes nothing and stays
   inside the editor. (#162)
+- **Add Selection takes every selection.** With several selections in a
+  file, "Add Selection to Patchbay Context" and the composer's selection
+  chip added only one. Each selection is now added as its own attachment,
+  in order down the file, and the chip says how many it will add. (#173)
 - **An agent hears every selection, not only the first.** With several
   selections in a file (multi-cursor, Alt+drag), `get_selection` reported
   one — and nothing at all when the first cursor placed held no text. It

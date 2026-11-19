@@ -226,12 +226,10 @@ export class OrchestratorHost {
     // is read host-side at the moment the user solidifies it. High-frequency
     // sources; the channel's coalescing keeps only the latest.
     const pushEditorContext = () => {
-      // the composer offers one selection: the first down the file
       const s = this.editorStateHost.getSelection();
-      const first = s?.selections[0];
       this.orchestrator.agentView.emit({
         kind: "editorContextChanged",
-        selection: s === null || first === undefined ? null : { file: s.file, startLine: first.startLine, endLine: first.endLine },
+        selection: s === null ? null : { file: s.file, ranges: s.selections.map(({ startLine, endLine }) => ({ startLine, endLine })) },
         openEditors: this.editorStateHost.getOpenEditors(),
       });
     };
@@ -1060,23 +1058,22 @@ export class OrchestratorHost {
         this.orchestrator.asks.reopenLink(action.patchbayAskId);
         break;
       case "addSelectionContext": {
-        // one selection is added: the first down the file, the one the
-        // composer offers
         const selected = this.editorStateHost.getSelection();
-        const first = selected?.selections[0];
-        if (selected === null || first === undefined) {
+        if (selected === null) {
           vscode.window.showInformationMessage("No selection — select text in a visible editor first.");
           break;
         }
-        const selection = { file: selected.file, ...first };
-        await this.orchestrator.sessions
-          .addContext(action.patchbaySessionId, {
+        // Each selection its own attachment, one after another: they land
+        // in the draft in the order they have down the file.
+        for (const selection of selected.selections) {
+          await this.orchestrator.sessions.addContext(action.patchbaySessionId, {
             id: chipId(),
             kind: "selection",
-            label: `Selection: ${selection.file}:${selection.startLine}-${selection.endLine}`,
+            label: `Selection: ${selected.file}:${selection.startLine}-${selection.endLine}`,
             content: selection.text,
-            sourceUri: `${vscode.Uri.file(selection.file)}#L${selection.startLine}-${selection.endLine}`,
+            sourceUri: `${vscode.Uri.file(selected.file)}#L${selection.startLine}-${selection.endLine}`,
           });
+        }
         break;
       }
       case "addFileContext": {

@@ -829,13 +829,13 @@ export type AgentWork =
       to?: string;
     };
 
-/** The live-selection indicator's data (the ghost chip):
- * position only, never the text — the text is read host-side at the moment
- * the user solidifies it, not streamed on every cursor move. */
+/** The live-selection indicator's data (the ghost chip): every selection
+ * of the editor the user is in, down the file — never none. Position only,
+ * never the text — the text is read host-side at the moment the user
+ * solidifies it, not streamed on every cursor move. */
 export interface LiveSelectionView {
   file: string;
-  startLine: number;
-  endLine: number;
+  ranges: readonly { startLine: number; endLine: number }[];
 }
 
 export interface OpenEditorView {

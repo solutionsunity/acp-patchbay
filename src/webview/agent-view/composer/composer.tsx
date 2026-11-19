@@ -27,8 +27,8 @@ import { COMPOSER_HAS_TEXT, composerControls } from "./composer-controls";
 import type { RootsControls } from "./roots-controls";
 import { Knobs } from "./knobs";
 import { ComposerStats } from "./stats";
-import { basename } from "../../shared/path";
 import { PromptEditor } from "./prompt-editor";
+import { selectionOffer } from "./chip-token";
 import { RootsChip } from "./roots-chip";
 import { McpChip } from "./mcp-chip";
 import type { McpChipControls } from "./mcp-chip-controls";
@@ -220,15 +220,8 @@ export function Composer(props: {
             />
           )}
           {enabled && props.liveSelection !== null && (
-            <span
-              className="ctx-chip ghost"
-              title="Live IDE selection — click to add it to context"
-              onClick={addSelection}
-            >
-              <Icon name="target" /> {basename(props.liveSelection.file)}:{props.liveSelection.startLine}
-              {props.liveSelection.endLine !== props.liveSelection.startLine
-                ? `-${props.liveSelection.endLine}`
-                : ""}
+            <span className="ctx-chip ghost" title={selectionOffer(props.liveSelection).title} onClick={addSelection}>
+              <Icon name="target" /> {selectionOffer(props.liveSelection).label}
             </span>
           )}
           {enabled && (

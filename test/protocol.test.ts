@@ -227,7 +227,7 @@ describe("live editor context (ui.md — ghost chip / @ mention sources)", () =>
     const s = replay(initialAgentViewState, [
       {
         kind: "editorContextChanged",
-        selection: { file: "/ws/a.ts", startLine: 3, endLine: 9 },
+        selection: { file: "/ws/a.ts", ranges: [{ startLine: 3, endLine: 9 }] },
         openEditors: [{ file: "/ws/a.ts", dirty: true }],
       },
       { kind: "editorContextChanged", selection: null, openEditors: [] },
@@ -239,7 +239,7 @@ describe("live editor context (ui.md — ghost chip / @ mention sources)", () =>
   it("coalesces to the latest — cursor moves must not queue up", () => {
     const a: AgentViewEvent = {
       kind: "editorContextChanged",
-      selection: { file: "/ws/a.ts", startLine: 1, endLine: 1 },
+      selection: { file: "/ws/a.ts", ranges: [{ startLine: 1, endLine: 1 }] },
       openEditors: [],
     };
     const b: AgentViewEvent = { kind: "editorContextChanged", selection: null, openEditors: [] };

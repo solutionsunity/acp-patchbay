@@ -2,7 +2,25 @@
 // file's own name, with its lines for a selection — one short word, never
 // the path the chip's label carries.
 import { describe, expect, it } from "vitest";
-import { chipTitle, chipToken } from "../src/webview/agent-view/composer/chip-token";
+import { chipTitle, chipToken, selectionOffer } from "../src/webview/agent-view/composer/chip-token";
+
+describe("selectionOffer", () => {
+  it("one selection is offered as its file and lines", () => {
+    expect(selectionOffer({ file: "/ws/src/a.ts", ranges: [{ startLine: 3, endLine: 9 }] })).toEqual({
+      label: "a.ts:3-9",
+      title: "Live IDE selection — click to add it to context",
+    });
+    expect(selectionOffer({ file: "/ws/src/a.ts", ranges: [{ startLine: 4, endLine: 4 }] }).label).toBe("a.ts:4");
+  });
+
+  it("several say how many more a click adds, and that each is added", () => {
+    const ranges = [{ startLine: 7, endLine: 12 }, { startLine: 25, endLine: 41 }, { startLine: 50, endLine: 50 }];
+    expect(selectionOffer({ file: "/ws/config.json", ranges })).toEqual({
+      label: "config.json:7-12 +2",
+      title: "3 selections in the editor — click to add each to context",
+    });
+  });
+});
 
 describe("chipToken", () => {
   it("a selection reads as its file and lines — one line as one number", () => {

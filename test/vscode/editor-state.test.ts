@@ -8,7 +8,8 @@ import { focusNote } from "./focus-note";
 import { WINDOW_SETTLE, waitFor } from "../support/wait-for";
 import * as assert from "node:assert";
 import * as vscode from "vscode";
-import { internals } from "./patchbay";
+import { fakeAgentConfig } from "./fake-agent-config";
+import { fakeAgentPath, internals, Patchbay } from "./patchbay";
 
 interface SelectionInfo {
   file: string;
@@ -136,5 +137,35 @@ suite("EditorStateHost — real vscode data", () => {
     editor.selection = new vscode.Selection(new vscode.Position(0, 0), new vscode.Position(0, 0));
 
     assert.strictEqual(host.editorStateHost.getSelection(), null);
+  });
+
+  test("Add Selection adds every selection as its own attachment, down the file, and the composer is told of each", async function () {
+    this.timeout(60000);
+    const pb = await Patchbay.open();
+    try {
+      const agent = await pb.addAgent(fakeAgentConfig("selections", "Selections Fake", fakeAgentPath(), { turn: [{ type: "chunk", text: "ok" }] }));
+      await pb.connect(agent);
+      const session = await pb.newSession(agent);
+      const doc = await vscode.workspace.openTextDocument({ content: "one\ntwo\nthree\nfour\n", language: "plaintext" });
+      const editor = await vscode.window.showTextDocument(doc);
+      const line = (n: number, to: number) => new vscode.Selection(new vscode.Position(n, 0), new vscode.Position(n, to));
+      editor.selections = [line(3, 4), line(0, 3), new vscode.Selection(new vscode.Position(1, 0), new vscode.Position(2, 5))];
+
+      // the composer's live selection names each, top down
+      await waitFor(() => pb.view.liveSelection?.ranges.length === 3, WINDOW_SETTLE, "the composer told of three selections");
+      assert.deepStrictEqual(pb.view.liveSelection?.ranges, [
+        { startLine: 1, endLine: 1 },
+        { startLine: 2, endLine: 3 },
+        { startLine: 4, endLine: 4 },
+      ]);
+
+      pb.act({ kind: "addSelectionContext", patchbaySessionId: session });
+      await waitFor(() => (pb.view.contextChips[session] ?? []).length === 3, WINDOW_SETTLE, "three attachments staged");
+      const chips = pb.view.contextChips[session] ?? [];
+      assert.deepStrictEqual(chips.map((c) => (c.kind === "selection" ? c.content : c.kind)), ["one", "two\nthree", "four"]);
+      assert.deepStrictEqual(chips.map((c) => (c.kind === "selection" ? c.sourceUri?.split("#")[1] : "")), ["L1-1", "L2-3", "L4-4"]);
+    } finally {
+      await pb.removeAdded();
+    }
   });
 });

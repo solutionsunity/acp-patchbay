@@ -181,7 +181,9 @@ deliverable.
   every webview for the duration of an in-window drag — so open editors and
   workspace files are reached through `@` in the prompt.
 - User can explicitly add editor state to the prompt: current selection, current
-  file, diagnostics.
+  file, diagnostics. The selection is the editor's the user is in, all of
+  it: several selections (multi-cursor) are added each as its own
+  attachment, in their order down the file *(#173)*.
 - Everything attached sits in the prompt's text, at the place the user put
   it, and reaches the agent there: several selections each beside the words
   about them. Deleting it from the text takes it out of the prompt; cutting
