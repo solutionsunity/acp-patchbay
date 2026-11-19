@@ -703,15 +703,18 @@ export class OrchestratorHost {
       .then(undefined, this.orchestrator.logCatch(`ask notice ${patchbaySessionId}`));
   }
 
-  /** A chat opened for typing: the Agent View takes focus, then its
-   * composer takes the keyboard. The view goes first — a view only focuses
-   * its composer while it has focus itself, so it never pulls focus from
-   * where the user is. */
+  /** A chat opened for typing: where its composer is takes focus, then the
+   * composer takes the keyboard. The place goes first — a view only
+   * focuses its composer while it has focus itself, so it never pulls
+   * focus from where the user is. In the chat layout that place is the
+   * Agent View; in the list layout it is the tab of the session in front,
+   * brought forward whether or not the session just changed — the user
+   * may be in a file, with that tab behind it. With no session in front
+   * the list is all there is to show. */
   async focusComposer(): Promise<void> {
-    // In the list layout the composer is the session's tab's, which its
-    // own opening brings to the front: the sidebar holds no composer to
-    // take the focus to.
-    if (!this.listLayout()) await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
+    const inFront = this.orchestrator.agentView.current.activePatchbaySessionId;
+    if (this.listLayout() && inFront !== null) await vscode.commands.executeCommand("acpPatchbay.detachSession", inFront, "tab");
+    else await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
     this.orchestrator.agentView.emit({ kind: "composerFocusRequested" });
   }
 

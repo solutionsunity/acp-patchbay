@@ -43,6 +43,16 @@ suite("sessions layout: the list, each chat in a tab", () => {
       await vscode.commands.executeCommand("workbench.action.previousEditor");
       await waitFor(() => activeTitle() === "beta" && pb.view.activePatchbaySessionId === beta, WINDOW_SETTLE, "the focused tab's session in front");
 
+      // "take me there" for the session already in front brings its tab
+      // forward: the user was in a file, the tab behind it
+      const file = await vscode.workspace.openTextDocument({ content: "a file the user is in", language: "plaintext" });
+      await vscode.window.showTextDocument(file);
+      await waitFor(() => activeTitle() !== "beta", WINDOW_SETTLE, "the file in front of the session's tab");
+      assert.strictEqual(pb.view.activePatchbaySessionId, beta, "a file taking the focus moves no session");
+      await vscode.commands.executeCommand("acpPatchbay.focusComposer");
+      await waitFor(() => activeTitle() === "beta", WINDOW_SETTLE, "the status bar's click brought the session's tab forward");
+      assert.deepStrictEqual(titles().sort(), ["alpha", "beta"], "and opened no second tab for it");
+
       // back to the chat: the tabs stay, and the view goes its own way again
       pb.act({ kind: "setPreferences", patch: { sessionsLayout: "chat" } });
       await waitFor(() => pb.view.preferences.sessionsLayout === "chat", WINDOW_SETTLE);
