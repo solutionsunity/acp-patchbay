@@ -105,6 +105,12 @@
   because they carried no `readOnlyHint` and MCP treats a silent tool as one
   that may write. Every tool now states that it changes nothing and stays
   inside the editor. (#162)
+- **Add files to the chat from where they already are.** A new right-click
+  entry, "Add to Patchbay Context", in the Explorer (files and folders,
+  several at once) and on an editor tab. Each is added to the current
+  conversation's draft as a link the agent reads itself, the way "Attach
+  files…" adds one; nothing is sent until you send. Dragging a tab or an
+  Explorer row into the chat stays blocked by VS Code. (#173)
 - **Add Selection takes every selection.** With several selections in a
   file, "Add Selection to Patchbay Context" and the composer's selection
   chip added only one. Each selection is now added as its own attachment,

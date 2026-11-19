@@ -7,9 +7,12 @@
 import { focusNote } from "./focus-note";
 import { WINDOW_SETTLE, waitFor } from "../support/wait-for";
 import * as assert from "node:assert";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import * as vscode from "vscode";
 import { fakeAgentConfig } from "./fake-agent-config";
 import { fakeAgentPath, internals, Patchbay } from "./patchbay";
+import { tempDir } from "./temp-dir";
 
 interface SelectionInfo {
   file: string;
@@ -164,6 +167,40 @@ suite("EditorStateHost — real vscode data", () => {
       const chips = pb.view.contextChips[session] ?? [];
       assert.deepStrictEqual(chips.map((c) => (c.kind === "selection" ? c.content : c.kind)), ["one", "two\nthree", "four"]);
       assert.deepStrictEqual(chips.map((c) => (c.kind === "selection" ? c.sourceUri?.split("#")[1] : "")), ["L1-1", "L2-3", "L4-4"]);
+    } finally {
+      await pb.removeAdded();
+    }
+  });
+
+  test("Add to Patchbay Context links what is in hand — the Explorer's selection, a tab's file — and nothing that is not on disk", async function () {
+    this.timeout(60000);
+    const pb = await Patchbay.open();
+    const dir = await tempDir("patchbay-add-");
+    try {
+      const agent = await pb.addAgent(fakeAgentConfig("inhand", "In Hand Fake", fakeAgentPath(), { turn: [{ type: "chunk", text: "ok" }] }));
+      await pb.connect(agent);
+      const session = await pb.newSession(agent);
+      const staged = () => (pb.view.contextChips[session] ?? []).map((c) => (c.kind === "attachment" ? c.path : c.kind));
+      const a = join(dir, "a.txt");
+      const b = join(dir, "b.txt");
+      const sub = join(dir, "sub");
+      writeFileSync(a, "a");
+      writeFileSync(b, "b");
+      mkdirSync(sub);
+
+      // the Explorer hands the row clicked and every row selected with it
+      await vscode.commands.executeCommand("acpPatchbay.addToContext", vscode.Uri.file(b), [vscode.Uri.file(a), vscode.Uri.file(b), vscode.Uri.file(sub)]);
+      await waitFor(() => staged().length === 3, WINDOW_SETTLE, "the three selected rows staged");
+      assert.deepStrictEqual(staged(), [a, b, sub], "each where it is, a folder as a folder, in the order selected");
+
+      // an editor tab hands its one file
+      await vscode.commands.executeCommand("acpPatchbay.addToContext", vscode.Uri.file(a));
+      await waitFor(() => staged().length === 4, WINDOW_SETTLE, "the tab's file staged");
+      assert.strictEqual(staged()[3], a);
+
+      // what has no place on disk is not added
+      await vscode.commands.executeCommand("acpPatchbay.addToContext", vscode.Uri.parse("untitled:Untitled-1"));
+      assert.strictEqual(staged().length, 4);
     } finally {
       await pb.removeAdded();
     }

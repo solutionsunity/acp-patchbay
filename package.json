@@ -150,6 +150,11 @@
         "category": "Patchbay"
       },
       {
+        "command": "acpPatchbay.addToContext",
+        "title": "Add to Patchbay Context",
+        "category": "Patchbay"
+      },
+      {
         "command": "acpPatchbay.addSelectionToContext",
         "title": "Add Selection to Patchbay Context",
         "category": "Patchbay"
@@ -172,6 +177,20 @@
           "command": "acpPatchbay.addSelectionToContext",
           "when": "editorHasSelection",
           "group": "9_cutcopypaste"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "acpPatchbay.addToContext",
+          "when": "resourceScheme == file || resourceScheme == vscode-remote",
+          "group": "6_patchbay"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "acpPatchbay.addToContext",
+          "when": "resourceScheme == file || resourceScheme == vscode-remote",
+          "group": "6_patchbay"
         }
       ],
       "commandPalette": [

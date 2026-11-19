@@ -179,7 +179,11 @@ deliverable.
   always a link, an image too; paste or drop sends an image itself. Editor tabs
   and Explorer entries cannot be dropped onto the composer — VS Code blocks
   every webview for the duration of an in-window drag — so open editors and
-  workspace files are reached through `@` in the prompt.
+  workspace files are reached through `@` in the prompt, or added from where
+  they already are: *Add to Patchbay Context* on the Explorer's right-click
+  menu (files and folders, every row selected) and on an editor tab's. Each
+  is linked into the draft of the session in front as a pick is — never its
+  contents, a folder never expanded — and nothing is sent *(#173)*.
 - User can explicitly add editor state to the prompt: current selection, current
   file, diagnostics. The selection is the editor's the user is in, all of
   it: several selections (multi-cursor) are added each as its own

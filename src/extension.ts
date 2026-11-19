@@ -95,6 +95,9 @@ export function activate(context: vscode.ExtensionContext): {
     vscode.commands.registerCommand("acpPatchbay.switchSession", () => host.switchSessionCommand()),
     vscode.commands.registerCommand("acpPatchbay.toggleSessionsLayout", () => host.toggleSessionsLayoutCommand()),
     vscode.commands.registerCommand("acpPatchbay.connectAgent", () => host.connectAgentCommand()),
+    vscode.commands.registerCommand("acpPatchbay.addToContext", (clicked?: vscode.Uri, selected?: readonly vscode.Uri[]) =>
+      host.addToContextCommand(clicked, selected).catch(host.warnCatch("add to context", "Nothing was added")),
+    ),
     vscode.commands.registerCommand("acpPatchbay.addSelectionToContext", () =>
       host.addSelectionToContextCommand(),
     ),

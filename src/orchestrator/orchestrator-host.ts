@@ -1351,7 +1351,13 @@ export class OrchestratorHost {
       canSelectMany: true,
       openLabel: "Attach",
     });
-    for (const uri of picked ?? []) {
+    await this.attachWhereTheyAre(patchbaySessionId, picked ?? []);
+  }
+
+  /** Files and folders linked into a session's draft, each where it is, in
+   * the order given. */
+  private async attachWhereTheyAre(patchbaySessionId: PatchbaySessionId, uris: readonly vscode.Uri[]): Promise<void> {
+    for (const uri of uris) {
       const name = basename(uri.fsPath);
       await this.orchestrator.sessions.addContext(patchbaySessionId, {
         id: chipId(),
@@ -1361,6 +1367,31 @@ export class OrchestratorHost {
         path: uri.fsPath,
       });
     }
+  }
+
+  /** "Add to Patchbay Context" on what is already in hand — the Explorer's
+   * selection (the row clicked, and every row selected with it), an editor
+   * tab's file, or from the palette the file of the editor the user is in:
+   * each linked into the draft of the session in front exactly as the
+   * attach pickers link one, a folder as a folder, nothing read and
+   * nothing sent. Only what sits on the disk the agents read is taken — an
+   * untitled buffer, a diff's old side or a settings page has no place a
+   * link could name. */
+  async addToContextCommand(clicked?: vscode.Uri, selected?: readonly vscode.Uri[]): Promise<void> {
+    const patchbaySessionId = this.orchestrator.agentView.current.activePatchbaySessionId;
+    if (patchbaySessionId === null) {
+      vscode.window.showInformationMessage("Start a Patchbay session first, then add files.");
+      return;
+    }
+    const inHand = selected !== undefined && selected.length > 0 ? selected : [clicked ?? vscode.window.activeTextEditor?.document.uri];
+    // the disk this window works on: its own, or the remote's it is opened on
+    const onDisk = inHand.filter((uri): uri is vscode.Uri => uri instanceof vscode.Uri && (uri.scheme === "file" || uri.scheme === "vscode-remote"));
+    if (onDisk.length === 0) {
+      vscode.window.showInformationMessage("Nothing to add — only files and folders on disk can be added.");
+      return;
+    }
+    await this.attachWhereTheyAre(patchbaySessionId, onDisk);
+    await this.focusComposer();
   }
 
   /** Copy config: the server as an `mcpServers` document (the shape Import
