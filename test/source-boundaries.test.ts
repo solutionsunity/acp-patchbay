@@ -119,6 +119,23 @@ describe("source boundaries", () => {
     expect(hits([host], opener)).toEqual([expect.stringContaining("openExternal(href as unknown as vscode.Uri)")]);
   });
 
+  // A page keeps one thing with the editor, and only hands it over: what
+  // its host says the panel is, so the editor returns the tab with its
+  // name after a restart. The editor's handle is taken in one module, which
+  // writes that one value and has no way to read any back. Blind to a
+  // handle reached under another name than the editor's own.
+  it("a page hands the editor only what its host says the panel is, and reads nothing back", () => {
+    const channel = join(SRC, "webview", "shared", "channel.ts");
+    const pages = filesUnder(join(SRC, "webview"), /\.tsx?$/);
+    expect(hits(pages.filter((file) => file !== channel), /\bacquireVsCodeApi\b/)).toEqual([]);
+    expect(hits(pages, /\bvscode\.setState\(/)).toEqual([expect.stringContaining("vscode.setState(msg.memo)")]);
+    expect(hits(pages, /\bvscode\.getState\b/)).toEqual([]);
+    // the handle's own type offers no read
+    const handle = readFileSync(channel, "utf8").match(/interface VsCodeApi \{[^}]*\}/)?.[0] ?? "";
+    expect(handle).toContain("setState(");
+    expect(handle).not.toContain("getState");
+  });
+
   // The SDK is imported in one module, which picks its entrypoint: types,
   // method constants and the connection all come from that one — the stable
   // entrypoint's types lack fields the unstable one's carry, and a second
