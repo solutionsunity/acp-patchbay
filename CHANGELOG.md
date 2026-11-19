@@ -110,6 +110,10 @@
   info icon, and a pasted JSON shows the name agents will get. The
   capability matrix leaves an agent that hasn't connected in this window
   blank, where it used to read "not declared".
+- **An image that couldn't be sent is said so.** A pasted image whose file
+  had vanished from disk before sending was left out of the prompt
+  silently, while your message still showed it. A line under the message
+  now says which image the agent didn't get.
 - **A new session keeps its draft when its agent restarts.** With an agent
   that lists its sessions, a session you had not prompted yet was dropped
   when that agent crashed or was stopped and came back — and what you had

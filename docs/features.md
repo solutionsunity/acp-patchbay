@@ -208,7 +208,9 @@ deliverable.
 - Everything attached sits in the prompt's text, at the place the user put
   it, and reaches the agent there: several selections each beside the words
   about them. Deleting it from the text takes it out of the prompt; cutting
-  and pasting moves it.
+  and pasting moves it. A pasted image whose file is gone from disk by the
+  time the prompt leaves can't be sent: the rest goes, and a line under the
+  prompt says which image the agent didn't get.
 - The open workspace's folders are the session's context roots, and the user
   can add external ones (the backend repo while working in the frontend).
   Shown as a chip — added ones removable, workspace folders fixed — and

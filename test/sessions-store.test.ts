@@ -3861,6 +3861,37 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     await h.pool.stop("ch-parts" as PatchbayAgentId);
   });
 
+  // A pasted image's bytes are a file in the session's folder until the
+  // prompt leaves. One gone by then can't be sent — and the prompt on
+  // screen still shows it, so the transcript says what the agent didn't get.
+  it("a pasted image whose file is gone when the prompt leaves is said, under the prompt, not to have been sent", async () => {
+    const h = harness();
+    await h.connect(spec({ declare: { promptCapabilities: { image: true } }, turn: [{ type: "chunk", text: "ok" }] }, "sm-gone"));
+    const patchbaySessionId = await h.gates.create("sm-gone" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.sessions.addContext(patchbaySessionId, {
+      id: "img-gone",
+      kind: "image",
+      label: "Image: shot.png",
+      content: Buffer.from("89504e470d0a1a0a", "hex").toString("base64"),
+      mimeType: "image/png",
+    });
+    // the session's own copy goes, while the chip waits to be sent
+    const path = join(h.files.dirOf("sm-gone" as PatchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!, cwd), "img-gone.png");
+    expect(existsSync(path)).toBe(true);
+    await rm(path);
+
+    await h.gates.prompt(patchbaySessionId, placing("what is this?", "img-gone"));
+    const blocks = h.state().transcripts[patchbaySessionId]!;
+    const at = blocks.findIndex((b) => b.kind === "user");
+    expect(blocks[at + 1]).toMatchObject({
+      kind: "patchbayNotice",
+      text: "Not sent with the message above — its file is gone from disk: Image: shot.png. The agent got the rest. Paste it again to send it.",
+    });
+    // the turn went on with what was left
+    expect(blocks.some((b) => b.kind === "text" && b.text === "ok")).toBe(true);
+    await h.pool.stop("sm-gone" as PatchbayAgentId);
+  });
+
   it("live chips ride the sent bubble as parts — image, attachment, context, then prose", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "chunk", text: "ok" }] }, "sm-parts"));

@@ -2331,14 +2331,17 @@ export class SessionsStore {
     const declared = this.pool.get(known.patchbayAgentId)?.declared;
     const acceptsImages = declared?.promptImage ?? false;
     const acceptsEmbedded = declared?.promptEmbeddedContext ?? false;
+    /** What the prompt shows and the agent won't get. */
+    const unsent: string[] = [];
     const chipBlock = async (c: PersistedChip): Promise<ContentBlock | null> => {
       if (c.kind === "image") {
         if (!acceptsImages) return imageAsResourceLink(c);
         // The bytes are the staged file's; one gone since leaves the
-        // prompt without it, said in the log.
+        // prompt without it — said under the prompt, which still shows it.
         const data = await readBase64(c.path);
         if (data !== null) return { type: "image", data, mimeType: c.mimeType };
         this.log.info(`session ${patchbaySessionId}: pasted image "${c.label}" not sent — its file is gone`);
+        unsent.push(c.label);
         return null;
       }
       if (c.kind === "attachment") {
@@ -2376,6 +2379,16 @@ export class SessionsStore {
         if (chip === undefined) this.log.info(`session ${patchbaySessionId}: an attachment in the prompt was not sent — nothing is staged for it`);
         if (block !== null) prompt.push(block);
       }
+    }
+    // The prompt above shows what the user placed; what of it never left is
+    // said right under it, before the agent answers a prompt that lacked it.
+    if (unsent.length > 0) {
+      const marker: ChatBlock = {
+        kind: "patchbayNotice",
+        id: newBlockId("patchbay"),
+        text: `Not sent with the message above — ${unsent.length === 1 ? "its file is" : "their files are"} gone from disk: ${unsent.join(", ")}. The agent got the rest. Paste ${unsent.length === 1 ? "it" : "them"} again to send ${unsent.length === 1 ? "it" : "them"}.`,
+      };
+      this.stream.emitter(patchbaySessionId)({ kind: "transcriptSeeded", patchbaySessionId, blocks: [...(this.hooks.currentTranscript?.(patchbaySessionId) ?? []), marker] });
     }
     const endTurn = (stopReason: string, usage: TurnUsage | null, error?: string) => {
       // Whatever the stop reason — cancelled, error, even a claimed clean
