@@ -5,7 +5,7 @@
 // rules — the always-allow switch, and what a command no rule decides gets
 // — and what it asks before a change that lets commands run unasked.
 import { ALWAYS_ALLOW_COMMANDS } from "../../shared/command-rules";
-import type { CommandPolicyLayersView, RuleVerdictView } from "../../shared/protocol";
+import { effectiveCommandPolicy, type CommandPolicyLayersView, type RuleVerdictView } from "../../shared/protocol";
 
 export type PolicyLayer = "workspace" | "machine";
 
@@ -37,10 +37,15 @@ export const UNRULED_MEANS: Readonly<Record<RuleVerdictView, string>> = {
 };
 
 /** A change that lets commands run without asking, and what it must say
- * before it is made — null for a change that doesn't. */
+ * before it is made — null for a change that doesn't. What a change does
+ * is read off how the layers come out after it, not off the value picked:
+ * a workspace handing its choice back to a machine that allows lets
+ * commands run as surely as picking allow does. A change that leaves
+ * commands running as they already were has nothing new to say. */
 export function policyWarning(
   change: { kind: "alwaysAllow"; on: boolean } | { kind: "unruled"; verdict: RuleVerdictView | null },
   layer: PolicyLayer,
+  policy: CommandPolicyLayersView,
 ): { title: string; body: string; confirm: string } | null {
   if (change.kind === "alwaysAllow") {
     if (!change.on) return null;
@@ -50,7 +55,14 @@ export function policyWarning(
       confirm: "Turn on",
     };
   }
-  if (change.verdict !== "allow") return null;
+  // A machine's allow reaches every workspace that follows it, whatever
+  // this one answers for itself; a workspace's choice is judged by how
+  // this workspace comes out.
+  const lets =
+    layer === "machine"
+      ? change.verdict === "allow" && policy.machine.unruled !== "allow"
+      : effectiveCommandPolicy(policy.machine, { ...policy.workspace, unruled: change.verdict }).unruled === "allow" && policy.effective.unruled !== "allow";
+  if (!lets) return null;
   return {
     title: "Allow commands no rule decides?",
     body: `A terminal command no rule decides then runs without asking, with your privileges, in ${LAYER_REACH[layer]}. Your rules still apply first — but a deny rule stops only what Patchbay can read: a command inside a part it can't read (a command substitution, eval, a script for a shell it doesn't read) runs.`,

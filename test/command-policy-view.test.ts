@@ -10,7 +10,7 @@ import { DEFAULT_COMMAND_POLICY, DEFAULT_COMMAND_POLICY_LAYERS, type CommandPoli
 describe("policyWarning — said before commands run unasked, and only then", () => {
   it("turning always-allow on warns, naming where it reaches and that deny rules are set aside", () => {
     for (const layer of ["workspace", "machine"] as const) {
-      const warning = policyWarning({ kind: "alwaysAllow", on: true }, layer);
+      const warning = policyWarning({ kind: "alwaysAllow", on: true }, layer, DEFAULT_COMMAND_POLICY_LAYERS);
       expect(warning?.body).toContain(`in ${LAYER_REACH[layer]}`);
       expect(warning?.body).toContain("deny rules included");
       expect(warning?.confirm).toBe("Turn on");
@@ -18,16 +18,49 @@ describe("policyWarning — said before commands run unasked, and only then", ()
   });
 
   it("allow for what no rule decides warns that a deny rule stops only what is read", () => {
-    const warning = policyWarning({ kind: "unruled", verdict: "allow" }, "machine");
+    const warning = policyWarning({ kind: "unruled", verdict: "allow" }, "machine", DEFAULT_COMMAND_POLICY_LAYERS);
     expect(warning?.body).toContain("a deny rule stops only what Patchbay can read");
     expect(warning?.body).toContain("in every workspace on this machine");
   });
 
   it("a change that tightens, or hands the choice back, warns of nothing", () => {
-    expect(policyWarning({ kind: "alwaysAllow", on: false }, "machine")).toBeNull();
-    expect(policyWarning({ kind: "unruled", verdict: "ask" }, "workspace")).toBeNull();
-    expect(policyWarning({ kind: "unruled", verdict: "deny" }, "workspace")).toBeNull();
-    expect(policyWarning({ kind: "unruled", verdict: null }, "workspace")).toBeNull();
+    const asking = DEFAULT_COMMAND_POLICY_LAYERS;
+    expect(policyWarning({ kind: "alwaysAllow", on: false }, "machine", asking)).toBeNull();
+    expect(policyWarning({ kind: "unruled", verdict: "ask" }, "workspace", asking)).toBeNull();
+    expect(policyWarning({ kind: "unruled", verdict: "deny" }, "workspace", asking)).toBeNull();
+    expect(policyWarning({ kind: "unruled", verdict: null }, "workspace", asking)).toBeNull();
+  });
+
+  it("a workspace handing its choice back to a machine that allows is warned as picking allow is: it is what the change does", () => {
+    const machineAllows: CommandPolicyLayersView = {
+      machine: { alwaysAllow: false, unruled: "allow" },
+      workspace: { alwaysAllow: false, unruled: "ask" },
+      effective: { alwaysAllow: false, unruled: "ask" },
+    };
+    const warning = policyWarning({ kind: "unruled", verdict: null }, "workspace", machineAllows);
+    expect(warning?.body).toContain("runs without asking");
+    expect(warning?.body).toContain("in this workspace");
+    // …and to a machine that asks or denies, it lets nothing run: no warning
+    expect(policyWarning({ kind: "unruled", verdict: null }, "workspace", { ...machineAllows, machine: { alwaysAllow: false, unruled: "deny" } })).toBeNull();
+  });
+
+  it("a change that leaves commands running as they already were has nothing new to say", () => {
+    const allowedHere: CommandPolicyLayersView = {
+      machine: { alwaysAllow: false, unruled: "allow" },
+      workspace: { alwaysAllow: false, unruled: null },
+      effective: { alwaysAllow: false, unruled: "allow" },
+    };
+    expect(policyWarning({ kind: "unruled", verdict: "allow" }, "workspace", allowedHere)).toBeNull();
+    expect(policyWarning({ kind: "unruled", verdict: "allow" }, "machine", allowedHere)).toBeNull();
+  });
+
+  it("a machine set to allow is warned of even where this workspace answers for itself — it reaches the others", () => {
+    const deniedHere: CommandPolicyLayersView = {
+      machine: { alwaysAllow: false, unruled: "ask" },
+      workspace: { alwaysAllow: false, unruled: "deny" },
+      effective: { alwaysAllow: false, unruled: "deny" },
+    };
+    expect(policyWarning({ kind: "unruled", verdict: "allow" }, "machine", deniedHere)?.body).toContain("in every workspace on this machine");
   });
 });
 

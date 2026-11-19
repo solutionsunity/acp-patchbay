@@ -64,7 +64,7 @@ export function PolicyRow(props: {
     else props.onUnruled(layer, change.verdict);
   };
   const ask = (change: Change) => {
-    const warning = policyWarning(change, layer);
+    const warning = policyWarning(change, layer, policy);
     if (warning === null) make(change);
     else setAsking({ change, warning });
   };
