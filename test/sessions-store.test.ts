@@ -2468,6 +2468,33 @@ describe("SessionsStore", () => {
       await h.pool.stop("c30a" as PatchbayAgentId);
     });
 
+    // An agent that lists its sessions lists none it kept nothing of — and
+    // a list is the truth for which sessions exist. Not for this one: it
+    // was never the agent's to keep. Its row, its draft and what was staged
+    // on it are patchbay's, and a list that doesn't name it says only what
+    // was already known.
+    it("an agent that lists its sessions, back after a crash, does not take the still-new session with its list", async () => {
+      const h = harness();
+      const listing = { loadSession: true, sessionCapabilities: { list: {} } } as const;
+      await h.connect(spec({ exitAfterMs: 150, declare: listing }, "c30d"));
+      const patchbaySessionId = await h.gates.create("c30d" as PatchbayAgentId, "Fake Agent", cwd);
+      h.sessions.saveDraft(patchbaySessionId, "typed before the crash");
+      await h.sessions.addContext(patchbaySessionId, { kind: "selection", id: "c30d-chip", label: "a.ts:1", content: "x" });
+      await untilStatus(h, "c30d" as PatchbayAgentId, "crashed");
+
+      // back, and its list — of a fresh process, naming nothing — is read
+      await h.connect(spec({ declare: listing, turn: [{ type: "chunk", text: "ok" }] }, "c30d"));
+      expect(h.sessions.findNeverPrompted("c30d" as PatchbayAgentId)).toBe(patchbaySessionId);
+      expect(h.state().sessions.filter((s) => s.patchbayAgentId === "c30d").map((s) => s.id)).toEqual([patchbaySessionId]);
+      expect(h.state().drafts[patchbaySessionId]).toBe("typed before the crash");
+      expect(h.state().contextChips[patchbaySessionId]).toMatchObject([{ id: "c30d-chip" }]);
+
+      // and its next use brings it back, the same session
+      await h.gates.prompt(patchbaySessionId, { text: "first words" });
+      expect(h.state().sessions.filter((s) => s.patchbayAgentId === "c30d").map((s) => s.id)).toEqual([patchbaySessionId]);
+      await h.pool.stop("c30d" as PatchbayAgentId);
+    });
+
     it("opening the dead row mints it again — one live session, the same one, focused, chips in place", async () => {
       const h = harness();
       await h.connect(spec({ exitAfterMs: 150 }, "c30b"));

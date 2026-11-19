@@ -1310,22 +1310,31 @@ export class SessionsStore {
       this.log.info(`${patchbayAgentId}: session/list still paging after ${MAX_LIST_PAGES} pages — sync merged, prune skipped`);
       return;
     }
+    // A session never prompted was never the agent's to keep: its list
+    // names none, and says nothing new by it. The row — its draft, what was
+    // staged on it — is patchbay's, and its next use mints it again; so a
+    // list is no truth for it, and it stays, attached or not.
+    const stillNew = new Set<string>();
     for (const [patchbaySessionId, entry] of [...this.known]) {
-      if (entry.patchbayAgentId !== patchbayAgentId || seen.has(entry.sessionId) || this.sessions.has(patchbaySessionId)) continue;
+      if (entry.patchbayAgentId !== patchbayAgentId) continue;
+      if (!entry.everPrompted) {
+        stillNew.add(entry.sessionId);
+        continue;
+      }
+      if (seen.has(entry.sessionId) || this.sessions.has(patchbaySessionId)) continue;
       // The wire is the truth for who exists — a session the agent no
-      // longer reports (deleted externally, or a zero-turn shell it never
-      // persisted) is gone; live sessions are exempt (a just-created id may
-      // trail the agent's own list).
+      // longer reports (deleted externally) is gone; live sessions are
+      // exempt (a just-created id may trail the agent's own list).
       this.forget(patchbaySessionId);
       this.log.info(`session ${patchbaySessionId}: gone from ${patchbayAgentId}'s own list — dropped`);
     }
     // The durable rows by the same truth, index or not: a session deleted
     // while no window was open never entered `known`, and its row would
-    // otherwise outlive it. Same live exemption as above.
+    // otherwise outlive it. Same exemptions as above.
     const attached = new Set(
       this.sessionsOn(patchbayAgentId).flatMap((patchbaySessionId) => this.known.get(patchbaySessionId)?.sessionId ?? []),
     );
-    this.reconcile(patchbayAgentId, new Set([...seen, ...attached]));
+    this.reconcile(patchbayAgentId, new Set([...seen, ...attached, ...stillNew]));
     this.linkForks(patchbayAgentId);
   }
 
