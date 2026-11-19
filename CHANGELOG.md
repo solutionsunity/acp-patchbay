@@ -105,6 +105,14 @@
   because they carried no `readOnlyHint` and MCP treats a silent tool as one
   that may write. Every tool now states that it changes nothing and stays
   inside the editor. (#162)
+- **A new session keeps its draft when its agent restarts.** With an agent
+  that lists its sessions, a session you had not prompted yet was dropped
+  when that agent crashed or was stopped and came back — and what you had
+  typed and attached went with it. It now stays, as it already did for
+  agents that list nothing.
+- **A refused API key says so.** Connecting a catalog MCP server with a key
+  the server rejects read "the server asks you to sign in" and offered a
+  Sign in button that did nothing. It now says the key was refused.
 - **A session's MCP chip shows a failing server.** The chip under the
   composer listed a session's servers and never said one was failing,
   though Settings did. It now marks a server whose requests fail for this

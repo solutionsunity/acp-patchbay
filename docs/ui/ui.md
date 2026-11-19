@@ -341,8 +341,8 @@ over while the agent's version stays the same). Protocol rows from the handshake
 hand-picked against the ACP spec's declared capability surface, not derived
 automatically — noted above the table. Cell tooltips explain consequences ("not
 declared — this capability is unavailable"). Footer note: behavior rows get marked
-used opportunistically during real use; synthetic probes only via Diagnostics;
-never on a schedule.
+used opportunistically during real use; patchbay runs no probe that spends an
+agent turn to mark a row, on a schedule or otherwise.
 
 ### MCP Servers
 

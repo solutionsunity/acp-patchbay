@@ -181,9 +181,8 @@ export function MatrixSection({ state }: { state: SettingsState }) {
             </Table>
           </TooltipProvider>
           <div className="note">
-            Behavior-level rows get marked used opportunistically during real use — free. Synthetic
-            probes only via Diagnostics, cost disclosed, in an ephemeral temp-dir session. Never on
-            a schedule.
+            Behavior-level rows get marked used opportunistically during real use — free. Patchbay
+            runs no probe that spends an agent turn to mark a row, on a schedule or otherwise.
           </div>
         </>
       )}

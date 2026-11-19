@@ -2,7 +2,7 @@
 // Copyright 2026 Solutions Unity
 
 // Decision audit: append-only record of events that happened *in patchbay* —
-// permissions granted, tools approved, routing chosen. JSONL in workspace
+// permissions granted or refused, changes accepted, questions answered. JSONL in workspace
 // storage; grows, belongs to patchbay.
 import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";

@@ -75,8 +75,9 @@ deliverable.
   prompts intact, and context attached to it meanwhile waits for its next
   message.
 - After reconnect, a session continues natively where the agent supports it:
-  `session/load` (full replay) or `session/resume` (context back, no visible
-  history — said so with an inline notice). Where it supports neither, the
+  `session/load` (full replay) or `session/resume` (context back, no history
+  from the agent — said so with an inline notice; what this window still
+  shows of the conversation stays up, named as patchbay's view). Where it supports neither, the
   session honestly cannot be reopened — patchbay never mints a new session and
   presents it as a continuation.
 
@@ -93,10 +94,10 @@ deliverable.
   use brings it back with everything staged on it. The first prompt is what
   ends newness.
 - User can switch sessions, and end one the way its agent allows: delete it
-  from the agent's history where the agent can delete (asked first), or close
-  it where the agent keeps no session list. An agent that lists its sessions
-  but can't delete them offers neither — patchbay hides nothing the agent
-  keeps. Switching never closes the session being left, and coming back
+  from the agent's history where the agent can delete (asked first), close
+  it where the agent can close — each offered exactly where the agent
+  declares it, whether or not it lists its sessions. An agent that declares
+  neither offers neither — patchbay hides nothing the agent keeps. Switching never closes the session being left, and coming back
   finds it where it was left: scrolled back, the same message at the top
   and the way to the latest showing; at its end, at its end, still
   following. Each view remembers for itself until it reloads. An idle session releases its agent-side resources on its own (row
@@ -135,9 +136,13 @@ deliverable.
   prompt to fork from there, waits for ACP to name a point in a session.
 - The agent owns the sessions — 100%. The agent's own `session/list` is the
   only session list; patchbay persists no session index and no transcripts.
-  What patchbay holds: a **decision audit** (permissions
-  granted, tools approved, routing chosen — those events happened in patchbay
-  and belong to it) and an in-memory **render cache** — disposable, rebuilt
+  What patchbay holds: a **decision audit** (permissions granted or
+  refused, changes accepted, questions answered — those events happened in
+  patchbay and belong to it); what the user put on a session that the agent
+  has no place for — its draft, held prompts, staged attachments, added
+  roots, its own MCP servers, its knob choices — kept per session and
+  dropped when the agent's list no longer names it; and an in-memory
+  **render cache** — disposable, rebuilt
   wholesale from `session/load` replay on every reopen, never merged. Replay
   always wins; there is no reconciliation logic anywhere. Agents without
   `session/list` show only their currently-open sessions, and nothing survives
@@ -156,7 +161,7 @@ deliverable.
 - Opening a closed session rides the ladder: a never-prompted session is
   minted again (the agent holds nothing for it; the draft, chips, held words,
   title, and knob choices carry over) > `session/load` (replay = truth) >
-  `session/resume` (context live, a notice says history can't be shown) >
+  `session/resume` (context live, a notice says the agent sent no history) >
   cannot open — nothing in hand, nothing to fetch, said as such.
 - User can see and change the session's model, mode, and effort when the agent
   offers them, and the result reflects what the agent confirmed — never what
@@ -169,8 +174,8 @@ deliverable.
 - A tool call shows what the tool produced as the agent presented it —
   output, images, embedded files — with the exact arguments and raw result
   one click away; a command it runs in a terminal streams inside it.
-- When the agent maintains a task list / plan, the user can follow it live
-  alongside the chat.
+- When the agent maintains a task list / plan of more than one task, the
+  user can follow it live alongside the chat.
 - User can paste an image and any agent receives it in the best form it supports —
   paste is never disabled.
 - User can attach files by paste, by picker, or by dropping from the OS with
@@ -188,9 +193,9 @@ deliverable.
 - A failure can be reported from where it is shown: one **Report** control
   on every surface that shows one — an agent that couldn't start or
   stopped, a failed turn or compaction, an agent's error notice, a failed
-  sub-agent, an MCP server that wasn't added or is unreachable, a registry
-  that couldn't be read, an import, a warning notification, a view's own
-  error. It opens the repository's bug form on GitHub filled in — what was
+  sub-agent, an MCP server that wasn't added, is unreachable or is failing
+  for a session, a refused sign-in link, a registry that couldn't be read,
+  an import or export, a notification, a view's own error. It opens the repository's bug form on GitHub filled in — what was
   shown, whose words it is (the agent's or Patchbay's), the agent and its
   version, Patchbay's, the editor's, the system and the kind of host — for
   the user to review and send, or not. Secrets are masked and the user's
@@ -213,8 +218,8 @@ deliverable.
   pretending. Folders the user always works with are saved once — for this
   workspace (the default), for every workspace, or for the ones they pick —
   and every new session there starts with them; managed in Settings, where
-  any window shows and changes where each is saved, with a one-click save
-  from the chip.
+  any window shows and changes where each is saved, with a Save on the chip
+  itself — for this workspace, or for every one.
   A session owns its list once started: saving shapes new sessions, never an
   open one. A root whose folder is gone is skipped whenever a session starts
   or reopens, and the session says so; a saved one is flagged in Settings as
@@ -267,8 +272,6 @@ deliverable.
   connect; proof is remembered per agent version, never invented. Rows are
   hand-picked against the ACP spec's declared capability surface, not derived
   automatically.
-- User can run explicit diagnostics against an agent; the cost (real agent turns)
-  is disclosed before running.
 - User can mark an agent auto-connect: it connects on every window open.
   Independently of the flag, a window reload restores whatever agents were
   still running when the window went down — a manually connected agent
@@ -299,8 +302,10 @@ deliverable.
   server opens the same form.
 - Every add and edit is checked against the server before anything is
   stored: a wrong key, a failing command or an unset variable leaves nothing
-  behind and the card open with the reason; a server that asks for a
-  sign-in gets a Sign in button. A sign-in that comes back to another
+  behind and the card open with the reason — a refused key said as refused;
+  a server that asks for a sign-in gets a Sign in button. One exception, by
+  design: a command server added or edited while off in this workspace is
+  not run to be checked — a command never runs where its server is off. A sign-in that comes back to another
   window is never lost: that window offers its link to copy, and the card
   waiting on it takes the link pasted. `${VAR}` references are filled in from the
   agent's environment when the server is handed over, never stored filled
@@ -324,8 +329,8 @@ deliverable.
 - User decides where each server is on: every workspace, the ones they pick,
   or every one but those — combined with which agents get it. A new server is
   on in the workspace it was added in. Servers never ride a repo — a config
-  moves only by the owner's explicit Copy and paste, and nothing attaches by
-  opening a folder (a production-access server must never follow a user from
+  moves only by the owner's explicit act (Copy and paste, or Import/Export),
+  and nothing attaches by opening a folder (a production-access server must never follow a user from
   one repo into another). *(Supersedes "binding MCP servers to workspaces is
   deliberately not built", 2026-11-01, #70.)*
 - User can give a server to one session only from the composer's MCP chip,
@@ -334,8 +339,11 @@ deliverable.
 
 ### Permissions
 
-- User can define permission rules once — command allowlists, file-write scope —
-  one rule set for everything patchbay gates. A rule or a write place
+- User can define permission rules once — command rules, file-write places —
+  one rule set for what patchbay gates: a command rule judges the commands
+  an agent runs through patchbay's terminal, a write place the writes it
+  makes through patchbay and the edits it asks permission for. An agent's
+  other permission requests carry nothing a rule could match, and ask. A rule or a write place
   applies to every agent unless it names the agents it is for — all agents,
   only these, or all except these, the choice an MCP server's routing gives.
   On a host running several agents each can be trusted on its own terms: for
@@ -360,7 +368,8 @@ deliverable.
   a `bash -c` or `zsh -c` script, each read as its own shell reads it — by a pattern over the command or by a word wherever
   it sits (`sudo`, `--watch`); a rejected word rejects the line, the order
   rules were added in decides nothing, and a line whose commands can't be
-  seen from its text asks. A rule's decision shows its card, settled, naming
+  seen from its text gets what a command no rule decides gets — it asks,
+  unless the user chose otherwise. A rule's decision shows its card, settled, naming
   the rule; an agent a rule denies is told it was the rule, by name, not the
   user.
 - User can test a command line against the rules before an agent runs it:
@@ -397,8 +406,9 @@ deliverable.
   the diff view closes once you decide. A change you reject is
   reported to the agent as rejected, never as done. The capability matrix
   shows which agents deliver this brokered tier row by row; for agents that
-  write on their own, the matrix's honest not-declared cells and live terminal
-  visibility carry the honesty in the current release.
+  write on their own, the matrix's "declared, never used" cells — patchbay
+  offers the path, the agent never took it — and live terminal visibility
+  carry the honesty in the current release.
 - Follow the agent: a file its tool call reports reading, searching or
   editing opens from the chat in one click, at the line the agent named.
 - The agent sees what the user sees: unsaved buffers, not just disk state.
@@ -409,8 +419,8 @@ deliverable.
 - Command palette covers every core action: new session, switch session, connect
   agent, open settings. Switch Session lists what the drawer's rows say —
   each session's mark, agent and last activity — with the session the user
-  was in before first, so one answer flips back, and opens one in a tab or
-  a window from its row (#133).
+  was in before first, so one answer flips back, and opens one in a tab from its row — or in
+  a window, where detached windows are on (#133).
 - Patchbay speaks for its own version, without asking the network: a notice
   with one action, once per window. A fresh install points to adding the
   first agent; an update offers what's new, from the changelog it ships
