@@ -11,6 +11,7 @@ import { useRef, useState } from "react";
 import { count } from "../../shared/count";
 import type { ConfigImportView, ExportPart, ImportItemView, SettingsState } from "../../shared/protocol";
 import { Icon } from "../shared/icon";
+import { ReportFailure } from "../shared/report-failure";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -153,6 +154,7 @@ function ImportStage(props: {
           <div className="nm mb-1">{view.fileName}</div>
           <div className="note mx-0 mt-0 mb-2.5 text-err" data-import-refused>
             <Icon name="error" /> {view.reason}
+            <ReportFailure failure={{ where: "configImport", said: `Import refused: ${view.reason}` }} className="ml-1 align-middle" />
           </div>
           <div className="row gap-2.5">
             <Button size="sm" variant="outline" onClick={props.onPick}>
@@ -185,6 +187,9 @@ function ImportStage(props: {
                   <Icon name="warning" /> {f}
                 </li>
               ))}
+              <li>
+                <ReportFailure failure={{ where: "configImport", said: `Imported with ${count(view.failures.length, "failure")}:\n${view.failures.join("\n")}` }} />
+              </li>
             </ul>
           )}
           <Button size="sm" variant="outline" onClick={props.onDismiss}>

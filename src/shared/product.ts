@@ -8,9 +8,14 @@
 // names itself ships inside the extension, so no part keeps a version of
 // its own — and every part that weighs one version against another, its own
 // or an agent's, orders them here.
-import { name, version } from "../../package.json";
+import { bugs, name, version } from "../../package.json";
 
 export const PRODUCT = { name, version } as const;
+
+/** Where its issues are kept — a report of a failure opens there. Apart
+ * from `PRODUCT`, which goes on the wire whole as how patchbay names
+ * itself to an agent and a server. */
+export const ISSUES_URL = bugs.url;
 
 /** Whether version `a` is later than `b`, by their numbered parts; one
  * that doesn't read as a version is never later. */

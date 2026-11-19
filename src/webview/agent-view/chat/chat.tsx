@@ -6,6 +6,7 @@
 // metadata line, and the live elapsed ticker. Long transcripts ride the
 // three-mechanism scale strategy: windowed mount, content-visibility
 // containment (style.css), and memoized rows.
+import { ReportFailure } from "../../shared/report-failure";
 import { Component, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   attaching,
@@ -119,7 +120,12 @@ function TurnLine({
           </span>
         )}
       </Disclosure>
-      {error !== undefined && <div className="turn-error whitespace-pre-wrap text-err">{error}</div>}
+      {error !== undefined && (
+        <div className="flex items-start gap-1">
+          <div className="turn-error whitespace-pre-wrap text-err">{error}</div>
+          <ReportFailure failure={{ where: "turn", said: error }} />
+        </div>
+      )}
       {open && (
         <div className="pt-0.5">
           {breakdown !== "" ? breakdown : "no tool calls this turn"}
@@ -560,6 +566,7 @@ export function Chat(props: {
         <Button variant="outline" size="sm" onClick={() => send({ kind: "openSettings", section: "agents" })}>
           Settings
         </Button>
+        <ReportFailure failure={{ where: "agentStart", said: `${name} couldn't start — ${connect.reason}`, patchbayAgentId: connect.patchbayAgentId }} />
         <Button variant="ghost" size="sm" onClick={() => send({ kind: "dismissChatConnect" })}>
           Dismiss
         </Button>

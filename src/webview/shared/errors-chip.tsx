@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { collectedErrors, subscribeErrors } from "./error-collector";
 import { useCopy } from "./use-copy";
 import { Icon } from "./icon";
+import { ReportFailure } from "./report-failure";
 import { Button } from "@/components/ui/button";
 
 export function ErrorsChip() {
@@ -18,20 +19,31 @@ export function ErrorsChip() {
   useEffect(() => subscribeErrors(() => setCount(collectedErrors().length)), []);
   if (count === 0) return null;
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      className="h-6 gap-1 px-1.5 text-[11px] text-err"
-      title="errors this view collected since it mounted — click to copy; full history in Output → Patchbay"
-      onClick={() =>
-        copy(
-          collectedErrors()
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 gap-1 px-1.5 text-[11px] text-err"
+        title="errors this view collected since it mounted — click to copy; full history in Output → Patchbay"
+        onClick={() =>
+          copy(
+            collectedErrors()
+              .map((e) => `${e.at} ${e.message}`)
+              .join("\n"),
+          )
+        }
+      >
+        <Icon name={copied ? "check" : "copy"} /> errors ({count})
+      </Button>
+      <ReportFailure
+        failure={{
+          where: "viewError",
+          said: `${count} ${count === 1 ? "error" : "errors"} in this view`,
+          output: collectedErrors()
             .map((e) => `${e.at} ${e.message}`)
             .join("\n"),
-        )
-      }
-    >
-      <Icon name={copied ? "check" : "copy"} /> errors ({count})
-    </Button>
+        }}
+      />
+    </>
   );
 }

@@ -179,6 +179,27 @@ build until it does; a kind answers null when its own surface already states the
 failure (a crash on the agent's row, an MCP add's card, the chat pane), or when
 the user didn't ask for it as such (a keystroke's save).
 
+**A failure can be reported from where it is shown** *(decided 2026-11-19,
+#111 — patchbay collects nothing, so a failure reaches us only if its user
+writes it up, and the one whose agent never connected is the least likely to)*.
+Every surface that shows a failure names itself in one table
+(`shared/failure-report.ts`: where a report says it was shown, and whose words
+its text is — patchbay's, the agent's, an MCP server's) and carries one control,
+which hands the host what the surface said and what it concerns. The host
+builds the report (`failure-report.ts`): that text, cleaned — secrets masked by
+the wire log's redaction set, the workspace's folders, the temp folder and the
+home folder replaced, a home folder of any machine losing its user's name
+(`scrub-paths.ts`) — beside what is read as the report is made: patchbay's
+version, the agent's, the editor's, the system, the kind of host. A report
+carries no destination. Where it goes is an adapter, today one: the
+repository's bug form on GitHub, opened filled in through the one door a page
+opens by, for the user to review and send. A filled-in form carries the report
+in its link, so the text reaches GitHub when the page opens — on the user's
+click of Report, never before — and a link has a length: a long report gives up
+its output first, each cut saying so, the whole of it in the log. An agent's own
+error is reportable like any other, by decision: the report says whose words it
+is, so one filed against patchbay in error can be answered as the agent's.
+
 Work nothing waits on answers for its failure where it starts, in the extension
 host's own process: no handler there could catch it for us, since other extensions
 share that process and VS Code only writes a dropped rejection to its own log. Lint

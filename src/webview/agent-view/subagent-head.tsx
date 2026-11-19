@@ -3,6 +3,7 @@
 
 // A sub-agent's head — one look wherever it is named: its roster row, its card
 // in the chat, the bar above its transcript.
+import { ReportFailure } from "../shared/report-failure";
 import type { ReactNode } from "react";
 import type { PatchbaySessionId } from "../../shared/ids";
 import type { SubagentView } from "../../shared/protocol";
@@ -61,6 +62,9 @@ export function SubagentHead({
         <button type="button" className="open" title={whole} onClick={onOpen}>
           {said}
         </button>
+      )}
+      {current && subagent.state?.stopReason === "error" && (
+        <ReportFailure failure={{ where: "subagent", said: `${name}: ${state}` }} />
       )}
       {current && cancelOffered(subagent) && (
         <button

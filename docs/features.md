@@ -185,6 +185,17 @@ deliverable.
   inside an editor as *Add File to Patchbay Context*, beside *Add Selection*. Each
   is linked into the draft of the session in front as a pick is — never its
   contents, a folder never expanded — and nothing is sent *(#173)*.
+- A failure can be reported from where it is shown: one **Report** control
+  on every surface that shows one — an agent that couldn't start or
+  stopped, a failed turn or compaction, an agent's error notice, a failed
+  sub-agent, an MCP server that wasn't added or is unreachable, a registry
+  that couldn't be read, an import, a warning notification, a view's own
+  error. It opens the repository's bug form on GitHub filled in — what was
+  shown, whose words it is (the agent's or Patchbay's), the agent and its
+  version, Patchbay's, the editor's, the system and the kind of host — for
+  the user to review and send, or not. Secrets are masked and the user's
+  folders made anonymous (`~`, `<workspace>`) before the report is built.
+  Nothing is collected and nothing is sent without that click *(#111)*.
 - User can explicitly add editor state to the prompt: current selection, current
   file, diagnostics. The selection is the editor's the user is in, all of
   it: several selections (multi-cursor) are added each as its own

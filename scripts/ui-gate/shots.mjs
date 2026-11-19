@@ -1937,6 +1937,60 @@ if (runs("failed-turn")) {
   await p.close();
 }
 
+// ── a failure can be reported from where it is shown (#111): one control,
+// the same on every surface, handing over what the surface said and what
+// it concerns — the report itself is the host's. Theme-independent. ──
+if (runs("report-failure")) {
+  const theme0 = Object.keys(THEMES)[0];
+  const reported = (p) => p.evaluate(() => window.__actions.filter((a) => a.kind === "reportFailure").at(-1)?.failure);
+  const report = async (p, where) => {
+    await p.locator(`[data-report-failure="${where}"]`).first().click();
+    return reported(p);
+  };
+
+  // the chat: a turn that failed, in the agent's words, concerning the session's agent
+  let p = await page(browser, theme0, { width: 420, height: 900 });
+  const av = agentViewState({ live: false });
+  await renderView(p, "agent-view", av);
+  await p.waitForSelector(".prompt-editor");
+  check("[report] no turn failed: no control to report one", (await p.locator('[data-report-failure="turn"]').count()) === 0);
+  await p.evaluate(() =>
+    window.__patch([
+      { kind: "turnEnded", patchbaySessionId: "s1", blockId: "turn-err", startedAt: "2026-07-07T10:00:00Z", at: "2026-07-07T10:00:05Z", stopReason: "error", usage: null, error: "Overloaded" },
+    ]),
+  );
+  await p.waitForSelector('[data-report-failure="turn"]');
+  const turn = await report(p, "turn");
+  const agentOfS1 = av.sessions.find((s) => s.id === "s1").patchbayAgentId;
+  check(`[report] a failed turn hands over what it said and the session's agent (${JSON.stringify(turn)})`, turn?.where === "turn" && turn.said === "Overloaded" && turn.patchbayAgentId === agentOfS1);
+  check("[report] the control says what it will do before it does it", ((await p.locator('[data-report-failure="turn"]').getAttribute("title")) ?? "").includes("for you to review and send"));
+
+  // an agent that couldn't start: Patchbay's words around the agent's reason
+  await p.evaluate((id) => window.__patch([{ kind: "chatConnectFailed", patchbayAgentId: id, reason: "spawn npx ENOENT" }]), agentOfS1);
+  await p.waitForSelector('[data-report-failure="agentStart"]');
+  const start = await report(p, "agentStart");
+  check(`[report] an agent that couldn't start is reported as the pane says it (${JSON.stringify(start?.said)})`, start?.said.endsWith("couldn't start — spawn npx ENOENT") && start.patchbayAgentId === agentOfS1);
+  await p.screenshot({ path: `${OUT}/report-failure-chat.png` });
+  await p.close();
+
+  // Settings: the registry that couldn't be read
+  p = await page(browser, theme0, { width: 900, height: 900 });
+  const st = settingsState();
+  await renderView(p, "settings", st);
+  await p.click("button[aria-expanded]"); // the add-agent tile, where the registry's state is told
+  await p.evaluate(
+    (agents) => window.__patch([{ kind: "registryChanged", agents, fetchedAt: "", reading: false, failure: { at: "2026-11-19T10:00:00Z", reason: "network error — read ECONNRESET" } }]),
+    st.registryAgents,
+  );
+  await p.waitForSelector('[data-report-failure="registry"]');
+  const registry = await report(p, "registry");
+  check(
+    `[report] a Settings failure is reported the same way, concerning no agent (${JSON.stringify(registry)})`,
+    registry?.said === "The ACP registry couldn't be read: network error — read ECONNRESET" && registry.patchbayAgentId === undefined,
+  );
+  await p.close();
+}
+
 // ── what an agent says of its options and its plan reaches the user:
 // same-named options told apart, each option's description in the list,
 // a plan entry's priority (#80). Theme-independent. ──

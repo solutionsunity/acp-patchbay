@@ -9,6 +9,7 @@
 // against the server before anything is stored: a card stays open with
 // the reason, or closes into the new server's card. A server's edit is the
 // same form.
+import { ReportFailure } from "../shared/report-failure";
 import { useEffect, useRef, useState } from "react";
 import type {
   CatalogEntryView,
@@ -268,6 +269,8 @@ function ConnectStatus(props: {
 }) {
   const c = props.connect;
   if (c === undefined || c.status === "added") return null;
+  // an edit's failure concerns the server edited; an add's, none stored yet
+  const concerns = c.kind === "server" ? { patchbayMcpServerId: c.subject } : {};
   if (c.status === "running") {
     const cancel = (
       <Button variant="outline" size="sm" onClick={props.onCancel}>
@@ -290,7 +293,12 @@ function ConnectStatus(props: {
           <PasteLink refused={c.linkRefused !== undefined} onPaste={props.onPasteLink} />
           {cancel}
         </div>
-        {c.linkRefused !== undefined && <div className="mt-1 text-destructive">{c.linkRefused}</div>}
+        {c.linkRefused !== undefined && (
+          <div className="mt-1 text-destructive">
+            {c.linkRefused}
+            <ReportFailure failure={{ where: "mcpSignInLink", said: c.linkRefused, ...concerns }} className="ml-1 align-middle" />
+          </div>
+        )}
       </div>
     );
   }
@@ -302,6 +310,7 @@ function ConnectStatus(props: {
           Sign in
         </Button>
       )}{" "}
+      <ReportFailure failure={{ where: "mcpAdd", said: `Not added — nothing was stored: ${c.reason ?? ""}`, ...concerns }} />{" "}
       <Button variant="outline" size="sm" onClick={props.onCancel} title="clear this note">
         Dismiss
       </Button>

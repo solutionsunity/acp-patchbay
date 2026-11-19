@@ -105,6 +105,15 @@
   because they carried no `readOnlyHint` and MCP treats a silent tool as one
   that may write. Every tool now states that it changes nothing and stays
   inside the editor. (#162)
+- **Report a failure from where you see it.** Wherever Patchbay shows a
+  failure — an agent that didn't start or stopped, a failed turn, an MCP
+  server that wasn't added or is unreachable, a warning notification, and
+  more — a **Report** button opens our bug form on GitHub already filled
+  in: what was shown, whether those are the agent's words or Patchbay's,
+  and the versions and system we would otherwise have to ask you for. You
+  review it there and send it, or close the tab. Secrets are masked and
+  your folders replaced with `~` and `<workspace>` before the report is
+  built; Patchbay still collects nothing and sends nothing by itself. (#111)
 - **Unattended runs: two new choices on the Commands page.** A long task
   no longer has to wait on a card. **Always allow commands** runs every
   terminal command without asking, with your rules set aside while it is

@@ -5,6 +5,7 @@
 // workspaces chosen and routed per agent; a copied config carries what
 // its owner typed, never an OAuth token. One add card at the top, as on
 // the Agents page; a custom server's edit opens the same form.
+import { ReportFailure } from "../shared/report-failure";
 import { Dot } from "../shared/dot";
 import { useState } from "react";
 import type { McpServerProbeView, McpServerRoutingView, SettingsState } from "../../shared/protocol";
@@ -32,6 +33,8 @@ import { Switch } from "@/components/ui/switch";
  * looking connected while its server 400s on every handshake). */
 function ProbeStrip(props: {
   probe: McpServerProbeView | undefined;
+  /** The server probed — what a report of its failure concerns. */
+  server: { id: string; name: string };
   /** A probe is on the server's line. */
   probing: boolean;
   /** Probing needs something to reach — no endpoint/credential, no button. */
@@ -70,6 +73,7 @@ function ProbeStrip(props: {
         <Button variant="outline" size="sm" onClick={props.onProbe} title="try the handshake again">
           <Icon name="refresh" /> Retry
         </Button>
+        <ReportFailure failure={{ where: "mcpUnreachable", said: `${props.server.name} is unreachable: ${probe.reason}`, patchbayMcpServerId: props.server.id }} />
       </div>
     );
   }
@@ -203,6 +207,7 @@ export function McpServersSection(props: {
           </div>
           <ProbeStrip
             probe={server.probe}
+            server={server}
             probing={server.busy.includes("probe")}
             probeable
             expanded={openTools[server.id] === true}
@@ -289,6 +294,7 @@ export function McpServersSection(props: {
                   </div>
                   <ProbeStrip
                     probe={server.probe}
+                    server={server}
                     probing={server.busy.includes("probe")}
                     probeable={server.connected && server.onHere}
                     expanded={openTools[server.id] === true}

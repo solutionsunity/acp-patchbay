@@ -6,6 +6,8 @@
 // drawers overlay from the top. Render-only: the shell owns only local UI
 // furniture (which drawer is open, the toast); components own their markup
 // and send their own actions; everything durable comes from snapshots.
+import { FailuresOfAgent, ReportFailure } from "../shared/report-failure";
+import { crashOf } from "../shared/shown-failures";
 import { restartOffered } from "../shared/agent-work";
 import { useEffect, useMemo, useState } from "react";
 import { attaching, type AgentViewState, type SubagentView, type UserBlock } from "../../shared/protocol";
@@ -228,12 +230,14 @@ export function App({
           >
             Restart
           </Button>
+          <ReportFailure failure={crashOf(activeAgent)} />
           {activeAgent.stderr !== undefined && activeAgent.stderr.length > 0 && (
             <pre className="stderr-tail">{activeAgent.stderr.join("\n")}</pre>
           )}
         </div>
       )}
       <SessionLinks.Provider value={links}>
+        <FailuresOfAgent.Provider value={active?.patchbayAgentId}>
         <Chat
           state={state}
           activeSession={active}
@@ -243,6 +247,7 @@ export function App({
           goTo={goTo}
           {...(viewed !== null && active !== null ? { subagent: { view: viewed, path: [active.id, ...subagentAncestors(roster, viewed).map((s) => s.id)] } } : {})}
         />
+        </FailuresOfAgent.Provider>
       </SessionLinks.Provider>
       {active !== null && (
         // keyed by session: which panel is open is per-session render state,

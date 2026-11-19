@@ -4,6 +4,7 @@
 // Prose and tool-call blocks of the transcript. Each component consumes the
 // view-model's vocabulary (`live` = the one block receiving deltas) and
 // sends its own actions — no callback threading.
+import { ReportFailure } from "../../shared/report-failure";
 import { createContext, useContext, useState, type ReactNode } from "react";
 import {
   DEFAULT_PREFERENCES,
@@ -381,7 +382,12 @@ export function CompactionDivider({ block }: { block: CompactionBlock }) {
         )}
         <span className="h-px flex-1 bg-border" />
       </div>
-      {block.error !== null && <div className="mt-1 text-center text-err">{block.error}</div>}
+      {block.error !== null && (
+        <div className="mt-1 text-center text-err">
+          {block.error}
+          <ReportFailure failure={{ where: "compaction", said: block.error }} className="ml-1 align-middle" />
+        </div>
+      )}
       {open && (
         <div className="mt-1">
           {block.summary.map((part, i) => (
@@ -404,6 +410,9 @@ export function NoticeLine({ block, agentName }: { block: NoticeBlock; agentName
         <Icon name={look.icon} />
         <span className="text-muted-foreground">{agentName}:</span>
         <span className="font-medium whitespace-pre-line">{block.title}</span>
+        {block.severity === "error" && (
+          <ReportFailure failure={{ where: "agentNotice", said: block.description === null ? block.title : `${block.title}\n${block.description}` }} className="ml-auto" />
+        )}
       </div>
       {block.description !== null && <div className="pl-5 text-muted-foreground whitespace-pre-line">{block.description}</div>}
     </div>

@@ -4,6 +4,8 @@
 // Agents: stat tiles + Add Agent, one card per known
 // agent — status live, capabilities claimed-until-exercised, knobs offering
 // only what the agent actually offered.
+import { ReportFailure } from "../shared/report-failure";
+import { crashOf } from "../shared/shown-failures";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { AgentConfigView, AgentSummary, AuthMethodView, SettingsState } from "../../shared/protocol";
 import { formatCommandLine } from "../../shared/command-line";
@@ -209,6 +211,7 @@ function AddAgentRow(props: {
         <div className="note mx-0 mb-0 mt-1 text-warn" data-registry-failure>
           The ACP registry couldn't be read at {new Date(props.state.registryFailure.at).toLocaleString()}:{" "}
           {props.state.registryFailure.reason}
+          <ReportFailure failure={{ where: "registry", said: `The ACP registry couldn't be read: ${props.state.registryFailure.reason}` }} className="ml-1 align-middle" />
         </div>
       )}
       <div className="connect-form mt-2">
@@ -683,6 +686,7 @@ export function AgentsSection(props: {
                       <Button variant="outline" size="sm" className="ml-2" onClick={() => props.onRestart(patchbayAgentId)}>
                         Restart
                       </Button>
+                      {a !== undefined && <ReportFailure failure={crashOf(a)} />}
                       {a?.stderr !== undefined && a.stderr.length > 0 && (
                         <pre className="stderr-tail">{a.stderr.join("\n")}</pre>
                       )}

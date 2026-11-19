@@ -8,7 +8,7 @@
 // ports it asks through.
 import { agentSubtitle } from "../shared/capability-format";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, release as osRelease, tmpdir, type as osType } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import * as vscode from "vscode";
 import {
@@ -24,6 +24,10 @@ import { MARK_TITLE, sessionMark, type OpenAsk, type SessionMark } from "../shar
 import { listSessions, withFirst } from "../shared/session-list";
 import { timeAgo } from "../shared/time";
 import { actionDoor, type FailureSurfaces, warnCatch } from "./action-door";
+import { buildFailureReport, githubIssueLink } from "./failure-report";
+import { scrubPaths, type KnownFolders } from "./scrub-paths";
+import { REPORT_FAILURE, type ShownFailure } from "../shared/failure-report";
+import { ISSUES_URL, PRODUCT } from "../shared/product";
 import { chipId, fileChipLabel } from "./attachments";
 import { diffDir } from "./diff-files";
 import { applyFileWrite } from "./client-host";
@@ -103,8 +107,14 @@ export class OrchestratorHost {
   private readonly selfVersion: SelfVersionHost;
   private readonly failureSurfaces: FailureSurfaces = {
     logCatch: (context) => this.orchestrator.logCatch(context),
+    // A failure said here can be reported from here, as from any surface.
     warn: (message) => {
-      vscode.window.showWarningMessage(message);
+      vscode.window.showWarningMessage(message, REPORT_FAILURE.label).then(
+        (picked) => {
+          if (picked === REPORT_FAILURE.label) this.reportFailure({ where: "notification", said: message }).catch(this.orchestrator.logCatch("report a failure"));
+        },
+        () => {},
+      );
     },
   };
   /** The one door a view's action comes in by. */
@@ -1176,6 +1186,9 @@ export class OrchestratorHost {
       case "openDiagram":
         this.openDiagram(action.svg);
         break;
+      case "reportFailure":
+        await this.reportFailure(action.failure);
+        break;
       case "reportWebviewError":
         // the webviews' own runtime errors — surfaced here so the Output
         // channel is the durable record behind the in-view errors chip
@@ -1408,6 +1421,39 @@ export class OrchestratorHost {
     }
     await this.attachWhereTheyAre(patchbaySessionId, onDisk);
     await this.focusComposer();
+  }
+
+  /** A failure the user chose to report, from whichever surface showed
+   * it: the report is built here — what was shown, cleaned of secrets and
+   * of the user's places, beside the versions and the machine as they are
+   * now — and opened as the repository's bug form, filled in. Nothing is
+   * sent from here: the user reviews the issue in the browser and sends
+   * it, or doesn't. The report is logged as built, so what a link had to
+   * cut is still whole in the Output channel. */
+  private async reportFailure(shown: ShownFailure): Promise<void> {
+    const view = this.orchestrator.agentView.current;
+    const agent = view.agents.find((a) => a.id === shown.patchbayAgentId);
+    const serverName = shown.patchbayMcpServerId === undefined ? undefined : this.orchestrator.mcpServers.name(shown.patchbayMcpServerId as PatchbayMcpServerId);
+    const known: KnownFolders = {
+      workspace: [...(vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath), ...view.savedRoots.entries.map((entry) => entry.path)],
+      temp: tmpdir(),
+      home: homedir(),
+    };
+    const report = buildFailureReport(
+      shown,
+      {
+        patchbayVersion: PRODUCT.version,
+        editor: vscode.env.appName,
+        editorVersion: vscode.version,
+        os: `${osType()} ${osRelease()} ${process.arch}`,
+        host: vscode.env.remoteName ?? "local",
+        ...(agent !== undefined ? { agent: { name: agent.name, ...(agent.version.reported !== undefined ? { version: agent.version.reported } : {}) } } : {}),
+        ...(serverName !== undefined ? { mcpServer: { name: serverName } } : {}),
+      },
+      (text) => scrubPaths(this.orchestrator.wireLog.redact(text), known),
+    );
+    this.log.info(`failure report opened — ${report.whatHappened}${report.output === "" ? "" : `\n${report.output}`}`);
+    await openInBrowser(githubIssueLink(report, ISSUES_URL));
   }
 
   /** Copy config: the server as an `mcpServers` document (the shape Import

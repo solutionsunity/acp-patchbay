@@ -10,6 +10,7 @@
 import { Component, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { ActionsProvider } from "./actions";
+import { ReportFailure } from "./report-failure";
 import type { ViewChannel } from "./channel";
 import { collectError } from "./error-collector";
 
@@ -39,6 +40,7 @@ class RenderBoundary extends Component<{ children: ReactNode }, { error: string 
           <button type="button" onClick={() => this.setState({ error: null })}>
             Try again
           </button>
+          <ReportFailure failure={{ where: "viewError", said: `This view hit a render error and stopped: ${this.state.error}` }} />
         </div>
       );
     }
@@ -50,11 +52,13 @@ function Root<S>({ channel, App }: { channel: ViewChannel<S>; App: ComponentType
   const versioned = useSyncExternalStore(channel.subscribe, channel.getState);
   if (versioned === null) return null; // hydrating — snapshot arrives immediately
   return (
-    <RenderBoundary>
-      <ActionsProvider value={channel.sendAction}>
+    // The actions reach the boundary too: the screen a render error leaves
+    // can still report it.
+    <ActionsProvider value={channel.sendAction}>
+      <RenderBoundary>
         <App state={versioned.state} />
-      </ActionsProvider>
-    </RenderBoundary>
+      </RenderBoundary>
+    </ActionsProvider>
   );
 }
 

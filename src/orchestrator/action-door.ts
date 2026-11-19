@@ -132,6 +132,7 @@ export const ACTION_FAILURE: Readonly<Record<Action["kind"], string | null>> = {
   dismissChatConnect: null,
   dismissConfigImport: null,
   reportWebviewError: null,
+  reportFailure: "The report didn't open",
 };
 
 const SUBJECTS = ["patchbayAgentId", "patchbaySessionId", "patchbayMcpServerId", "patchbayAskId"] as const;

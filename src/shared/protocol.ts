@@ -6,6 +6,7 @@
 // apply patches with the pure reducers defined here. The orchestrator applies the
 // same reducers to its canonical state, so a snapshot is always replay-consistent.
 
+import type { ShownFailure } from "./failure-report";
 import type { PatchbayAgentId, PatchbayAskId, PatchbayMcpServerId, PatchbaySessionId } from "./ids";
 import type { McpDraft } from "./mcp-config";
 import type { AgentScope, AgentScoped } from "./agent-scope";
@@ -394,6 +395,10 @@ export type Action =
    * logged to the Patchbay Output channel, the durable record the in-view
    * "errors (N)" chip points at. */
   | { kind: "reportWebviewError"; view: "agent-view" | "settings"; message: string }
+  /** The user reports a failure from where it is shown: the host builds
+   * the report — the failure, the versions, the machine — and opens it
+   * where reports go, for the user to review and send. */
+  | { kind: "reportFailure"; failure: ShownFailure }
   /** The form's full desired config, `env` included — what is in the box
    * is what gets stored. `commandLine`: the launch line as typed, only when
    * the user changed it — without one the stored command stays. */
