@@ -107,7 +107,8 @@
   inside the editor. (#162)
 - **Add files to the chat from where they already are.** A new right-click
   entry, "Add to Patchbay Context", in the Explorer (files and folders,
-  several at once) and on an editor tab. Each is added to the current
+  several at once) and on an editor tab, and "Add File to Patchbay
+  Context" inside an editor, beside "Add Selection". Each is added to the current
   conversation's draft as a link the agent reads itself, the way "Attach
   files…" adds one; nothing is sent until you send. Dragging a tab or an
   Explorer row into the chat stays blocked by VS Code. (#173)

@@ -198,9 +198,14 @@ suite("EditorStateHost — real vscode data", () => {
       await waitFor(() => staged().length === 4, WINDOW_SETTLE, "the tab's file staged");
       assert.strictEqual(staged()[3], a);
 
+      // inside an editor the entry hands that editor's file
+      await vscode.commands.executeCommand("acpPatchbay.addFileToContext", vscode.Uri.file(b));
+      await waitFor(() => staged().length === 5, WINDOW_SETTLE, "the editor's file staged");
+      assert.strictEqual(staged()[4], b);
+
       // what has no place on disk is not added
       await vscode.commands.executeCommand("acpPatchbay.addToContext", vscode.Uri.parse("untitled:Untitled-1"));
-      assert.strictEqual(staged().length, 4);
+      assert.strictEqual(staged().length, 5);
     } finally {
       await pb.removeAdded();
     }

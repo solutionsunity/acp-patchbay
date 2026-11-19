@@ -181,7 +181,8 @@ deliverable.
   every webview for the duration of an in-window drag — so open editors and
   workspace files are reached through `@` in the prompt, or added from where
   they already are: *Add to Patchbay Context* on the Explorer's right-click
-  menu (files and folders, every row selected) and on an editor tab's. Each
+  menu (files and folders, every row selected), on an editor tab's, and
+  inside an editor as *Add File to Patchbay Context*, beside *Add Selection*. Each
   is linked into the draft of the session in front as a pick is — never its
   contents, a folder never expanded — and nothing is sent *(#173)*.
 - User can explicitly add editor state to the prompt: current selection, current

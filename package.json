@@ -155,6 +155,11 @@
         "category": "Patchbay"
       },
       {
+        "command": "acpPatchbay.addFileToContext",
+        "title": "Add File to Patchbay Context",
+        "category": "Patchbay"
+      },
+      {
         "command": "acpPatchbay.addSelectionToContext",
         "title": "Add Selection to Patchbay Context",
         "category": "Patchbay"
@@ -176,7 +181,12 @@
         {
           "command": "acpPatchbay.addSelectionToContext",
           "when": "editorHasSelection",
-          "group": "9_cutcopypaste"
+          "group": "9_cutcopypaste@8"
+        },
+        {
+          "command": "acpPatchbay.addFileToContext",
+          "when": "resourceScheme == file || resourceScheme == vscode-remote",
+          "group": "9_cutcopypaste@9"
         }
       ],
       "explorer/context": [
@@ -197,6 +207,10 @@
         {
           "command": "acpPatchbay.detachAgentView",
           "when": "acpPatchbay.detachEnabled"
+        },
+        {
+          "command": "acpPatchbay.addFileToContext",
+          "when": "false"
         }
       ],
       "view/title": [

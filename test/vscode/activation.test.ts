@@ -32,5 +32,6 @@ suite("activation", () => {
     assert.ok(commands.includes("acpPatchbay.connectAgent"));
     assert.ok(commands.includes("acpPatchbay.addSelectionToContext"));
     assert.ok(commands.includes("acpPatchbay.addToContext"));
+    assert.ok(commands.includes("acpPatchbay.addFileToContext"));
   });
 });

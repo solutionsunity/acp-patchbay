@@ -98,6 +98,11 @@ export function activate(context: vscode.ExtensionContext): {
     vscode.commands.registerCommand("acpPatchbay.addToContext", (clicked?: vscode.Uri, selected?: readonly vscode.Uri[]) =>
       host.addToContextCommand(clicked, selected).catch(host.warnCatch("add to context", "Nothing was added")),
     ),
+    // The same act under the name it needs inside an editor, where it sits
+    // beside "Add Selection": there the thing added has to be named.
+    vscode.commands.registerCommand("acpPatchbay.addFileToContext", (file?: vscode.Uri) =>
+      host.addToContextCommand(file).catch(host.warnCatch("add file to context", "Nothing was added")),
+    ),
     vscode.commands.registerCommand("acpPatchbay.addSelectionToContext", () =>
       host.addSelectionToContextCommand(),
     ),
