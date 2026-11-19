@@ -48,6 +48,16 @@ export function Header(props: {
       {props.children}
       <div className="spacer" />
       <ErrorsChip />
+      <Button variant="ghost" size="icon" className="h-6 w-6" title="New session" aria-label="New session" onClick={props.onNew}>
+        <Icon name="add" />
+      </Button>
+      {!list && (
+        <Button variant="ghost" size="icon" className="h-6 w-6" title="Sessions" aria-label="Sessions" onClick={props.onSessions}>
+          <Icon name="history" />
+        </Button>
+      )}
+      {/* last, so it sits in one place in both layouts: a click there and
+          back never moves the pointer */}
       <Button
         variant="ghost"
         size="icon"
@@ -58,14 +68,6 @@ export function Header(props: {
         onClick={() => props.onLayout(list ? "chat" : "list")}
       >
         <Icon name={list ? "comment-discussion" : "list-unordered"} />
-      </Button>
-      {!list && (
-        <Button variant="ghost" size="icon" className="h-6 w-6" title="Sessions" aria-label="Sessions" onClick={props.onSessions}>
-          <Icon name="history" />
-        </Button>
-      )}
-      <Button variant="ghost" size="icon" className="h-6 w-6" title="New session" aria-label="New session" onClick={props.onNew}>
-        <Icon name="add" />
       </Button>
     </div>
   );

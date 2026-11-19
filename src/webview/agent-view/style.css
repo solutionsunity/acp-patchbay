@@ -1553,6 +1553,18 @@ body {
   align-items: center;
 }
 
+/* Quieter than the title they sit beside, and the menu after them: a
+ * shortcut for what the menu holds, at full strength once pointed at or
+ * focused. */
+.open-apart button {
+  opacity: 0.55;
+}
+
+.open-apart button:hover,
+.open-apart button:focus-visible {
+  opacity: 1;
+}
+
 @container (min-width: 340px) {
   .open-apart {
     display: inline-flex;

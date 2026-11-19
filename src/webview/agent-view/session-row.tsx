@@ -63,12 +63,12 @@ export function SessionActions({
       <span className="open-apart">
         {!inTabs && (
           <Button variant="ghost" size="icon" className="h-6 w-6" title="Open in tab" aria-label="Open in tab" onClick={() => openApart("tab")}>
-            <Icon name="window" />
+            <Icon name="window" size={14} />
           </Button>
         )}
         {detach && (
           <Button variant="ghost" size="icon" className="h-6 w-6" title="Open in new window" aria-label="Open in new window" onClick={() => openApart("window")}>
-            <Icon name="multiple-windows" />
+            <Icon name="multiple-windows" size={14} />
           </Button>
         )}
       </span>
