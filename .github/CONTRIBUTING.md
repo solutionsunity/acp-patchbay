@@ -27,6 +27,18 @@ host can be downloaded before you rely on it. Every pull request runs the same
 gate in CI on Linux, and the unit tests on Windows, so a suite you can't run
 locally still runs before merge.
 
+While you work, run the part your change can break, and the whole gate once
+before you commit:
+
+    npx vitest run test/broker.test.ts           # one unit test file
+    npm run ui:shots -- --list                   # the UI gate's parts, by name
+    npm run ui:shots -- --only layout            # the parts whose name holds "layout"
+    npm run ui:shots -- --only themed --theme dark
+    npx vscode-test --run out-test/test/vscode/editor-state.test.js   # one editor suite (after `npm run pretest:vscode`)
+
+A partial run of the UI gate says so in its last line and prints how long
+each part took. It is never the gate: `npm run check` runs every part.
+
 ## Pull requests
 
 - Keep each PR to **one concern**; unrelated changes belong in separate PRs.

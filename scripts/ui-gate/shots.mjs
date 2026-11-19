@@ -44,6 +44,44 @@ function check(label, ok) {
   if (!ok) failures++;
 }
 
+// ── running a part of the gate ──
+// The gate is its parts, in order; with no flag every part runs, and that
+// alone is the gate. While working on one surface a part can be run by
+// itself — and says at the end that it was a part, so a partial run is
+// never read as the gate (`npm run check` passes no flag):
+//
+//   node scripts/ui-gate/shots.mjs --list            the parts, by name
+//   node scripts/ui-gate/shots.mjs --only layout     the parts whose name holds "layout"
+//   node scripts/ui-gate/shots.mjs --only themed --theme dark
+//
+// `--only` may be given more than once; `--theme` keeps the per-theme parts
+// to the themes named.
+const flag = (name) => process.argv.flatMap((arg, i, all) => (arg === name && all[i + 1] !== undefined ? [all[i + 1]] : []));
+const ONLY = flag("--only");
+const ONLY_THEMES = flag("--theme");
+const LISTING = process.argv.includes("--list");
+const PARTIAL = ONLY.length > 0 || ONLY_THEMES.length > 0;
+const unknownThemes = ONLY_THEMES.filter((theme) => !Object.keys(THEMES).includes(theme));
+if (unknownThemes.length > 0) {
+  console.error(`ui-gate: no theme named ${unknownThemes.join(", ")} — the themes: ${Object.keys(THEMES).join(", ")}`);
+  process.exit(2);
+}
+/** Every part met, in order: whether it ran, and when it started. */
+const parts = [];
+
+/** Whether the part named runs — met once, where the part begins. */
+function runs(name) {
+  const run = !LISTING && (ONLY.length === 0 || ONLY.some((wanted) => name.includes(wanted)));
+  parts.push({ name, run, at: Date.now() });
+  return run;
+}
+
+/** The themes a per-theme part runs under — none where the part doesn't. */
+function themesOf(name) {
+  const themes = Object.keys(THEMES).filter((theme) => ONLY_THEMES.length === 0 || ONLY_THEMES.includes(theme));
+  return runs(name) ? themes : [];
+}
+
 /** Waits until the page's finite animations have run out — an entry rise,
  * a drawer's drop, a closing sheet's exit — before a shot, a geometry read,
  * or a check that something stayed put once a move ended. An endless one
@@ -210,7 +248,7 @@ async function renderView(p, bundle, state) {
 
 const browser = await chromium.launch({ executablePath: findChromium(), args: ["--no-sandbox"] });
 
-for (const theme of Object.keys(THEMES)) {
+for (const theme of themesOf("themed")) {
   // ── chat, completed turn (RTL-after-completion, mermaid ok+broken, math) ──
   let p = await page(browser, theme, { width: 420, height: 900 });
   await renderView(p, "agent-view", agentViewState({ live: false }));
@@ -1408,7 +1446,7 @@ for (const theme of Object.keys(THEMES)) {
 // ── the composer takes the keyboard (#55): when a chat opens for typing,
 // and on a session switch in the view the user is in — never pulling focus
 // into a view that doesn't have it. Theme-independent: run once. ──
-{
+if (runs("composer-keyboard")) {
   const inComposer = (p) => p.evaluate(() => document.activeElement?.classList.contains("prompt-editor") === true);
   const blur = (p) => p.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
 
@@ -1466,7 +1504,7 @@ for (const theme of Object.keys(THEMES)) {
 // chat mounts more of a long transcript above the user, the view goes on
 // moving up with the wheel — never thrown forward by the rows added.
 // Theme-independent: run once. ──
-{
+if (runs("reading-back")) {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
   const state = agentViewState({ live: false });
   await renderView(p, "agent-view", { ...state, activePatchbaySessionId: "s2", transcripts: { ...state.transcripts, s2: longTranscript } });
@@ -1503,7 +1541,7 @@ for (const theme of Object.keys(THEMES)) {
 // even a row the chat's mounted window no longer holds; left following its
 // end, it comes back at its end, still following. Theme-independent: run
 // once. ──
-{
+if (runs("keeps-place")) {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
   const state = agentViewState({ live: false });
   await renderView(p, "agent-view", { ...state, activePatchbaySessionId: "s2", transcripts: { ...state.transcripts, s2: longTranscript } });
@@ -1581,7 +1619,7 @@ for (const theme of Object.keys(THEMES)) {
 // download menu and fullscreen view, the drawers and the token gauge's
 // tooltip take the keyboard and close on Escape, and the composer's menu
 // stays inside a short view. Theme-independent: run once. ──
-{
+if (runs("overlays")) {
   const theme0 = Object.keys(THEMES)[0];
   // Focus moves when the overlay's own effects run, a frame or so after
   // the key or click: waited for, never read once.
@@ -1750,7 +1788,7 @@ const slashMenu = (p) =>
     const pop = document.querySelector(".pop").getBoundingClientRect();
     return { rows, left: Math.round(pop.left), right: Math.round(pop.right), W: document.documentElement.clientWidth };
   });
-for (const width of [420, 260, 180]) {
+for (const width of runs("slash-menu") ? [420, 260, 180] : []) {
   const p = await page(browser, Object.keys(THEMES)[0], { width, height: 800 });
   await renderView(p, "agent-view", agentViewState({ live: false }));
   await p.waitForSelector(".prompt-editor");
@@ -1774,7 +1812,7 @@ for (const width of [420, 260, 180]) {
 
 // ── a fork names its original under the title row, and opens it; one
 // whose original the list no longer names says so. Theme-independent. ──
-{
+if (runs("fork")) {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
   await renderView(p, "agent-view", agentViewState({ live: false }));
   await p.waitForSelector(".sess-row");
@@ -1796,7 +1834,7 @@ for (const width of [420, 260, 180]) {
 // ── an agent's permission card shows the call it asks about, in full,
 // before its buttons: the files (each diff openable), what the call
 // produced, the input it will run with — open while pending (#80). ──
-for (const theme of Object.keys(THEMES)) {
+for (const theme of themesOf("permission-card")) {
   const p = await page(browser, theme, { width: 420, height: 900 });
   await renderView(p, "agent-view", agentViewState({ live: false }));
   await p.waitForSelector(".prompt-editor");
@@ -1856,7 +1894,7 @@ for (const theme of Object.keys(THEMES)) {
 
 // ── a failed turn says why under its turn line, in the error's own
 // words (#80). Theme-independent. ──
-{
+if (runs("failed-turn")) {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
   await renderView(p, "agent-view", agentViewState({ live: false }));
   await p.waitForSelector(".prompt-editor");
@@ -1902,7 +1940,7 @@ for (const theme of Object.keys(THEMES)) {
 // ── what an agent says of its options and its plan reaches the user:
 // same-named options told apart, each option's description in the list,
 // a plan entry's priority (#80). Theme-independent. ──
-{
+if (runs("options-and-plan")) {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
   await renderView(p, "agent-view", agentViewState({ live: false }));
   await p.waitForSelector(".prompt-editor");
@@ -1949,7 +1987,7 @@ for (const theme of Object.keys(THEMES)) {
 }
 
 // ── a held prompt shows the chips it carries (#83). Theme-independent. ──
-{
+if (runs("held-prompt")) {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
   await renderView(p, "agent-view", agentViewState({ live: false }));
   await p.waitForSelector(".prompt-editor");
@@ -1966,7 +2004,7 @@ for (const theme of Object.keys(THEMES)) {
 // ── an attachment sits in the words (#163, #147): staged, its token lands at
 // the caret; a deleted token stays deleted; cut and paste move it; the
 // prompt is sent with each attachment at its place. Theme-independent. ──
-{
+if (runs("attachments")) {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 700 });
   await renderView(p, "agent-view", agentViewState({ live: false }));
   await p.waitForSelector(".prompt-editor");
@@ -2042,7 +2080,7 @@ for (const theme of Object.keys(THEMES)) {
 // what was said; narrowed to one agent's; each row saying whether it is
 // loaded; a tab or a window from the row while it has the room, and from the
 // menu always. Theme-independent. ──
-{
+if (runs("sessions-drawer")) {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
   await renderView(p, "agent-view", agentViewState({ live: false }));
   await p.click('button[aria-label="Sessions"]');
@@ -2099,7 +2137,7 @@ for (const theme of Object.keys(THEMES)) {
 // keeps the header's read-out of the other sessions and leaves out what it
 // already is (the Sessions button, a second way to open a tab).
 // Theme-independent. ──
-{
+if (runs("layout")) {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
   await renderView(p, "agent-view", agentViewState({ live: false }));
   await p.waitForSelector(".prompt-editor");
@@ -2174,7 +2212,7 @@ for (const theme of Object.keys(THEMES)) {
 // ── only the view the user is in gives an arriving attachment its token: a
 // session open in two views gets it once, and a view without focus gives it
 // when focus comes. Theme-independent. ──
-{
+if (runs("token-in-focused-view")) {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 700 });
   await renderView(p, "agent-view", agentViewState({ live: false }));
   await p.waitForSelector(".prompt-editor");
@@ -2198,7 +2236,7 @@ for (const theme of Object.keys(THEMES)) {
 // on a session whose token was deleted leaves the box as the user left it
 // (the narrow shot above is the other half: one never placed gets its token).
 // Theme-independent. ──
-{
+if (runs("token-once")) {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 700 });
   await renderView(p, "agent-view", { ...agentViewState({ live: false }), contextChips: { s1: [{ ...longSelectionChip, placed: true }] } });
   await p.waitForSelector(".prompt-editor");
@@ -2213,7 +2251,7 @@ for (const theme of Object.keys(THEMES)) {
 
 // ── a deep queue stays inside its band (#166): the rows scroll there, the
 // newest in view, and the chat and composer keep their room. Theme-independent. ──
-{
+if (runs("queue-band")) {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 600 });
   await renderView(p, "agent-view", agentViewState({ live: false }));
   await p.waitForSelector(".prompt-editor");
@@ -2245,7 +2283,7 @@ for (const theme of Object.keys(THEMES)) {
 
 // ── a cut turn's held words say why and send only by their own Send
 // (#120) — at the narrowest panel, every control in view. Theme-independent. ──
-{
+if (runs("cut-turn")) {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 280, height: 900 });
   await renderView(p, "agent-view", agentViewState({ live: false }));
   await p.waitForSelector(".prompt-editor");
@@ -2283,7 +2321,7 @@ for (const theme of Object.keys(THEMES)) {
 // and every read-out with details, across the widths a panel takes — every
 // label whole on one line, the read-outs beside the knobs or on a line of
 // their own above them, Send at the bottom-right. Theme-independent. ──
-{
+if (runs("composer-foot")) {
   const sel = (id, name, category, value, values) => ({ id, name, category, type: "select", currentValue: value, options: values.map((v) => ({ value: v, name: v })) });
   const footState = agentViewState({ live: false });
   footState.sessionKnobs = {
@@ -2348,7 +2386,7 @@ for (const theme of Object.keys(THEMES)) {
 // everywhere — paths, names, titles — every control stays in view, none
 // behind a sideways scroll, and every overlay opens inside the panel.
 // Theme-independent: run once. ──
-{
+if (runs("narrow")) {
   const LONG = "an-extremely-long-unbreakable-name-that-keeps-going-and-going-without-one-space";
   const longPath = `/home/someone/projects/${LONG}/src/${LONG}`;
   const outOfView = (p) =>
@@ -3083,7 +3121,7 @@ for (const theme of Object.keys(THEMES)) {
 // its parents; one card per delegation, its messages collapsed inside; a
 // sub-agent's ask names it.
 // Theme-independent: run once. ──
-{
+if (runs("subagents")) {
   const theme0 = Object.keys(THEMES)[0];
   const sub = (id, over) => ({
     id, parentId: "s1", title: null, description: "general-purpose", conversationTitle: null, state: null, lastKnown: null,
@@ -3270,5 +3308,24 @@ for (const theme of Object.keys(THEMES)) {
 }
 
 await browser.close();
+
+// How long each part took — where the gate's time goes.
+parts.forEach((part, i) => {
+  if (part.run) console.log(`  ${String(Math.round(((parts[i + 1]?.at ?? Date.now()) - part.at) / 1000)).padStart(4)}s  ${part.name}`);
+});
+if (LISTING) {
+  console.log(parts.map((part) => part.name).join("\n"));
+  process.exit(0);
+}
+if (PARTIAL) {
+  const ran = parts.filter((part) => part.run).map((part) => part.name);
+  if (ran.length === 0) {
+    console.error(`ui-gate: no part is named by ${ONLY.map((o) => `"${o}"`).join(", ")} — the parts: ${parts.map((part) => part.name).join(", ")}`);
+    process.exit(2);
+  }
+  const themes = ONLY_THEMES.length > 0 ? `, under ${ONLY_THEMES.join(", ")} only` : "";
+  console.log(`\nui-gate: PARTIAL — ${ran.length} of ${parts.length} parts ran (${ran.join(", ")})${themes}. ${failures === 0 ? "They pass" : `${failures} failed`}; the gate is the whole run.`);
+  process.exit(failures === 0 ? 0 : 1);
+}
 console.log(failures === 0 ? `\nui-gate: all checks passed → ${OUT}/` : `\nui-gate: ${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);
