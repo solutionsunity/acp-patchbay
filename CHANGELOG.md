@@ -105,6 +105,15 @@
   because they carried no `readOnlyHint` and MCP treats a silent tool as one
   that may write. Every tool now states that it changes nothing and stays
   inside the editor. (#162)
+- **A session's MCP chip shows a failing server.** The chip under the
+  composer listed a session's servers and never said one was failing,
+  though Settings did. It now marks a server whose requests fail for this
+  session, with the reason — seen by Patchbay's bridge, which until now
+  told only the agent — and a server Patchbay's own last check found
+  unreachable. Each can be reported from its row. A server the agent
+  connects to by itself is marked "by agent": the protocol gives the
+  agent no way to tell us whether it works, so no mark there is not a
+  claim that it does. (#175)
 - **Report a failure from where you see it.** Wherever Patchbay shows a
   failure — an agent that didn't start or stopped, a failed turn, an MCP
   server that wasn't added or is unreachable, a warning notification, and

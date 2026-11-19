@@ -693,6 +693,8 @@ export class Orchestrator {
           const headers = await this.mcpServers.headersFor(patchbayMcpServerId, patchbayAgentId, own);
           return headers === null ? null : { headers };
         },
+        noteMcpServerState: (contextToken, patchbayMcpServerId, failure) =>
+          this.sessions.noteBridgedServer(contextToken, patchbayMcpServerId, failure === null ? null : this.wireLog.redact(failure)),
       },
       ports.editor,
     );

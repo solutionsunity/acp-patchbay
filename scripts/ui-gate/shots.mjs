@@ -1991,6 +1991,74 @@ if (runs("report-failure")) {
   await p.close();
 }
 
+// ── a session's MCP chip says which of its servers is failing, and which
+// it can't see into (#175): a failure the bridge saw for this session, the
+// last check's where nothing nearer is known — each reportable — and "by
+// agent" on one the agent connects to itself. Theme-independent. ──
+if (runs("mcp-chip-failure")) {
+  const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".prompt-editor");
+  const at = "2026-11-19T10:00:00.000Z";
+  const servers = [
+    { id: "gh", name: "github", workspaces: "auto" },
+    { id: "docs", name: "docs", workspaces: "auto", unreachable: { at, reason: "connect ECONNREFUSED 127.0.0.1:9" } },
+    { id: "files", name: "files", workspaces: "auto" },
+  ];
+  const given = (failing) =>
+    p.evaluate(
+      ([list, f]) =>
+        window.__patch([
+          { kind: "mcpServersListed", servers: list },
+          { kind: "sessionMcpChanged", patchbaySessionId: "s1", mcp: { given: ["patchbay:editor", "gh", "docs", "files"], added: [], bridged: ["gh", "docs"], failing: f } },
+        ]),
+      [servers, failing],
+    );
+  await given({});
+  const chip = p.locator(".ctx-chip", { hasText: "MCP server" });
+  await chip.waitFor();
+  check("[mcp chip] a server the last check found unreachable marks the chip", (await chip.locator("[data-mcp-failing]").count()) === 1);
+  await given({ gh: { at, reason: "HTTP 401 — unauthorized" } });
+  await chip.click();
+  const row = (name) => p.locator(`[data-mcp-row="${name}"]`);
+  await row("github").waitFor();
+  check(
+    "[mcp chip] a server failing for this session says so, with the reason",
+    (await row("github").locator('[data-mcp-failure="session"]').innerText()).includes("failing for this session: HTTP 401 — unauthorized"),
+  );
+  check("[mcp chip] the last check's failure stands where the session knows nothing nearer", (await row("docs").locator('[data-mcp-failure="check"]').innerText()).includes("ECONNREFUSED"));
+  check(
+    "[mcp chip] one the agent connects to itself is marked, and the chip says what that means — the bridged ones and the built-in are not",
+    (await row("files").innerText()).includes("by agent") &&
+      !(await row("github").innerText()).includes("by agent") &&
+      !(await row("patchbay").innerText()).includes("by agent") &&
+      (await p.locator('[data-slot="popover-content"]').innerText()).includes("tells Patchbay nothing of whether they work"),
+  );
+  check("[mcp chip] a server with nothing known against it shows no failure", (await row("files").locator("[data-mcp-failure]").count()) === 0);
+  await row("github").locator("[data-report-failure]").click();
+  const reported = await p.evaluate(() => window.__actions.filter((a) => a.kind === "reportFailure").at(-1)?.failure);
+  check(
+    `[mcp chip] the failure is reported from its row, naming its server (${JSON.stringify(reported)})`,
+    reported?.where === "mcpSession" && reported.patchbayMcpServerId === "gh" && reported.said === "github: failing for this session: HTTP 401 — unauthorized",
+  );
+  await p.screenshot({ path: `${OUT}/mcp-chip-failure.png` });
+  // the popover with its failures stays inside a narrow panel — it follows
+  // the panel's width a moment after it changes
+  await p.setViewportSize({ width: 260, height: 800 });
+  const fits = await p
+    .waitForFunction(
+      () => {
+        const box = document.querySelector('[data-slot="popover-content"]')?.getBoundingClientRect();
+        return box !== undefined && box.left >= 0 && box.right <= document.documentElement.clientWidth;
+      },
+      null,
+      { timeout: 3000 },
+    )
+    .then(() => true, () => false);
+  check("[mcp chip] the popover with its failures fits a narrow panel", fits);
+  await p.close();
+}
+
 // ── what an agent says of its options and its plan reaches the user:
 // same-named options told apart, each option's description in the list,
 // a plan entry's priority (#80). Theme-independent. ──
@@ -2497,7 +2565,7 @@ if (runs("narrow")) {
     { id: "deploy", name: `deploy-${LONG}`, workspaces: [] },
     { id: "spare", name: "spare", workspaces: [] },
   ];
-  av.sessionMcp = { s1: { given: ["patchbay:editor", "files"], added: ["deploy"] } };
+  av.sessionMcp = { s1: { given: ["patchbay:editor", "files"], added: ["deploy"], bridged: [], failing: {} } };
   // sub-agents with long names, one in a worktree of a long path, one with
   // Cancel — the roster's every control inside the panel
   av.subagents = {

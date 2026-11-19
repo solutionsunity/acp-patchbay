@@ -570,7 +570,12 @@ export class McpServersStore {
   /** Re-reads config + token presence and republishes the lists wholesale
    * — same "replace, don't patch" shape as the capability matrix. */
   async refresh(): Promise<void> {
-    this.hooks.listed(this.configs.list().map((c) => ({ id: c.id, name: c.name, workspaces: c.workspaces })));
+    this.hooks.listed(
+      this.configs.list().map((c) => {
+        const probe = this.probes.get(c.id);
+        return { id: c.id, name: c.name, workspaces: c.workspaces, ...(probe?.status === "failed" ? { unreachable: { at: probe.at, reason: probe.reason } } : {}) };
+      }),
+    );
     this.hooks.emit(
       { kind: "mcpCatalogLoaded", entries: this.catalogViews() },
       {

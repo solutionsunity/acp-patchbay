@@ -23,6 +23,7 @@ export const FAILURE_SURFACES = {
   mcpAdd: { shown: "Settings › MCP Servers, a server that wasn't added", words: "server" },
   mcpSignInLink: { shown: "Settings › MCP Servers, a sign-in link that was refused", words: "patchbay" },
   mcpUnreachable: { shown: "Settings › MCP Servers, a server that is unreachable", words: "server" },
+  mcpSession: { shown: "the chat, an MCP server failing for a session", words: "server" },
   registry: { shown: "Settings › Agents, the registry that couldn't be read", words: "patchbay" },
   configImport: { shown: "Settings › Import/Export, an import", words: "patchbay" },
   notification: { shown: "a warning notification", words: "patchbay" },

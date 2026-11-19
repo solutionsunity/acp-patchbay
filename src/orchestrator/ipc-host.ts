@@ -16,6 +16,7 @@ import {
   type CurrentFileInfo,
   type DiagnosticInfo,
   type McpServerHeadersParams,
+  type McpServerStateParams,
   type McpServerHeadersResult,
   type IpcNotification,
   type IpcRequest,
@@ -65,6 +66,9 @@ export interface IpcHostHooks {
    * the server was given to under this token, refreshed transparently if
    * needed. */
   getMcpServerHeaders(contextToken: string, patchbayMcpServerId: PatchbayMcpServerId): Promise<McpServerHeadersResult | null>;
+  /** A bridge says its server's requests are failing for its session
+   * (`failure`: why), or getting through again (null). */
+  noteMcpServerState(contextToken: string, patchbayMcpServerId: PatchbayMcpServerId, failure: string | null): void;
 }
 
 export class IpcHost {
@@ -156,6 +160,11 @@ export class IpcHost {
           request.contextToken,
           (request.params as McpServerHeadersParams).patchbayMcpServerId,
         );
+      case "noteMcpServerState": {
+        const { patchbayMcpServerId, failure } = request.params as McpServerStateParams;
+        this.hooks.noteMcpServerState(request.contextToken, patchbayMcpServerId, typeof failure === "string" ? failure : null);
+        return null;
+      }
     }
   }
 

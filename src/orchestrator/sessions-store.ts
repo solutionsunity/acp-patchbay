@@ -41,6 +41,7 @@ import {
   type UserBlock,
   type UserPart,
   unrenderedLabel,
+  type McpFailureView,
 } from "../shared/protocol";
 import { ATTACHMENTS_DIR, chipId, fileChipLabel, imageFileName, readBase64, stashPreview } from "./attachments";
 import {
@@ -253,14 +254,17 @@ interface KnownSession {
   everPrompted: boolean;
   /** The MCP servers its last open in this window gave the agent — absent
    * until it has opened here. */
-  mcpGiven?: readonly PatchbayMcpServerId[];
+  mcpGiven?: readonly AttachedServer[];
+  /** The bridged servers whose requests are failing for this session now,
+   * as their bridges last said. */
+  mcpFailing?: Map<PatchbayMcpServerId, McpFailureView>;
 }
 
 /** What a lifecycle request gave and left out. */
 interface Attached {
   missing: readonly string[];
   withheld: readonly string[];
-  given: readonly PatchbayMcpServerId[];
+  given: readonly AttachedServer[];
 }
 
 interface LiveSession extends StreamState {
@@ -736,7 +740,7 @@ export class SessionsStore {
         contextToken,
         knobs: r.knobs,
         missing,
-        left: { missing, withheld, given: given.map((g) => g.id) },
+        left: { missing, withheld, given },
       };
     }
     const sessionId = this.known.get(target.patchbaySessionId)?.sessionId;
@@ -750,13 +754,13 @@ export class SessionsStore {
       signal,
     );
     this.hooks.onRealSessionAttached?.(patchbayAgentId, sessionId);
-    this.landed(target.patchbaySessionId, { missing, withheld, given: given.map((g) => g.id) });
+    this.landed(target.patchbaySessionId, { missing, withheld, given });
     return {
       sessionId,
       contextToken,
       knobs: r.knobs,
       missing,
-      left: { missing, withheld, given: given.map((g) => g.id) },
+      left: { missing, withheld, given },
     };
   }
 
@@ -786,6 +790,21 @@ export class SessionsStore {
     return grant?.given.some((s) => s.id === patchbayMcpServerId && s.delivery === "bridge") === true ? grant.patchbayAgentId : undefined;
   }
 
+  /** A bridge says how its server's requests are going: failing, with the
+   * reason, or getting through again. Heard only from a bridge the server
+   * was given to under its token — and of that token's session, where it
+   * still has one. A repeat of what is already known changes nothing. */
+  noteBridgedServer(token: string, patchbayMcpServerId: PatchbayMcpServerId, failure: string | null): void {
+    if (this.bridgedTo(token, patchbayMcpServerId) === undefined) return;
+    const patchbaySessionId = this.sessionOfToken(token);
+    const row = patchbaySessionId === undefined ? undefined : this.known.get(patchbaySessionId);
+    if (patchbaySessionId === undefined || row === undefined) return;
+    const failing = (row.mcpFailing ??= new Map());
+    if (failure === null ? !failing.delete(patchbayMcpServerId) : failing.get(patchbayMcpServerId)?.reason === failure) return;
+    if (failure !== null) failing.set(patchbayMcpServerId, { at: new Date().toISOString(), reason: failure });
+    this.publishMcp(patchbaySessionId);
+  }
+
   /** The servers given to the token's session alone — none for a token
    * whose session is gone. */
   ownMcpServers(token: string): readonly PatchbayMcpServerId[] {
@@ -809,7 +828,11 @@ export class SessionsStore {
    * silent narrowing of what the user set up. */
   private landed(patchbaySessionId: PatchbaySessionId, { missing, withheld, given }: Attached): void {
     const row = this.known.get(patchbaySessionId);
-    if (row !== undefined) row.mcpGiven = given;
+    if (row !== undefined) {
+      row.mcpGiven = given;
+      // a fresh open, fresh bridges: what the last ones reported is theirs
+      row.mcpFailing = new Map();
+    }
     this.publishMcp(patchbaySessionId);
     const texts = [
       ...(missing.length === 0
@@ -1883,7 +1906,12 @@ export class SessionsStore {
     this.hooks.emit({
       kind: "sessionMcpChanged",
       patchbaySessionId,
-      mcp: { given: row.mcpGiven ?? null, added: this.saved(patchbaySessionId).mcpServers ?? [] },
+      mcp: {
+        given: row.mcpGiven?.map((s) => s.id) ?? null,
+        added: this.saved(patchbaySessionId).mcpServers ?? [],
+        bridged: (row.mcpGiven ?? []).filter((s) => s.delivery === "bridge").map((s) => s.id),
+        failing: Object.fromEntries(row.mcpFailing ?? []),
+      },
     });
   }
 

@@ -38,7 +38,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { IpcClient } from "./ipc-client";
-import { IPC_ENV, type McpServerHeadersParams, type McpServerHeadersResult, type RootsResult } from "./ipc-protocol";
+import { IPC_ENV, type McpServerHeadersParams, type McpServerHeadersResult, type McpServerStateParams, type RootsResult } from "./ipc-protocol";
 import type { PatchbayMcpServerId } from "../shared/ids";
 
 const socketPath = process.env[IPC_ENV.socket] ?? "";
@@ -108,24 +108,53 @@ async function main(): Promise<void> {
     void providerSide.send({ jsonrpc: "2.0", method: "notifications/roots/list_changed" }).catch(() => {});
   };
 
+  // How the server's requests are going is told to the orchestrator as it
+  // changes — failing, with the reason; getting through again — so the
+  // session says so: the agent hears the error, the user otherwise nothing.
+  // Told once per change; no request to the server waits on it. Nothing is
+  // known at the start: the first request to get through is told too,
+  // since an agent may start a bridge anew for a session whose last one
+  // left it failing. What is being told is held until it has been heard,
+  // and the agent hears nothing from the bridge before then (`toAgent`):
+  // an agent may end its bridge on the very answer that failed, by a
+  // signal no handler outlives, and the word would go with it. That holds
+  // an answer back for one exchange on a local socket, and only when the
+  // server's state changed.
+  let failing: string | null | undefined;
+  let told: Promise<void> = Promise.resolve();
+  const tell = (failure: string | null) => {
+    if (failure === failing) return;
+    failing = failure;
+    const params: McpServerStateParams = { patchbayMcpServerId, failure };
+    told = told.then(() => ipc.request("noteMcpServerState", params)).then(
+      () => {},
+      () => {},
+    );
+  };
+
+  /** A message to the agent, sent once what is being told has been heard
+   * — in the order given: each waits on what was being told when it came. */
+  const toAgent = (message: JSONRPCMessage) => {
+    void told.then(() => agentSide.send(message)).catch(() => {});
+  };
+
   agentSide.onmessage = (message) => {
     if ("method" in message && message.method === "notifications/initialized") initialized = true;
     void providerSide.send(withRootsCapability(message)).catch((err: unknown) => {
+      // the transport's error carries the server's HTTP status as its code
+      const status = (err as { code?: unknown }).code;
+      tell(`${typeof status === "number" && status >= 100 ? `HTTP ${status} — ` : ""}${(err as Error).message}`);
       // A failed round trip answers the agent's request as a JSON-RPC error
       // — never kills the bridge (v1 died by unhandled rejection here, and
       // the agent saw only a silently absent server).
       if (isRequest(message)) {
-        agentSide
-          .send({
-            jsonrpc: "2.0",
-            id: message.id,
-            error: { code: -32603, message: `bridge: ${(err as Error).message}` },
-          })
-          .catch(() => {});
+        toAgent({ jsonrpc: "2.0", id: message.id, error: { code: -32603, message: `bridge: ${(err as Error).message}` } });
       }
     });
   };
   providerSide.onmessage = (message) => {
+    // the server answered: whatever failed before, a request got through
+    tell(null);
     if (isRequest(message) && message.method === "roots/list") {
       // Answered here, never forwarded: the agent has no list to answer
       // from. A failed read is the provider's error to handle, in the
@@ -142,7 +171,7 @@ async function main(): Promise<void> {
         .catch(() => {});
       return;
     }
-    void agentSide.send(message).catch(() => {});
+    toAgent(message);
   };
   providerSide.onerror = () => {
     // Transport-level noise (e.g. a provider without the optional GET SSE
@@ -157,10 +186,8 @@ async function main(): Promise<void> {
   // reader anymore. The SDK's stdio transport only fires onclose from its
   // own close() — the EOF event needs wiring by hand.
   const shutdown = () => {
-    void providerSide
-      .close()
-      .catch(() => {})
-      .finally(() => process.exit(0));
+    const leave = () => process.exit(0);
+    Promise.all([providerSide.close().catch(() => {}), told]).then(leave, leave);
   };
   agentSide.onclose = shutdown;
   process.stdin.on("end", shutdown);

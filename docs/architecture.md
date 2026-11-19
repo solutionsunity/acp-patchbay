@@ -1347,6 +1347,21 @@ The differentiator (the PRD's current-release scope), shipped complete:
   credential goes only to a bridge for a server given under that token,
   and only while the server is connected, switched on and routed to that
   agent (#72).
+- **What a session knows of its servers' health** *(decided 2026-11-19,
+  #175)*. Three deliveries, three kinds of knowledge. A server the agent
+  connects to itself — a stdio one it spawns, an HTTP one passed through —
+  is the agent's client's: ACP gives the agent no message to say a server
+  failed, so patchbay knows nothing of it, and the chip marks it "by agent"
+  so that no mark is never read as working. A server on the bridge is seen:
+  the bridge tells the orchestrator over the same socket as a request to
+  the server fails (the reason, the HTTP status with it) and as one gets
+  through again — once per change, a fresh bridge's first success
+  included — heard only from a bridge the server was given to under its
+  token; the session holds it (`sessions-store.ts`, one writer) until a
+  request gets through or the session opens again. And patchbay's own
+  last check of a server, the one Settings shows, rides the chip's list.
+  The chip shows the nearer fact where both hold, each with the control
+  that reports it.
 - **Context roots**: a session's roots are the workspace folders plus user-added
   external folders (multi-repo work). Delivered protocol-native: the first
   workspace folder is the session `cwd`; every other folder and every user-added

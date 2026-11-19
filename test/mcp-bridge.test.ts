@@ -309,6 +309,33 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
     expect(remote.authHeadersSeen.at(-1)).toBe("Bearer fresh-token");
   });
 
+  // #175: the bridge sees what the user otherwise can't — its server
+  // refusing the session's requests — and says so to the orchestrator, so
+  // the session's chip shows it, with the reason.
+  it("a server refusing the session's requests is told to its session, and cleared by a request that gets through", async () => {
+    const remote = new FakeRemoteMcpServer(["revoked-token"]);
+    await remote.listen();
+    atTestEnd(() => remote.close());
+    const h = await withRemote(remote, { name: "github", headers: { Authorization: "Bearer revoked-token" } });
+    await h.pool.connect(
+      spec({ turn: [{ type: "callMcpTool", tool: "list_issues", server: "github" }] }, "e9" as PatchbayAgentId),
+    );
+    const patchbaySessionId = await h.gates.create("e9" as PatchbayAgentId, "Fake Agent", dir);
+    const mcp = () => h.state().sessionMcp[patchbaySessionId]!;
+    expect(mcp().bridged).toEqual([h.id]);
+    await h.gates.prompt(patchbaySessionId, { text: "any open issues?" });
+    // two real processes each way — the agent's, and the bridge it starts — so
+    // these waits are given the test's own time, not a single step's
+    const TOLD = { timeout: 20_000, interval: 20 };
+    await vi.waitFor(() => expect(mcp().failing[h.id]?.reason).toMatch(/401/), TOLD);
+
+    // the key replaced: the next request gets through, and the session says so
+    await h.stores.mcpServerHeaders.set(h.id, { Authorization: "Bearer fresh-token" });
+    await h.gates.prompt(patchbaySessionId, { text: "and now?" });
+    await vi.waitFor(() => expect(mcp().failing).toEqual({}), TOLD);
+    await h.pool.stop("e9" as PatchbayAgentId);
+  }, 30_000);
+
   // Issue #34: the session's roots reach the remote server through the
   // bridge. MCP roots are a client capability, and the client on this wire
   // is the agent, which declares none and holds no list — so the bridge

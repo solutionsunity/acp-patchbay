@@ -48,8 +48,17 @@ export interface IpcRequest {
     | "getRoots"
     | "watchRoots"
     | "requestUserInput"
-    | "getMcpServerHeaders";
+    | "getMcpServerHeaders"
+    | "noteMcpServerState";
   params?: unknown;
+}
+
+/** Params of `noteMcpServerState`: a bridge telling how its server's
+ * requests are going for its session — `failure` the reason they fail, or
+ * null once one gets through again. */
+export interface McpServerStateParams {
+  patchbayMcpServerId: PatchbayMcpServerId;
+  failure: string | null;
 }
 
 /** Params of `getMcpServerHeaders`: which server the bridge is sending

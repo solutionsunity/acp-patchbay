@@ -672,19 +672,35 @@ export interface BuiltinMcpServerView {
   busy: readonly McpServerWork[];
 }
 
-/** One configured MCP server as the MCP chip names it. */
+/** A failure to reach an MCP server, as it was seen: when, and why. */
+export interface McpFailureView {
+  at: string;
+  reason: string;
+}
+
+/** One configured MCP server as the MCP chip names it. `unreachable`:
+ * patchbay's own last check of it failed — absent when it passed, or none
+ * was made. */
 export interface McpServerListedView {
   id: PatchbayMcpServerId;
   name: string;
   workspaces: Reach<WorkspaceId>;
+  unreachable?: McpFailureView;
 }
 
 /** A session's MCP servers (AgentViewState.sessionMcp). `given`: what its
  * last open handed the agent, the built-in server first — null before it
- * has opened in this window. `added`: given to this session alone. */
+ * has opened in this window. `added`: given to this session alone.
+ * `bridged`: those of `given` the agent reaches through patchbay's bridge
+ * — the only ones whose traffic patchbay sees; the agent connects to the
+ * rest itself, and says nothing of how that went. `failing`: the bridged
+ * ones whose requests are failing for this session now, each with its
+ * reason — cleared by a request that gets through, and by the next open. */
 export interface SessionMcpView {
   given: readonly PatchbayMcpServerId[] | null;
   added: readonly PatchbayMcpServerId[];
+  bridged: readonly PatchbayMcpServerId[];
+  failing: Readonly<Record<string, McpFailureView>>;
 }
 
 /** What an MCP server's line can hold. */

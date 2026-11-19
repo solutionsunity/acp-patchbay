@@ -3495,6 +3495,34 @@ describe("context tokens — what the IPC socket admits (#72)", () => {
     await h.pool.stop("ct2" as PatchbayAgentId);
   });
 
+  it("a bridge's word on its server reaches its session's view — only its own server's, only as it changes (#175)", async () => {
+    const h = await composed();
+    await h.connect(spec({}, "ct5"));
+    const patchbaySessionId = await h.gates.create("ct5" as PatchbayAgentId, "Fake Agent", cwd);
+    const [token] = h.minted();
+    const remote = "remote" as PatchbayMcpServerId;
+    const mcp = () => h.state().sessionMcp[patchbaySessionId]!;
+    // what the open gave: the remote one through the bridge, the local one the agent's own
+    expect(mcp().bridged).toEqual([remote]);
+    expect(mcp().given).toContain("local");
+    expect(mcp().failing).toEqual({});
+
+    h.sessions.noteBridgedServer(token!, remote, "HTTP 401");
+    expect(mcp().failing).toEqual({ remote: { at: expect.any(String), reason: "HTTP 401" } });
+    // said again, nothing moves — the first sight of it keeps its time
+    const seen = mcp();
+    h.sessions.noteBridgedServer(token!, remote, "HTTP 401");
+    expect(mcp()).toBe(seen);
+    // not a bridge's to say: a server the agent connects to itself, a token nobody was given
+    h.sessions.noteBridgedServer(token!, "local" as PatchbayMcpServerId, "made up");
+    h.sessions.noteBridgedServer("forged", remote, "made up");
+    expect(mcp().failing).toEqual({ remote: { at: expect.any(String), reason: "HTTP 401" } });
+    // a request got through: it is failing no longer
+    h.sessions.noteBridgedServer(token!, remote, null);
+    expect(mcp().failing).toEqual({});
+    await h.pool.stop("ct5" as PatchbayAgentId);
+  });
+
   it("a token outlives its session's close while the connection is up, and ends with the connection", async () => {
     const h = await composed();
     await h.connect(spec({ declare: { sessionCapabilities: { close: {} } } }, "ct3"));
@@ -4260,15 +4288,16 @@ describe("a session's own MCP servers", () => {
     const composing = vi.spyOn(h.orchestrator.mcpServers, "mcpServersFor");
     await h.connect(spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "own1"));
     const patchbaySessionId = await h.gates.create("own1" as PatchbayAgentId, "Fake Agent", cwd);
-    expect(h.state().sessionMcp[patchbaySessionId]).toEqual({ given: ["patchbay:editor"], added: [] });
+    expect(h.state().sessionMcp[patchbaySessionId]).toEqual({ given: ["patchbay:editor"], added: [], bridged: [], failing: {} });
 
     h.sessions.addMcpServer(patchbaySessionId, "elsewhere" as PatchbayMcpServerId);
     // given at the next open, not before
-    expect(h.state().sessionMcp[patchbaySessionId]).toEqual({ given: ["patchbay:editor"], added: ["elsewhere"] });
+    expect(h.state().sessionMcp[patchbaySessionId]).toEqual({ given: ["patchbay:editor"], added: ["elsewhere"], bridged: [], failing: {} });
     await h.gates.prompt(patchbaySessionId, { text: "first" });
     await h.gates.reload(patchbaySessionId);
     expect(composing.mock.calls.at(-1)?.[3]).toEqual(["elsewhere"]);
-    expect(h.state().sessionMcp[patchbaySessionId]).toEqual({ given: ["patchbay:editor", "elsewhere"], added: ["elsewhere"] });
+    // through the bridge, as it is set to go: what its bridge sees, the session can show
+    expect(h.state().sessionMcp[patchbaySessionId]).toEqual({ given: ["patchbay:editor", "elsewhere"], added: ["elsewhere"], bridged: ["elsewhere"], failing: {} });
     // the bridge it was given through answers for it while the session keeps it
     const token = composing.mock.calls.at(-1)![1];
     expect(h.sessions.ownMcpServers(token)).toEqual(["elsewhere"]);
@@ -4277,7 +4306,7 @@ describe("a session's own MCP servers", () => {
     h.sessions.removeMcpServer(patchbaySessionId, "elsewhere" as PatchbayMcpServerId);
     await h.gates.reload(patchbaySessionId);
     expect(composing.mock.calls.at(-1)?.[3]).toEqual([]);
-    expect(h.state().sessionMcp[patchbaySessionId]).toEqual({ given: ["patchbay:editor"], added: [] });
+    expect(h.state().sessionMcp[patchbaySessionId]).toEqual({ given: ["patchbay:editor"], added: [], bridged: [], failing: {} });
     await h.pool.stop("own1" as PatchbayAgentId);
   });
 });

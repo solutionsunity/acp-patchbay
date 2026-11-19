@@ -29,7 +29,26 @@ export interface McpChipRow {
   /** Saved for this workspace — or offered for saving, where "this
    * workspace" needs an open one. Null for the built-in server. */
   save: { kind: "saved" } | { kind: "unsaved"; workspaceOpen: boolean } | null;
+  /** What is known to be wrong with it. `session`: its requests are
+   * failing for this session now, as patchbay's bridge sees them.
+   * `check`: patchbay's own last check found it unreachable. The first is
+   * the nearer fact and stands where both hold. Null: nothing known — not
+   * the same as working. */
+  failure: { seen: "session" | "check"; at: string; reason: string } | null;
+  /** Given, and reached by the agent's own connection: patchbay sees none
+   * of its traffic, so a row with no failure says nothing of whether it
+   * works. False for one that goes through the bridge, for the built-in
+   * server, and for one not given yet. */
+  unseen: boolean;
 }
+
+/** A row's failure in words: whose sight of it, and the reason. */
+export function failureSaid(failure: NonNullable<McpChipRow["failure"]>): string {
+  return failure.seen === "session" ? `failing for this session: ${failure.reason}` : `unreachable at Patchbay's last check: ${failure.reason}`;
+}
+
+/** What the chip says once for every row patchbay can't see into. */
+export const UNSEEN_NOTE = "by agent: the agent connects to these itself, and tells Patchbay nothing of whether they work";
 
 export interface McpChipControls {
   rows: McpChipRow[];
@@ -53,11 +72,13 @@ export function mcpChipControls(facts: {
   const added = facts.mcp?.added ?? [];
   const byId = new Map(facts.servers.map((s) => [s.id, s]));
   const row = (id: PatchbayMcpServerId, next: McpChipRow["next"]): McpChipRow | null => {
-    if (id === EDITOR_SERVER_ID) return { id, name: EDITOR_SERVER_NAME, label: "built-in", own: false, next: null, save: null };
+    if (id === EDITOR_SERVER_ID) return { id, name: EDITOR_SERVER_NAME, label: "built-in", own: false, next: null, save: null, failure: null, unseen: false };
     const server = byId.get(id);
     if (server === undefined) return null; // removed since — gone at the next open
     const onHere = reaches(server.workspaces, facts.here);
     const own = added.includes(id);
+    const failing = facts.mcp?.failing[id];
+    const isGiven = given.includes(id);
     return {
       id,
       name: server.name,
@@ -65,6 +86,13 @@ export function mcpChipControls(facts: {
       own,
       next,
       save: onHere ? { kind: "saved" } : { kind: "unsaved", workspaceOpen: facts.here !== null },
+      failure:
+        isGiven && failing !== undefined
+          ? { seen: "session", ...failing }
+          : server.unreachable !== undefined
+            ? { seen: "check", ...server.unreachable }
+            : null,
+      unseen: isGiven && !(facts.mcp?.bridged ?? []).includes(id),
     };
   };
   const rows = [
