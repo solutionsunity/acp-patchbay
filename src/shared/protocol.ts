@@ -28,6 +28,27 @@ export interface PatchMsg<E> {
 
 export type HostToView<S, E> = SnapshotMsg<S> | PatchMsg<E>;
 
+/** A session as a later window can name it: its agent, and the agent's own
+ * id for it — patchbay's ids live with a window. */
+export interface SessionName {
+  patchbayAgentId: PatchbayAgentId;
+  sessionId: string;
+}
+
+/** What an editor panel of the agent view is — the one session it shows,
+ * or the whole view. The editor keeps it with the panel's tab, and hands
+ * it back with the tab after a restart. */
+export interface TabMemo {
+  session: SessionName | null;
+}
+
+/** The host telling a panel what it is; null when it has nothing to keep.
+ * Outside the channel's revisions: it is no part of the view's state. */
+export interface TabMemoMsg {
+  kind: "tabMemo";
+  memo: TabMemo | null;
+}
+
 export type ViewToHost =
   | { kind: "ready" } // mount → request snapshot
   | { kind: "resnapshot" } // revision gap → request fresh snapshot

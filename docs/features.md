@@ -113,7 +113,8 @@ deliverable.
   side, or across screens. The sidebar stays one view with one switcher:
   no strip of sessions inside it *(decided 2026-10-16, built 2026-11-18,
   #133 — a strip there would be a second switcher in the narrowest
-  surface)*.
+  surface)*. Its tabs and windows return after a window reload, where the
+  user left them; one whose session the window no longer has closes.
 - The Agent View has two layouts, one click apart in its header: the chat
   of the session the user is in, as it always was — or the sessions list
   itself, always in place with each session's status, where a click opens

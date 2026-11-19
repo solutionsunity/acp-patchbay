@@ -29,7 +29,7 @@
 //   which is fine — nonce was already the only script source.
 import * as vscode from "vscode";
 import { count } from "../shared/count";
-import type { DiagramState, ViewToHost } from "../shared/protocol";
+import type { DiagramState, SessionName, TabMemo, TabMemoMsg, ViewToHost } from "../shared/protocol";
 import { ATTACHMENTS_DIR } from "./attachments";
 import { ChannelHost, type ChannelEndpoint } from "./channel";
 import type { SurfaceReport } from "./orchestrator";
@@ -191,12 +191,21 @@ function boundPanel(
   channel: ChannelEndpoint,
   extensionUri: vscode.Uri,
   bundle: Bundle,
-  surface?: AgentSurface,
 ): vscode.WebviewPanel {
-  const panel = vscode.window.createWebviewPanel(viewType, title, vscode.ViewColumn.Active, {
-    enableScripts: true,
-    retainContextWhenHidden: surface !== undefined,
-  });
+  const panel = vscode.window.createWebviewPanel(viewType, title, vscode.ViewColumn.Active, { enableScripts: true });
+  bindPanel(panel, channel, extensionUri, bundle);
+  return panel;
+}
+
+/** A panel that exists — one just created, or one the editor kept across a
+ * restart and hands back — bound to its channel for its lifetime. */
+function bindPanel(
+  panel: vscode.WebviewPanel,
+  channel: ChannelEndpoint,
+  extensionUri: vscode.Uri,
+  bundle: Bundle,
+  surface?: AgentSurface,
+): void {
   const disposables: vscode.Disposable[] = [];
   const webview = panel.webview; // .webview throws once disposed — capture now
   bind(webview, channel, extensionUri, bundle, disposables, surface);
@@ -204,7 +213,6 @@ function boundPanel(
     channel.detach(webview);
     for (const d of disposables) d.dispose();
   });
-  return panel;
 }
 
 /** A rendered diagram opened in the editor area — a render-only page like
@@ -220,25 +228,75 @@ export function openDiagramPanel(extensionUri: vscode.Uri, svg: string): void {
   boundPanel("acpPatchbay.diagram", "Diagram", channel, extensionUri, "diagram");
 }
 
+/** What the host needs of the sessions to keep their tabs across a restart. */
+export interface SessionTabs {
+  /** A session's own panel took the focus — the user is in that session. */
+  focused(patchbaySessionId: PatchbaySessionId): void;
+  /** The session as a later window can name it. */
+  nameOf(patchbaySessionId: PatchbaySessionId): SessionName | undefined;
+  /** The session a name means in this window, shown — undefined when this
+   * window holds no such session. */
+  show(name: SessionName): Promise<{ id: PatchbaySessionId; title: string } | undefined>;
+}
+
+function isTabMemo(value: unknown): value is TabMemo {
+  if (value === null || typeof value !== "object") return false;
+  const { session } = value as Record<string, unknown>;
+  if (session === null) return true;
+  if (typeof session !== "object" || session === undefined) return false;
+  const { patchbayAgentId, sessionId } = session as Record<string, unknown>;
+  return typeof patchbayAgentId === "string" && typeof sessionId === "string";
+}
+
 /** Detached agent-view surfaces (editor-area WebviewPanels, floatable into
  * auxiliary windows for multi-screen): one optional full agent view, plus
  * any number of per-session pinned panels, each a tab or a window. All of them are ordinary
  * render-only webviews on the same multi-view channel — the sidebar keeps
  * working alongside; a pinned panel merely renders one session and ignores
  * the shared active-session pointer. */
-export class AgentPanelHost {
+export class AgentPanelHost implements vscode.WebviewPanelSerializer {
+  static readonly VIEW_TYPE = "acpPatchbay.agentPanel";
+
   private main: vscode.WebviewPanel | null = null;
   private pinned = new Map<PatchbaySessionId, vscode.WebviewPanel>();
   /** The pinned panels moved out to a window of their own. */
   private floated = new Set<vscode.WebviewPanel>();
+  /** What each panel was last told it is — a session's name can change. */
+  private told = new WeakMap<vscode.WebviewPanel, string>();
 
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly channel: ChannelEndpoint,
     private readonly reportSurface: SurfaceReporter,
-    /** A session's own panel took the focus — the user is in that session. */
-    private readonly pinnedFocused: (patchbaySessionId: PatchbaySessionId) => void = () => {},
+    private readonly sessions: SessionTabs,
   ) {}
+
+  /** A panel the editor kept across a restart, back in the place it had —
+   * the editor's own record of the tabs, read instead of kept twice. The
+   * panel says what it was; a session this window doesn't hold, or a panel
+   * that says nothing readable, closes. */
+  async deserializeWebviewPanel(panel: vscode.WebviewPanel, memo: unknown): Promise<void> {
+    if (!isTabMemo(memo)) return panel.dispose();
+    if (memo.session === null) {
+      if (this.main !== null) return panel.dispose();
+      this.main = panel;
+      this.adopt(panel, undefined);
+      return;
+    }
+    let gone = false;
+    const closed = panel.onDidDispose(() => (gone = true));
+    const session = await this.sessions.show(memo.session);
+    closed.dispose();
+    if (gone) return;
+    if (session === undefined) return panel.dispose();
+    // The returned tab holds the place the user gave it: one opened for the
+    // same session while this one was being found gives way.
+    const opened = this.pinned.get(session.id);
+    this.pinned.set(session.id, panel);
+    opened?.dispose();
+    panel.title = session.title;
+    this.adopt(panel, session.id);
+  }
 
   /** The reaper-exemption surface: a session shown in its own window is
    * being looked at, active-pointer or not. */
@@ -281,32 +339,61 @@ export class AgentPanelHost {
     for (const [patchbaySessionId, panel] of [...this.pinned]) {
       const session = sessions.find((s) => s.id === patchbaySessionId);
       if (session === undefined) panel.dispose();
-      else if (panel.title !== session.title) panel.title = session.title;
+      else {
+        if (panel.title !== session.title) panel.title = session.title;
+        this.tell(panel, patchbaySessionId, false);
+      }
     }
   }
 
+  /** Tells a panel what it is, for the editor to keep with its tab: the
+   * one thing a returned panel can be asked. Said again only when it
+   * changed, or when its page asks (it has just loaded). */
+  private tell(panel: vscode.WebviewPanel, pinned: PatchbaySessionId | null, asked: boolean): void {
+    const memo: TabMemo = { session: pinned === null ? null : (this.sessions.nameOf(pinned) ?? null) };
+    // a session with no name yet says nothing: a panel that returned as
+    // "the whole view" would be a different thing
+    const said = pinned !== null && memo.session === null ? null : memo;
+    const key = JSON.stringify(said);
+    if (!asked && this.told.get(panel) === key) return;
+    this.told.set(panel, key);
+    panel.webview.postMessage({ kind: "tabMemo", memo: said } satisfies TabMemoMsg).then(undefined, () => {});
+  }
+
   private createPanel(title: string, pinPatchbaySessionId: PatchbaySessionId | undefined): vscode.WebviewPanel {
-    const surface = nonce();
-    const panel = boundPanel("acpPatchbay.agentPanel", title, this.channel, this.extensionUri, "agent-view", {
-      id: surface,
-      pinned: pinPatchbaySessionId,
+    const panel = vscode.window.createWebviewPanel(AgentPanelHost.VIEW_TYPE, title, vscode.ViewColumn.Active, {
+      enableScripts: true,
+      retainContextWhenHidden: true,
     });
+    this.adopt(panel, pinPatchbaySessionId);
+    return panel;
+  }
+
+  /** A panel made an agent surface: bound to the channel, reported, and
+   * forgotten when it goes. */
+  private adopt(panel: vscode.WebviewPanel, pinPatchbaySessionId: PatchbaySessionId | undefined): void {
+    const surface = nonce();
     const pinned = pinPatchbaySessionId ?? null;
+    const webview = panel.webview;
+    const asking = webview.onDidReceiveMessage((msg: ViewToHost) => {
+      if (msg.kind === "ready") this.tell(panel, pinned, true);
+    });
+    bindPanel(panel, this.channel, this.extensionUri, "agent-view", { id: surface, pinned: pinPatchbaySessionId });
     this.reportSurface(surface, { visible: panel.visible, pinned });
     panel.onDidChangeViewState(() => {
       this.reportSurface(surface, { visible: panel.visible, pinned });
-      if (panel.active && pinned !== null) this.pinnedFocused(pinned);
+      if (panel.active && pinned !== null) this.sessions.focused(pinned);
     });
     // Forgotten first, then reported gone: the report reaches every
     // listener of the view's state, this host among them (syncSessions),
     // which must not find a panel that no longer exists among its own.
     panel.onDidDispose(() => {
+      asking.dispose();
       this.floated.delete(panel);
       if (this.main === panel) this.main = null;
       if (pinned !== null && this.pinned.get(pinned) === panel) this.pinned.delete(pinned);
       this.reportSurface(surface, null);
     });
-    return panel;
   }
 
   /** The just-created panel is the active editor — moving it out gives the

@@ -18,6 +18,7 @@ export interface ExtensionInternal {
   orchestrator: Orchestrator;
   host: OrchestratorHost;
   settingsPanelHost: SettingsPanelHost;
+  agentPanelHost: AgentPanelHost;
   /** The login executor, reachable for the electron suite to drive against
    * the real task engine — it needs no agent, only a recipe. */
   runLoginTask: typeof runLoginTask;
@@ -50,9 +51,11 @@ export function activate(context: vscode.ExtensionContext): {
   // same channel as the sidebar; pinned panels follow the sessions list
   // (dispose on close, retitle on rename) and are idle-reaper exempt.
   const reportSurface: SurfaceReporter = (surface, report) => orchestrator.noteSurface(surface, report);
-  const agentPanelHost = new AgentPanelHost(context.extensionUri, orchestrator.agentView, reportSurface, (patchbaySessionId) =>
-    host.sessionTabFocused(patchbaySessionId),
-  );
+  const agentPanelHost = new AgentPanelHost(context.extensionUri, orchestrator.agentView, reportSurface, {
+    focused: (patchbaySessionId) => host.sessionTabFocused(patchbaySessionId),
+    nameOf: (patchbaySessionId) => orchestrator.sessions.pairOf(patchbaySessionId),
+    show: (name) => host.showNamed(name),
+  });
   host.pinnedSessions = () => agentPanelHost.pinnedPatchbaySessionIds();
   const agentViewProvider = new AgentViewProvider(context.extensionUri, orchestrator.agentView, reportSurface);
   const unsubscribeViewSync = orchestrator.agentView.onChange(() => {
@@ -62,6 +65,9 @@ export function activate(context: vscode.ExtensionContext): {
 
   context.subscriptions.push(
     host,
+    // The editor keeps an agent panel's tab across a restart and hands it
+    // back here, in the group and place it had.
+    vscode.window.registerWebviewPanelSerializer(AgentPanelHost.VIEW_TYPE, agentPanelHost),
     // Kept alive while hidden, as every agent surface is (webview-host.ts).
     vscode.window.registerWebviewViewProvider("acpPatchbay.agentView", agentViewProvider, {
       webviewOptions: { retainContextWhenHidden: true },
@@ -105,7 +111,7 @@ export function activate(context: vscode.ExtensionContext): {
     }),
   );
 
-  return { internal: { orchestrator, host, settingsPanelHost, runLoginTask, logUri: context.logUri } };
+  return { internal: { orchestrator, host, settingsPanelHost, agentPanelHost, runLoginTask, logUri: context.logUri } };
 }
 
 // Fires on window close, reload, disable, and uninstall alike — best-effort

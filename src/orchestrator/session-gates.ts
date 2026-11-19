@@ -104,6 +104,13 @@ export class SessionGates {
     void this.attachToView(patchbaySessionId).catch(() => {});
   }
 
+  /** A session a panel of its own shows again after a restart: attached,
+   * the view's pointer left where it is — and no connect, as for every
+   * entrance a restart makes by itself. */
+  show(patchbaySessionId: PatchbaySessionId): void {
+    void this.attachToView(patchbaySessionId).catch(() => {});
+  }
+
   /** An agent came up: each of its sessions on view sat blank, with nothing
    * to attach to — each attaches now (one already attached costs nothing).
    * Settles once they all have. */

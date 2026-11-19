@@ -221,7 +221,9 @@ in front opens its tab — Switch Session, a notice's Open, the status bar. A ro
 offers Open in new window, and no second way to open its tab. Switching to the list
 opens the session in front as a tab, so its chat stays on screen; switching back
 leaves the tabs as they are, apart from the view again. After a window reload the
-session the user was in comes back in its tab; the others reopen from the list.
+session tabs come back where they were — group, order, split — in either layout:
+the editor keeps the tabs and hands each back. A tab whose session this window
+no longer has closes.
 The title-bar *Open Agent View in New Window* mirrors the view in whichever layout
 it is in.
 

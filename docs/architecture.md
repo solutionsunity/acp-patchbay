@@ -110,7 +110,16 @@ Two webviews, a diagram page, and one near-empty native settings page:
    design deliverable; what architecture fixes now is its information boundary: it knows
    only its current snapshot + patch stream, and can only emit actions. Anything the
    layout wants to show must arrive through that pipe — which is the whole
-   rehydration guarantee.
+   rehydration guarantee. One thing is kept outside the pipe, and it is not
+   the view's: an agent view opened as an editor panel is told by its host
+   what it is — the one session it shows, by its agent and the agent's own
+   id for it, or the whole view — and hands that to the editor, which keeps
+   it with the tab and gives both back after a restart. The editor already
+   records which tabs are open and where; this is the one line it needs to
+   say which is which. The page never reads it, and the host looks the
+   session up afresh in what the agents list *(decided 2026-11-19, #133 —
+   a list of open tabs kept by patchbay would be a second record of what
+   the editor holds)*.
 2. **Settings** — agents and launch config, capability matrix, MCP servers,
    routing, permission rules. Structured data, low frequency, same render-only
    contract.

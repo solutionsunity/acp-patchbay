@@ -9,9 +9,10 @@
   as an editor tab. You see which session is running, finished or waiting
   on you while you work in another, and each chat gets the editor's
   width. The chat layout stays the default and loses nothing; the choice
-  is also in Preferences and the command palette. After a window reload
-  the session you were in comes back in its tab; reopen the others from
-  the list. (#133)
+  is also in Preferences and the command palette. (#133)
+- **Session tabs come back after a window reload**, where they were:
+  same group, same order, same split — in either layout. A tab whose
+  session is no longer there closes. (#133)
 - **A session opens in an editor tab, as well as in a new window.** A
   session's row has **Open in tab** beside **Open in new window** — as
   icons while the row has the room, and in its ⋯ menu always — so several

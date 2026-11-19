@@ -32,7 +32,7 @@ import { EditorStateHost } from "./editor-state-host";
 import { runLoginTask } from "./login-task";
 import { SelfVersionHost } from "./self-version-host";
 import { agentErrorText } from "./readers/agent-error";
-import type { ExportPart } from "../shared/protocol";
+import type { ExportPart, SessionName } from "../shared/protocol";
 import { normalizeRootPath } from "./sessions-store";
 import { openDiagramPanel } from "./webview-host";
 import {
@@ -96,6 +96,10 @@ export class OrchestratorHost {
   private inFront: { now: PatchbaySessionId | null; before: PatchbaySessionId | null } = { now: null, before: null };
   /** The session being put in front because the user went to its tab. */
   private wentToTab: PatchbaySessionId | null = null;
+  /** Settles once every agent this window starts with has connected, or
+   * failed to. */
+  private startupConnected!: () => void;
+  private readonly startupConnects = new Promise<void>((resolve) => (this.startupConnected = resolve));
   private readonly selfVersion: SelfVersionHost;
   private readonly failureSurfaces: FailureSurfaces = {
     logCatch: (context) => this.orchestrator.logCatch(context),
@@ -314,20 +318,45 @@ export class OrchestratorHost {
    * contribution's removal — unregistered keys still surface — and the
    * store folds it into the per-agent flag. */
   private async connectStartupAgents(): Promise<void> {
-    const legacy = vscode.workspace.getConfiguration("acpPatchbay").get<string>("defaultAgent", "");
-    const sources = await this.orchestrator.agents.startupSources(legacy);
-    const pointed = this.orchestrator.lastActiveAgent();
-    let pointedSettled!: () => void;
-    const pointedConnect = new Promise<void>((resolve) => (pointedSettled = resolve));
-    const all = Promise.allSettled(
-      sources.map((source) =>
-        this.orchestrator.connectFrom(source).then((patchbayAgentId) => {
-          if (patchbayAgentId !== undefined && patchbayAgentId === pointed) pointedSettled();
-        }),
-      ),
-    );
-    await Promise.race([pointedConnect, all]);
-    await this.orchestrator.restoreLastActiveSession();
+    let all: Promise<unknown> = Promise.resolve();
+    try {
+      const legacy = vscode.workspace.getConfiguration("acpPatchbay").get<string>("defaultAgent", "");
+      const sources = await this.orchestrator.agents.startupSources(legacy);
+      const pointed = this.orchestrator.lastActiveAgent();
+      let pointedSettled!: () => void;
+      const pointedConnect = new Promise<void>((resolve) => (pointedSettled = resolve));
+      all = Promise.allSettled(
+        sources.map((source) =>
+          this.orchestrator.connectFrom(source).then((patchbayAgentId) => {
+            if (patchbayAgentId !== undefined && patchbayAgentId === pointed) pointedSettled();
+          }),
+        ),
+      );
+      await Promise.race([pointedConnect, all]);
+      await this.orchestrator.restoreLastActiveSession();
+    } finally {
+      all.then(this.startupConnected, this.startupConnected);
+    }
+  }
+
+  /** A session's tab the editor kept across a restart asks for its session
+   * by the name it kept. Found at once where its agent's list is already
+   * in; otherwise once every startup agent has answered — a session none
+   * of them lists has no tab to return to. Shown as a restart shows a
+   * session: attached, never by starting an agent the startup rules
+   * didn't. */
+  async showNamed(name: SessionName): Promise<{ id: PatchbaySessionId; title: string } | undefined> {
+    const find = () => this.orchestrator.sessions.rowFor(name.patchbayAgentId, name.sessionId);
+    let id = find();
+    if (id === undefined) {
+      await this.startupConnects;
+      await this.orchestrator.listsSynced();
+      id = find();
+    }
+    const session = this.orchestrator.agentView.current.sessions.find((s) => s.id === id);
+    if (session === undefined) return undefined;
+    this.orchestrator.sessionGates.show(session.id);
+    return { id: session.id, title: session.title };
   }
 
   /** Mirrors the detachWindows preference into a when-clause context key —

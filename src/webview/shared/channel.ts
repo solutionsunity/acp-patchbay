@@ -7,12 +7,14 @@ import {
   applyHostMessage,
   type Action,
   type HostToView,
+  type TabMemoMsg,
   type Versioned,
   type ViewToHost,
 } from "../../shared/protocol";
 
 interface VsCodeApi {
   postMessage(message: unknown): void;
+  setState(state: unknown): void;
 }
 
 declare function acquireVsCodeApi(): VsCodeApi;
@@ -33,7 +35,13 @@ export function createViewChannel<S, E>(
   const post = (msg: ViewToHost) => vscode.postMessage(msg);
 
   window.addEventListener("message", (raw: MessageEvent) => {
-    const msg = raw.data as HostToView<S, E>;
+    const msg = raw.data as HostToView<S, E> | TabMemoMsg;
+    // What this panel is, as its host says it: handed to the editor, which
+    // keeps it with the tab. Nothing here reads it back.
+    if (msg?.kind === "tabMemo") {
+      vscode.setState(msg.memo);
+      return;
+    }
     if (msg?.kind !== "snapshot" && msg?.kind !== "patch") return;
     const result = applyHostMessage(reduce, current, msg);
     switch (result.kind) {

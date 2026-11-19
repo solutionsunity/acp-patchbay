@@ -47,7 +47,9 @@
   ],
   "icon": "media/icon.png",
   "main": "./out/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onWebviewPanel:acpPatchbay.agentPanel"
+  ],
   "contributes": {
     "colors": [
       {

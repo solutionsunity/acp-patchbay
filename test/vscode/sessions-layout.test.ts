@@ -4,8 +4,10 @@
 // holds, and a session's tab stays apart from the view.
 import * as assert from "node:assert";
 import * as vscode from "vscode";
+import type { Orchestrator } from "../../src/orchestrator/orchestrator";
+import type { AgentPanelHost } from "../../src/orchestrator/webview-host";
 import { fakeAgentConfig } from "./fake-agent-config";
-import { fakeAgentPath, Patchbay } from "./patchbay";
+import { fakeAgentPath, internals, Patchbay } from "./patchbay";
 import { WINDOW_SETTLE, waitFor } from "../support/wait-for";
 
 /** The session tabs open in the window, by their titles, in tab order. */
@@ -50,6 +52,43 @@ suite("sessions layout: the list, each chat in a tab", () => {
       assert.deepStrictEqual(titles().sort(), ["alpha", "beta"]);
     } finally {
       pb.act({ kind: "setPreferences", patch: { sessionsLayout: "chat" } });
+      await vscode.window.tabGroups.close(sessionTabs());
+      await pb.removeAdded();
+    }
+  });
+
+  test("a session's tab the editor kept across a restart returns to its session, and one whose session is gone closes", async function () {
+    this.timeout(60000);
+    const pb = await Patchbay.open();
+    const { orchestrator, agentPanelHost } = await internals<{ orchestrator: Orchestrator; agentPanelHost: AgentPanelHost }>();
+    // a panel as the editor hands one back: of the agent panel's type, with nothing in it yet
+    const kept = (title: string) =>
+      vscode.window.createWebviewPanel("acpPatchbay.agentPanel", title, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
+    try {
+      const agent = await pb.addAgent(fakeAgentConfig("kept", "Kept Fake", fakeAgentPath(), { turn: [{ type: "chunk", text: "ok" }] }));
+      await pb.connect(agent);
+      const gamma = await pb.newSession(agent);
+      await pb.prompt(gamma, "gamma");
+      const name = orchestrator.sessions.pairOf(gamma);
+      assert.ok(name !== undefined);
+
+      const back = kept("an older title");
+      await agentPanelHost.deserializeWebviewPanel(back, { session: name });
+      assert.deepStrictEqual(agentPanelHost.pinnedPatchbaySessionIds(), [gamma], "the returned tab is its session's panel");
+      assert.strictEqual(back.title, "gamma", "titled as the session is now");
+      // the one panel of the session: asking for its tab brings this one forward
+      await vscode.commands.executeCommand("acpPatchbay.detachSession", gamma, "tab");
+
+      let closed = 0;
+      for (const memo of [{ session: { patchbayAgentId: agent, sessionId: "no-such-session" } }, undefined, { session: 7 }]) {
+        const stray = kept("stray");
+        stray.onDidDispose(() => closed++);
+        await agentPanelHost.deserializeWebviewPanel(stray, memo);
+      }
+      await waitFor(() => closed === 3, WINDOW_SETTLE, "a tab with no session here, or nothing readable, closed");
+      // a tab's label follows its panel's title a moment later
+      await waitFor(() => titles().join() === "gamma", WINDOW_SETTLE, "only the session's own tab is left, under its title");
+    } finally {
       await vscode.window.tabGroups.close(sessionTabs());
       await pb.removeAdded();
     }
