@@ -15,6 +15,20 @@ export const LAYER_REACH: Readonly<Record<PolicyLayer, string>> = {
   machine: "every workspace on this machine",
 };
 
+/** What the switch means, at each layer — said behind its info mark. */
+export const ALWAYS_ALLOW_HELP: Readonly<Record<PolicyLayer, string>> = {
+  workspace: `On: every terminal command an agent runs through Patchbay runs without asking, in ${LAYER_REACH.workspace}. The rules, and the choice beside this, are kept and not applied. On here or for the machine, it is on here.`,
+  machine: `On: every terminal command an agent runs through Patchbay runs without asking, in ${LAYER_REACH.machine}. The rules, and the choice beside this, are kept and not applied.`,
+};
+
+const UNRULED = "What a command gets when no rule decides it — and a part of a line that can't be read, which no rule can decide. Rules apply first. Allow with deny rules is a blacklist; deny with allow rules is a whitelist.";
+
+/** What the choice means, at each layer — said behind its info mark. */
+export const UNRULED_HELP: Readonly<Record<PolicyLayer, string>> = {
+  workspace: `${UNRULED} This workspace's answer stands over this machine's; "as this machine" leaves it to the machine.`,
+  machine: `${UNRULED} A workspace may answer for itself.`,
+};
+
 /** What each answer for a command no rule decides means, in a few words. */
 export const UNRULED_MEANS: Readonly<Record<RuleVerdictView, string>> = {
   ask: "asks, as a card",

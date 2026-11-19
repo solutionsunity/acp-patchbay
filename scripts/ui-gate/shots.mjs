@@ -2998,11 +2998,19 @@ if (runs("narrow")) {
   // ── without asking (#165): the always-allow switch and the choice for a
   // command no rule decides, each at both layers; a change that lets
   // commands run unasked says so first ──
-  const alwaysCard = p.locator("[data-always-allow]");
-  const policyCard = p.locator("[data-unruled]");
-  check("[unasked] the page starts asking, and says so", (await policyCard.locator("[data-policy-summary]").innerText()).includes("a command no rule decides asks"));
-  const before = (await p.evaluate(() => window.__actions.length));
-  await alwaysCard.locator('label:has-text("This workspace") [role="switch"]').click();
+  const layerRow = (layer) => p.locator(`[data-command-policy="${layer}"]`);
+  const summary = p.locator("[data-policy-summary]");
+  const alwaysSwitch = layerRow("workspace").locator('[role="switch"]');
+  check(
+    "[unasked] each layer's rules card holds its two choices, and the page starts asking",
+    (await layerRow("workspace").count()) === 1 && (await layerRow("machine").count()) === 1 && (await summary.innerText()).includes("a command no rule decides asks"),
+  );
+  await layerRow("machine").locator('button[aria-label=\'About "Always allow commands"\']').hover();
+  await p.waitForSelector('[role="tooltip"]');
+  check("[unasked] what a choice means sits behind its info mark", (await p.locator('[role="tooltip"]').first().innerText()).includes("every workspace on this machine"));
+  await p.mouse.move(0, 0);
+  const before = await p.evaluate(() => window.__actions.length);
+  await alwaysSwitch.click();
   const warned = p.locator('[role="alertdialog"]');
   await warned.waitFor();
   check(
@@ -3017,22 +3025,21 @@ if (runs("narrow")) {
     workspace,
     effective: { alwaysAllow: machine.alwaysAllow || workspace.alwaysAllow, unruled: workspace.unruled ?? machine.unruled },
   });
+  const said = (text) => p.waitForFunction((t) => document.querySelector("[data-policy-summary]")?.textContent?.includes(t), text);
   await p.evaluate((commandPolicy) => window.__patch([{ kind: "commandPolicyChanged", commandPolicy }]), policyNow({ alwaysAllow: false, unruled: "ask" }, { alwaysAllow: true, unruled: null }));
-  await p.waitForSelector("[data-rules-set-aside]");
+  await said("every command runs without asking");
   check(
-    "[unasked] while it is on, the rules and the other choice are shown set aside, not to be worked on",
-    (await p.locator("[data-rule-cards]").getAttribute("inert")) !== null &&
-      (await policyCard.locator("[data-unruled-choices]").getAttribute("inert")) !== null &&
-      (await policyCard.locator("[data-policy-summary]").innerText()).includes("every command runs without asking"),
+    "[unasked] while it is on, both layers' rules and their other choice are shown set aside, not to be worked on — the switches still are",
+    (await p.locator("[data-rules][inert]").count()) === 2 && (await p.locator("[data-unruled][inert]").count()) === 2 && (await p.locator("[data-command-policy] [role='switch']").count()) === 2,
   );
   // off again needs no warning
-  await alwaysCard.locator('label:has-text("This workspace") [role="switch"]').click();
+  await alwaysSwitch.click();
   const turnedOff = await lastAction("setAlwaysAllowCommands");
   check("[unasked] turning it off asks nothing", turnedOff?.on === false && (await warned.count()) === 0);
   await p.evaluate((commandPolicy) => window.__patch([{ kind: "commandPolicyChanged", commandPolicy }]), policyNow({ alwaysAllow: false, unruled: "ask" }, { alwaysAllow: false, unruled: null }));
-  await p.waitForSelector("[data-rules-set-aside]", { state: "detached" });
+  await said("a command no rule decides asks");
   const choose = async (label, option) => {
-    await policyCard.locator(`[aria-label="${label}"]`).click();
+    await p.locator(`[aria-label="${label}"]`).click();
     await p.locator(`[role="option"]:has-text("${option}")`).click();
   };
   await choose("When no rule decides — this machine", "deny —");
@@ -3045,7 +3052,7 @@ if (runs("narrow")) {
   const allowed = await lastAction("setUnruledCommands");
   check(`[unasked] …then is sent for the layer chosen (${JSON.stringify(allowed)})`, allowed?.layer === "workspace" && allowed.verdict === "allow");
   await p.evaluate((commandPolicy) => window.__patch([{ kind: "commandPolicyChanged", commandPolicy }]), policyNow({ alwaysAllow: false, unruled: "deny" }, { alwaysAllow: false, unruled: "allow" }));
-  await p.waitForFunction(() => document.querySelector("[data-policy-summary]")?.textContent?.includes("runs without asking (this workspace's choice)"));
+  await said("runs without asking (this workspace's choice)");
   check("[unasked] the page says how the two layers come out here", true);
   await choose("When no rule decides — this workspace", "as this machine (deny)");
   const followed = await lastAction("setUnruledCommands");

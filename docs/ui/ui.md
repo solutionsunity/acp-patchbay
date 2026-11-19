@@ -570,13 +570,14 @@ Rules for the terminal commands an agent runs through patchbay; the intro says e
 command in a line is judged and the line takes the most severe verdict, that within
 a layer deny beats ask beats allow, and that an agent's own permission requests
 carry no command a rule could match, so those always ask (decided 2026-10-17, #95
-#104). Two cards stand around the rule cards, in the order a command is judged
-(#165). Above them, **Always allow commands**: one switch per layer (this workspace,
-this machine); on, the rule cards and the last card are shown dimmed and inert under
-a line saying they are set aside. Below them, **When no rule decides**: a select per
-layer — ask, allow, deny, and for the workspace "as this machine" — with one line
-saying how the two come out here. Turning the switch on, or choosing allow, opens a
-confirm that says what will run unasked; turning off, ask and deny are saved at once.
+#104). Each layer's rules card holds that layer's two choices in one row under its
+title (#165): the **Always allow commands** switch, and **When no rule decides** — a
+select of ask, allow, deny, and for the workspace "as this machine". What each means
+sits behind an info mark beside it, as a tooltip; no card is added for them. One line
+above the rule cards says how the two layers come out here. With the switch on at
+either layer, both cards' rules and their select are shown dimmed and inert — the
+switches stay live. Turning the switch on, or choosing allow, opens a confirm that
+says what will run unasked; turning off, ask and deny are saved at once.
 While commands run unasked the Agent View's header shows an **unasked** mark: with
 the switch on a click turns it off at every layer, otherwise it opens this page.
 

@@ -8,10 +8,11 @@
 // verb per page, one subject per rules page.
 import { type ReactNode, useEffect, useState } from "react";
 import { scopeOf, withScope, type AgentScope } from "../../shared/agent-scope";
-import { ALWAYS_ALLOW_COMMANDS, matchLabel, ruleLabel, unruledVerdict, unruledWhy } from "../../shared/command-rules";
+import { matchLabel, ruleLabel, unruledVerdict, unruledWhy } from "../../shared/command-rules";
 import type { PatchbayAgentId } from "../../shared/ids";
-import { RULE_VERDICTS, type CommandJudgementView, type CommandRuleView, type RuleMatchView, type RuleVerdictView, type SettingsState, type TesterShell } from "../../shared/protocol";
-import { AlwaysAllowCard, UnruledCard } from "./command-policy";
+import { commandsRunUnasked, RULE_VERDICTS, type CommandJudgementView, type CommandRuleView, type RuleMatchView, type RuleVerdictView, type SettingsState, type TesterShell } from "../../shared/protocol";
+import { PolicyRow } from "./command-policy";
+import { policySummary } from "./command-policy-view";
 import { Icon } from "../shared/icon";
 import { filteredRules, filtering, NO_FILTER, ruleCounts, sortedRules, type RuleFilter } from "./command-rules-view";
 import { ScopeChip, ScopeChoice, scopeText } from "./rule-scope";
@@ -78,6 +79,12 @@ function CommandRulesCard(props: {
   onRemove(rule: CommandRuleView): void;
   onScope(rules: readonly CommandRuleView[], scope: AgentScope): void;
   onDraft(rule: CommandRuleView | null): void;
+  /** This layer's two choices around its rules — the always-allow switch,
+   * and what a command no rule decides gets. */
+  policyRow: ReactNode;
+  /** Every command is allowed: the rules are kept, shown, and not to be
+   * worked on. */
+  setAside: boolean;
 }) {
   const [kind, setKind] = useState<CommandRuleView["kind"]>("command");
   const [pattern, setPattern] = useState("");
@@ -107,156 +114,159 @@ function CommandRulesCard(props: {
     <div className="card">
       <h2 className="mt-0">{props.title}</h2>
       <div className="note mx-0 mt-0 mb-2">{props.note}</div>
-      {props.rules.length === 0 ? (
-        <div className="note mx-0 mt-0 mb-2">{props.emptyText}</div>
-      ) : (
-        <>
-          <div className="row mb-2" data-rule-filter>
-            <Input
-              type="text"
-              className="flex-1"
-              placeholder="Filter by pattern…"
-              aria-label="Filter rules by pattern"
-              value={filter.text}
-              onInput={(e) => setFilter({ ...filter, text: (e.target as HTMLInputElement).value })}
-            />
-            {props.agents.length > 0 && (
-              <Select value={filter.agent} onValueChange={(v) => setFilter({ ...filter, agent: v as RuleFilter["agent"] })}>
-                <SelectTrigger aria-label="Filter rules by agent">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">all rules</SelectItem>
-                  <SelectItem value="every">for every agent</SelectItem>
-                  {props.agents.map((a) => (
-                    <SelectItem key={a.id} value={a.id}>
-                      applies to {a.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-          {narrowed && (
-            <div className="row mb-2 text-xs" data-rule-shown>
-              <span className="flex-1 text-[var(--pb-text-faint)]">
-                {shown.length} of {props.rules.length} rules shown
-              </span>
-              {shown.length > 0 && props.agents.length > 0 && (
-                <ScopeChoice
-                  agents={props.agents}
-                  scope={bulk}
-                  label={`Agents for these ${shown.length}…`}
-                  title="Set which agents every rule shown applies to"
-                  onChange={setBulk}
-                  apply={{
-                    label: bulk === null ? "Choose the agents" : `Apply to ${shown.length} ${shown.length === 1 ? "rule" : "rules"}: ${scopeText(bulk, props.agents)}`,
-                    run: () => {
-                      if (bulk !== null) props.onScope(shown, bulk);
-                      setBulk(null);
-                    },
-                  }}
-                />
-              )}
-            </div>
-          )}
-          <RuleCountsGrid rules={shown} />
-        </>
-      )}
-      {/* A list grows with every "always" — hundreds of rules is real.
-          Bounded at about seven rows and scrolled within, it never pushes the
-          card after it, or its own add row, out of reach; the filter above
-          it is how a long one is worked. */}
-      <div className="max-h-[15rem] overflow-y-auto" data-rule-list>
-        {sortedRules(shown).map((r) => (
-          <div className="rule" key={`${r.kind}:${r.pattern}`}>
-            <span className={`verdict ${r.verdict}`}>{r.verdict}</span>
-            <span className="text-xs text-[var(--pb-text-faint)]">{r.kind}</span>
-            <code>{r.pattern}</code>
-            {props.agents.length > 0 && (
-              <ScopeChip agents={props.agents} scope={scopeOf(r)} of={`rule ${ruleLabel(r)}`} quiet onChange={(next) => props.onScope([r], next)} />
-            )}
-            <span
-              className="e"
-              role="button"
-              tabIndex={0}
-              aria-label={`Remove rule ${ruleLabel(r)}`}
-              onClick={() => props.onRemove(r)}
-            >
-              <Icon name="close" />
-            </span>
-          </div>
-        ))}
-      </div>
-      <div className="row mt-2.5">
-        <Select
-          value={kind}
-          onValueChange={(v) => {
-            setKind(v as CommandRuleView["kind"]);
-            if (v === "word" && verdict === "allow") setVerdict("deny");
-          }}
-        >
-          <SelectTrigger aria-label="Rule kind">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="command">Command</SelectItem>
-            <SelectItem value="word">Word</SelectItem>
-          </SelectContent>
-        </Select>
-        <Input
-          type="text"
-          placeholder={EXAMPLE[kind]}
-          className="flex-1"
-          value={pattern}
-          onInput={(e) => setPattern((e.target as HTMLInputElement).value)}
-        />
-        <Select value={verdict} onValueChange={(v) => setVerdict(v as CommandRuleView["verdict"])}>
-          <SelectTrigger aria-label="Verdict">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {kind === "command" && <SelectItem value="allow">allow</SelectItem>}
-            <SelectItem value="ask">ask</SelectItem>
-            <SelectItem value="deny">deny</SelectItem>
-          </SelectContent>
-        </Select>
-        {props.agents.length > 0 && (
-          <ScopeChoice
-            agents={props.agents}
-            scope={scope}
-            label={scopeText(scope, props.agents)}
-            title="Which agents the rule being added applies to"
-            onChange={setScope}
-          />
-        )}
-        <Button
-          size="sm"
-          disabled={rule === null}
-          onClick={() => {
-            if (rule === null) return;
-            props.onAdd(rule);
-            setPattern("");
-          }}
-        >
-          Add rule
-        </Button>
-      </div>
-      <div className="note mx-0 mb-0 mt-2">
-        {kind === "word" ? (
-          <>
-            A word matches one word wherever it sits in a command — <code>--watch</code> catches{" "}
-            <code>kubectl get pods --watch</code>, never <code>cat watch.log</code>. A word denies or
-            asks; it can&apos;t allow, since a word says nothing of what the command does with it.
-          </>
+      {props.policyRow}
+      <div className={props.setAside ? "opacity-50" : undefined} inert={props.setAside} data-rules>
+        {props.rules.length === 0 ? (
+          <div className="note mx-0 mt-0 mb-2">{props.emptyText}</div>
         ) : (
           <>
-            A command pattern matches one command&apos;s whole text, <code>*</code> matching anything.
-            An allow rule trusts the command itself: the agent chooses the directory and environment
-            it runs in (cwd, PATH, other variables), and those can change what the command does. The
-            approval card shows them; a rule doesn&apos;t look at them.
+            <div className="row mb-2" data-rule-filter>
+              <Input
+                type="text"
+                className="flex-1"
+                placeholder="Filter by pattern…"
+                aria-label="Filter rules by pattern"
+                value={filter.text}
+                onInput={(e) => setFilter({ ...filter, text: (e.target as HTMLInputElement).value })}
+              />
+              {props.agents.length > 0 && (
+                <Select value={filter.agent} onValueChange={(v) => setFilter({ ...filter, agent: v as RuleFilter["agent"] })}>
+                  <SelectTrigger aria-label="Filter rules by agent">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">all rules</SelectItem>
+                    <SelectItem value="every">for every agent</SelectItem>
+                    {props.agents.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        applies to {a.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            {narrowed && (
+              <div className="row mb-2 text-xs" data-rule-shown>
+                <span className="flex-1 text-[var(--pb-text-faint)]">
+                  {shown.length} of {props.rules.length} rules shown
+                </span>
+                {shown.length > 0 && props.agents.length > 0 && (
+                  <ScopeChoice
+                    agents={props.agents}
+                    scope={bulk}
+                    label={`Agents for these ${shown.length}…`}
+                    title="Set which agents every rule shown applies to"
+                    onChange={setBulk}
+                    apply={{
+                      label: bulk === null ? "Choose the agents" : `Apply to ${shown.length} ${shown.length === 1 ? "rule" : "rules"}: ${scopeText(bulk, props.agents)}`,
+                      run: () => {
+                        if (bulk !== null) props.onScope(shown, bulk);
+                        setBulk(null);
+                      },
+                    }}
+                  />
+                )}
+              </div>
+            )}
+            <RuleCountsGrid rules={shown} />
           </>
         )}
+        {/* A list grows with every "always" — hundreds of rules is real.
+            Bounded at about seven rows and scrolled within, it never pushes the
+            card after it, or its own add row, out of reach; the filter above
+            it is how a long one is worked. */}
+        <div className="max-h-[15rem] overflow-y-auto" data-rule-list>
+          {sortedRules(shown).map((r) => (
+            <div className="rule" key={`${r.kind}:${r.pattern}`}>
+              <span className={`verdict ${r.verdict}`}>{r.verdict}</span>
+              <span className="text-xs text-[var(--pb-text-faint)]">{r.kind}</span>
+              <code>{r.pattern}</code>
+              {props.agents.length > 0 && (
+                <ScopeChip agents={props.agents} scope={scopeOf(r)} of={`rule ${ruleLabel(r)}`} quiet onChange={(next) => props.onScope([r], next)} />
+              )}
+              <span
+                className="e"
+                role="button"
+                tabIndex={0}
+                aria-label={`Remove rule ${ruleLabel(r)}`}
+                onClick={() => props.onRemove(r)}
+              >
+                <Icon name="close" />
+              </span>
+            </div>
+          ))}
+        </div>
+        <div className="row mt-2.5">
+          <Select
+            value={kind}
+            onValueChange={(v) => {
+              setKind(v as CommandRuleView["kind"]);
+              if (v === "word" && verdict === "allow") setVerdict("deny");
+            }}
+          >
+            <SelectTrigger aria-label="Rule kind">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="command">Command</SelectItem>
+              <SelectItem value="word">Word</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input
+            type="text"
+            placeholder={EXAMPLE[kind]}
+            className="flex-1"
+            value={pattern}
+            onInput={(e) => setPattern((e.target as HTMLInputElement).value)}
+          />
+          <Select value={verdict} onValueChange={(v) => setVerdict(v as CommandRuleView["verdict"])}>
+            <SelectTrigger aria-label="Verdict">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {kind === "command" && <SelectItem value="allow">allow</SelectItem>}
+              <SelectItem value="ask">ask</SelectItem>
+              <SelectItem value="deny">deny</SelectItem>
+            </SelectContent>
+          </Select>
+          {props.agents.length > 0 && (
+            <ScopeChoice
+              agents={props.agents}
+              scope={scope}
+              label={scopeText(scope, props.agents)}
+              title="Which agents the rule being added applies to"
+              onChange={setScope}
+            />
+          )}
+          <Button
+            size="sm"
+            disabled={rule === null}
+            onClick={() => {
+              if (rule === null) return;
+              props.onAdd(rule);
+              setPattern("");
+            }}
+          >
+            Add rule
+          </Button>
+        </div>
+        <div className="note mx-0 mb-0 mt-2">
+          {kind === "word" ? (
+            <>
+              A word matches one word wherever it sits in a command — <code>--watch</code> catches{" "}
+              <code>kubectl get pods --watch</code>, never <code>cat watch.log</code>. A word denies or
+              asks; it can&apos;t allow, since a word says nothing of what the command does with it.
+            </>
+          ) : (
+            <>
+              A command pattern matches one command&apos;s whole text, <code>*</code> matching anything.
+              An allow rule trusts the command itself: the agent chooses the directory and environment
+              it runs in (cwd, PATH, other variables), and those can change what the command does. The
+              approval card shows them; a rule doesn&apos;t look at them.
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -358,7 +368,7 @@ export function CommandsSection(props: {
       <h1>Commands</h1>
       <div className="sub">
         Terminal commands an agent runs through patchbay ask first, unless a rule answers or you
-        chose otherwise in the two cards around the rules. Each
+        chose otherwise with a layer&apos;s two switches. Each
         command in a line is judged — in a chain, a loop, a <code>bash -c</code> script — and the
         line takes the most severe verdict; what the text can&apos;t show is something no rule decides. This workspace&apos;s
         rules answer first, then the machine&apos;s; within a layer deny beats ask beats allow. A
@@ -415,24 +425,22 @@ export function CommandsSection(props: {
         )}
       </div>
 
-      <AlwaysAllowCard policy={state.commandPolicy} onAlwaysAllow={props.onAlwaysAllow} onUnruled={props.onUnruled} />
+      <div className={`mb-2 text-sm${commandsRunUnasked(state.commandPolicy.effective) ? " text-warn" : ""}`} data-policy-summary>
+        {policySummary(state.commandPolicy)}
+      </div>
 
-      {setAside && (
-        <div className="note text-warn" data-rules-set-aside>
-          The rules below are set aside while &quot;{ALWAYS_ALLOW_COMMANDS}&quot; is on: every command runs.
-        </div>
-      )}
-      <div className={setAside ? "opacity-50" : undefined} inert={setAside} data-rule-cards>
       <CommandRulesCard
         title="Command rules — this workspace"
         note="Evaluated first — this repo's own tightening or loosening of the machine floor."
         rules={state.commandRules}
         agents={state.agents}
-        emptyText="No workspace rules — the machine layer (below) answers, then the choice after it."
+        emptyText="No workspace rules — the machine layer (below) answers."
         onAdd={(rule) => props.onAddRule(rule, "workspace")}
         onRemove={(rule) => props.onRemoveRule(rule, "workspace")}
         onScope={(rules, scope) => props.onScopeRules(rules, "workspace", scope)}
         onDraft={draftFrom("workspace")}
+        setAside={setAside}
+        policyRow={<PolicyRow layer="workspace" policy={state.commandPolicy} onAlwaysAllow={props.onAlwaysAllow} onUnruled={props.onUnruled} />}
       />
 
       <CommandRulesCard
@@ -440,15 +448,14 @@ export function CommandsSection(props: {
         note="The fallback floor for every workspace on this machine — consulted only where the workspace layer stays silent."
         rules={state.machineCommandRules}
         agents={state.agents}
-        emptyText="No machine rules — every unmatched command gets the choice below."
+        emptyText="No machine rules — a command no rule decides gets the choice above."
         onAdd={(rule) => props.onAddRule(rule, "machine")}
         onRemove={(rule) => props.onRemoveRule(rule, "machine")}
         onScope={(rules, scope) => props.onScopeRules(rules, "machine", scope)}
         onDraft={draftFrom("machine")}
+        setAside={setAside}
+        policyRow={<PolicyRow layer="machine" policy={state.commandPolicy} onAlwaysAllow={props.onAlwaysAllow} onUnruled={props.onUnruled} />}
       />
-      </div>
-
-      <UnruledCard policy={state.commandPolicy} onAlwaysAllow={props.onAlwaysAllow} onUnruled={props.onUnruled} />
 
       <div className="note good">
         Workspace rules live in workspaceState (per user, per workspace), machine rules in global
