@@ -5,7 +5,7 @@
 // view-model's vocabulary (`live` = the one block receiving deltas) and
 // sends its own actions — no callback threading.
 import { ReportFailure } from "../../shared/report-failure";
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import {
   DEFAULT_PREFERENCES,
   isToolCallOpen,
@@ -32,6 +32,9 @@ import { Disclosure } from "../../shared/disclosure";
 import { basename, filePathOf, splitPath } from "../../shared/path";
 import { useCopy } from "../../shared/use-copy";
 import { attachmentUri } from "../../shared/attachments-base";
+import { imageLabel } from "../../../shared/attachment-policy";
+import { Tooltip, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { ImagePreview } from "../image-preview";
 import { AgentMarkdown } from "./markdown";
 import { DiffStatText } from "./diff-stat";
 import { MENTION_LINK } from "./prompt-pieces";
@@ -58,27 +61,59 @@ function UserProse({ text }: { text: string }) {
   return <>{nodes}</>;
 }
 
-/** A pasted/attached image inside the bubble: inline preview off the
- * attachments stash where the bytes landed; a missing file (stash failed,
- * OS temp cleanup, another machine's session) degrades to a labeled chip —
- * never a broken-image glyph. */
+/** A pasted/attached image inside the bubble: one word, as in the prompt
+ * box — the picture is its token's preview, off the attachments stash
+ * where the bytes landed, on hover or focus; a click opens it whole in the
+ * editor. A missing file (stash failed,
+ * OS temp cleanup, another machine's session) leaves the word without its
+ * preview — never a broken-image glyph. The wire names no image, so
+ * neither does the bubble. */
 function ImagePart({ part }: { part: Extract<UserPart, { kind: "image" }> }) {
+  const send = useActions();
   const [broken, setBroken] = useState(false);
-  const src = part.file !== undefined ? attachmentUri(part.file) : null;
-  if (src === null || broken) {
+  const { file } = part;
+  const src = file !== undefined ? attachmentUri(file) : null;
+  // whether the copy is there is known before anyone asks for the picture:
+  // a token that can show nothing takes no focus
+  useEffect(() => {
+    if (src === null) return;
+    const probe = new Image();
+    probe.onerror = () => setBroken(true);
+    probe.src = src;
+    return () => {
+      probe.onerror = null;
+    };
+  }, [src]);
+  const word = (
+    <>
+      <Icon name="file-media" /> image
+    </>
+  );
+  if (file === undefined || src === null || broken) {
     // An image sent by address only is a link to it — never fetched into
     // the view.
     return part.uri !== undefined ? (
       <a className={`prompt-token ${LINK}`} href={part.uri} title={part.uri}>
-        <Icon name="file-media" /> image
+        {word}
       </a>
     ) : (
       <span className="prompt-token" title={part.mimeType}>
-        <Icon name="file-media" /> image
+        {word}
       </span>
     );
   }
-  return <img className="user-image" src={src} alt={part.mimeType} onError={() => setBroken(true)} />;
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button type="button" className="prompt-token cursor-pointer hover:underline" onClick={() => send({ kind: "openAttachment", file })}>
+            {word}
+          </button>
+        </TooltipTrigger>
+        <ImagePreview src={src} label={imageLabel(part.mimeType)} />
+      </Tooltip>
+    </TooltipProvider>
+  );
 }
 
 /** A labeled context snapshot (selection, problems, embedded resource) —

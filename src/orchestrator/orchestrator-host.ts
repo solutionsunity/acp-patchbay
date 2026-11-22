@@ -28,7 +28,7 @@ import { buildFailureReport, githubIssueLink } from "./failure-report";
 import { scrubPaths, type KnownFolders } from "./scrub-paths";
 import { REPORT_FAILURE, type ShownFailure } from "../shared/failure-report";
 import { ISSUES_URL, PRODUCT } from "../shared/product";
-import { chipId, fileChipLabel } from "./attachments";
+import { chipId, fileChipLabel, stashedFile } from "./attachments";
 import { diffDir } from "./diff-files";
 import { applyFileWrite } from "./client-host";
 import { configurationText, writeConfigurationFile } from "./config-export";
@@ -1205,6 +1205,12 @@ export class OrchestratorHost {
         // files panel rows and tool-call locations — absolute paths
         await this.openFileAt(action.path, action.line);
         break;
+      case "openAttachment": {
+        const path = stashedFile(action.file);
+        if (path === null) throw new Error(`${action.file} names no file in the attachments folder`);
+        await this.openFileAt(path, undefined);
+        break;
+      }
       case "openLink": {
         const target = localLinkTarget(action.href, this.orchestrator.sessions.cwdOf(action.patchbaySessionId, action.subagentId));
         if (target === null) throw new Error(`${action.href} names no file on this machine`);

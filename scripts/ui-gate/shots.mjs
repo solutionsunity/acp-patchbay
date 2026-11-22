@@ -171,12 +171,16 @@ async function page(browser, themeName, { width, height }) {
   const html = `<!DOCTYPE html><html><head>
     <meta http-equiv="Content-Security-Policy" content="${webviewCsp(ORIGIN, NONCE)}">
     <meta name="patchbay-out-base" content="${ORIGIN}/out/">
+    <meta name="patchbay-attachments-base" content="${ORIGIN}/attachments/">
     <style>:root{${THEMES[themeName]}}</style>
     <link rel="stylesheet" href="${ORIGIN}/out/codicons/codicon.css">
   </head><body class="${bodyClass(themeName)}"><div id="root"></div></body></html>`;
   await p.route(`${ORIGIN}/**`, (route) => {
     const { pathname } = new URL(route.request().url());
     if (pathname === "/") return route.fulfill({ contentType: TYPES[".html"], body: html });
+    // the attachments stash holds one picture, the one the transcript's
+    // first prompt sent — any picture will do: the extension's icon
+    if (pathname === "/attachments/shot.png") return route.fulfill({ contentType: "image/png", body: readFileSync("media/icon.png") });
     const file = pathname.startsWith("/out/") ? `out/${pathname.slice("/out/".length)}` : null;
     // a file the build didn't make is a 404, which the page reports as a
     // resource it couldn't load — a failure, like anything refused
@@ -437,6 +441,30 @@ for (const theme of themesOf("themed")) {
   const userTokens = await p.$$eval(".msg-user .prompt-token", (els) => els.map((el) => el.textContent.trim()));
   check(`[${theme}] user bubble renders the mention part as a token`, userTokens.includes("@api.ts"));
   check(`[${theme}] user bubble renders the attachment part as a chip`, userTokens.some((t) => t.includes("notes.md")));
+  // an image is a word too, its picture the token's preview — by the
+  // pointer or by the keyboard
+  check(`[${theme}] user bubble renders the image part as a token, not the picture`, userTokens.includes("image") && (await p.locator(".msg-user img").count()) === 0);
+  const image = p.locator(".msg-user .prompt-token", { hasText: "image" }).first();
+  await image.hover();
+  const hovered = await p.waitForSelector('[data-slot="tooltip-content"] img.image-preview', { timeout: 3000 }).then(() => true, () => false);
+  await settled(p);
+  await p.screenshot({ path: `${OUT}/user-image-preview-${theme}.png`, clip: await p.locator(".msg-user", { hasText: "find foo" }).boundingBox().then((b) => ({ x: 0, y: Math.max(0, b.y - 120), width: 420, height: b.height + 340 })) });
+  // the way a pointer leaves, in steps: the tooltip lets it cross to the
+  // preview, and closes on a move outside both
+  await p.mouse.move(0, 0, { steps: 10 });
+  const left = await p.waitForSelector('[data-slot="tooltip-content"]', { state: "detached", timeout: 3000 }).then(() => true, () => false);
+  await image.focus();
+  const byFocus = await p.waitForSelector('[data-slot="tooltip-content"] img.image-preview', { timeout: 3000 }).then(() => true, () => false);
+  await image.blur();
+  check(`[${theme}] a sent image token's hover and focus show the picture, and leaving closes it (${hovered}, ${left}, ${byFocus})`, hovered && left && byFocus);
+  // and a click, or Enter, asks for it whole in the editor — by its name in
+  // the stash
+  const opens = () => p.evaluate(() => window.__actions.filter((a) => a.kind === "openAttachment").map((a) => a.file));
+  await image.click();
+  await image.focus();
+  await p.keyboard.press("Enter");
+  await image.blur();
+  check(`[${theme}] a sent image token's click and Enter open the picture in the editor (${JSON.stringify(await opens())})`, JSON.stringify(await opens()) === JSON.stringify(["shot.png", "shot.png"]));
   // Copy from the transcript once the composer has held focus, and the
   // keyboard the transcript had while the body held focus: a press focuses
   // the scroller under it — the code block pressed, else the transcript.
@@ -649,7 +677,7 @@ for (const theme of themesOf("themed")) {
   );
   check(
     `[${theme}] prompts list newest first, numbered as asked (${JSON.stringify(promptRows)})`,
-    JSON.stringify(promptRows) === JSON.stringify([["2", "keep going[api.ts:12-14]"], ["1", "find foo in @api.ts and fix it@notes.md"]]),
+    JSON.stringify(promptRows) === JSON.stringify([["2", "keep going[api.ts:12-14]"], ["1", "find foo in @api.ts and fix it@notes.md[image image/png]"]]),
   );
   check(`[${theme}] a prompt shows a few lines at most`, (await p.$eval(".prompts-panel .prompt-row .words", (el) => getComputedStyle(el).webkitLineClamp)) === "3");
   await settled(p);
@@ -707,13 +735,13 @@ for (const theme of themesOf("themed")) {
   await p.waitForSelector(".prompts-panel", { state: "detached", timeout: 3000 });
   await p.waitForSelector(".prompt-editor .mention-token", { timeout: 3000 });
   const reused = await p.$eval(".prompt-editor", (el) => el.textContent);
-  check(`[${theme}] Reuse puts the words back, the mention a token again, the attached file's token at its place ("${reused}")`, reused === "find foo in @api.ts and fix it@notes.md");
+  check(`[${theme}] Reuse puts the words back, the mention a token again, the attached file's and the image's tokens at their places ("${reused}")`, reused === "find foo in @api.ts and fix it@notes.md@image");
   check(
     `[${theme}] Reuse asks the host to stage the prompt's files again, under the ids their tokens were placed with`,
     await p
       .waitForFunction(() => {
-        const token = document.querySelector(".prompt-editor .chip-token")?.dataset.chipId;
-        return window.__actions.some((a) => a.kind === "restagePromptFiles" && a.blockId === "u1" && a.patchbaySessionId === "s1" && a.chipIds.length === 1 && a.chipIds[0] === token);
+        const tokens = [...document.querySelectorAll(".prompt-editor .chip-token")].map((el) => el.dataset.chipId);
+        return window.__actions.some((a) => a.kind === "restagePromptFiles" && a.blockId === "u1" && a.patchbaySessionId === "s1" && JSON.stringify(a.chipIds) === JSON.stringify(tokens) && tokens.length === 2);
       }, null, { timeout: 3000 })
       .then(() => true, () => false),
   );
@@ -2199,13 +2227,13 @@ if (runs("attachments")) {
   check(`a staged attachment's token lands at the caret, named as the user knows it (${JSON.stringify(await tokens())})`, JSON.stringify(await tokens()) === JSON.stringify(["@xyz.go:12-34", "@shot.png"]));
   // an image token's hover shows the image; a file's says where it is
   await p.hover('.input-shell .chip-token:has-text("@shot.png")');
-  const preview = await p.waitForSelector('[data-slot="tooltip-content"] img.chip-preview', { timeout: 3000 }).then(() => true, () => false);
+  const preview = await p.waitForSelector('[data-slot="tooltip-content"] img.image-preview', { timeout: 3000 }).then(() => true, () => false);
   await p.hover(".hdr");
   const closed = await p.waitForSelector('[data-slot="tooltip-content"]', { state: "detached", timeout: 3000 }).then(() => true, () => false);
   check(`an image token's hover shows the image, and leaving it closes the preview (${preview}, ${closed})`, preview && closed);
   // the keyboard's way to it: the caret right after the token shows it too
   await p.keyboard.press("ArrowLeft");
-  const byCaret = await p.waitForSelector('[data-slot="tooltip-content"] img.chip-preview', { timeout: 3000 }).then(() => true, () => false);
+  const byCaret = await p.waitForSelector('[data-slot="tooltip-content"] img.image-preview', { timeout: 3000 }).then(() => true, () => false);
   await p.keyboard.press("ArrowRight");
   const caretLeft = await p.waitForSelector('[data-slot="tooltip-content"]', { state: "detached", timeout: 3000 }).then(() => true, () => false);
   check(`the caret right after an image token shows the image, and moving on closes it (${byCaret}, ${caretLeft})`, byCaret && caretLeft);

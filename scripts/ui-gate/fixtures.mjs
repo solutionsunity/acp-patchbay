@@ -11,8 +11,8 @@ const tool = (id, over = {}) => ({
 /** Interleaved transcript: markdown+code+mermaid (valid & broken), thought,
  * grouped tool run, denied call, turn metadata, math/RTL/CJK/table. */
 export const chatTranscript = [
-  // parts model: prose + a mention token + an attachment chip — the shot
-  // gates the part renderers, not just plain text
+  // parts model: prose + a mention token + an attachment chip + an image
+  // token — the shot gates the part renderers, not just plain text
   {
     kind: "user", id: "u1",
     parts: [
@@ -20,6 +20,7 @@ export const chatTranscript = [
       { kind: "mention", name: "api.ts", uri: "file:///ws/src/api.ts" },
       { kind: "text", text: " and fix it" },
       { kind: "attachment", name: "notes.md", path: "/ws/notes.md" },
+      { kind: "image", mimeType: "image/png", file: "shot.png" },
     ],
   },
   {

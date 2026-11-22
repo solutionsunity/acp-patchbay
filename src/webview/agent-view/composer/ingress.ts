@@ -11,7 +11,7 @@
 // the image chip's mimeType be a required field with no defaults anywhere:
 // type and bytes are proven to match at the moment they enter, and
 // nowhere later.
-import { classify, refusalMessage, unreadableMessage } from "../../../shared/attachment-policy";
+import { classify, imageLabel, refusalMessage, unreadableMessage } from "../../../shared/attachment-policy";
 
 export interface IngestedImage {
   base64: string;
@@ -53,7 +53,7 @@ export async function ingestFiles(
           out.images.push({
             base64: await toBase64(file),
             mimeType: file.type,
-            label: file.name !== "" ? `Image: ${file.name}` : `Image (${file.type})`,
+            label: imageLabel(file.type, file.name),
           });
           break;
         case "image-reencode": {
@@ -71,7 +71,7 @@ export async function ingestFiles(
             out.images.push({
               base64: await toBase64(png),
               mimeType: "image/png",
-              label: file.name !== "" ? `Image: ${file.name}` : "Image (image/png)",
+              label: imageLabel("image/png", file.name),
             });
           }
           break;

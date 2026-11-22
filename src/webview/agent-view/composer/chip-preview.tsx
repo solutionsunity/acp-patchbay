@@ -1,19 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// An image token's preview: the image itself. In the box an image is one
-// word, and two pasted screenshots read the same — the picture is what
-// tells them apart. A tooltip of the shared layer, opened by the pointer
-// resting on the token, or by the caret standing right after it (the
-// keyboard's way to the same picture): the token is the editor's own
-// element, not one React renders, so the tooltip is anchored to a stand-in
-// laid over it.
+// A staged image token's preview, opened by the pointer resting on the
+// token, or by the caret standing right after it (the keyboard's way to the
+// same picture): the token is the editor's own element, not one React
+// renders, so the tooltip is anchored to a stand-in laid over it.
 import { useEffect, useState } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getSelection, $isElementNode, $isRangeSelection, $isTextNode, type LexicalEditor } from "lexical";
 import type { ContextChip } from "../../../shared/protocol";
 import { $isChipNode, type ChipNode } from "./nodes";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Tooltip, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { ImagePreview } from "../image-preview";
 
 /** The chip token the caret stands right after, in a box that has the
  * keyboard — null anywhere else. */
@@ -100,10 +98,7 @@ export function ChipPreview({ chips }: { chips: readonly ContextChip[] }) {
         <TooltipTrigger asChild>
           <span aria-hidden className="pointer-events-none fixed" style={{ left, top, width, height }} />
         </TooltipTrigger>
-        <TooltipContent side="top" className="p-1">
-          <img className="chip-preview" src={`data:${chip.mimeType};base64,${chip.content}`} alt={chip.label} />
-          <div className="px-1 pt-1">{chip.label}</div>
-        </TooltipContent>
+        <ImagePreview src={`data:${chip.mimeType};base64,${chip.content}`} label={chip.label} />
       </Tooltip>
     </TooltipProvider>
   );

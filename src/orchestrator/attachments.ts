@@ -12,10 +12,18 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { wireImageExtension } from "../shared/attachment-policy";
 
 export const ATTACHMENTS_DIR = join(tmpdir(), "acp-patchbay-attachments");
+
+/** Where a file named in the stash is — null for a name that isn't one
+ * file's own name there: empty, a dot, or reaching through a separator. */
+export function stashedFile(fileName: string): string | null {
+  return fileName === "" || fileName === "." || fileName === ".." || basename(fileName) !== fileName || fileName.includes("\\")
+    ? null
+    : join(ATTACHMENTS_DIR, fileName);
+}
 
 /** Context-chip id mint. A staged chip is saved with its session, so it
  * outlives the window, and a chip names its stash file in the one folder

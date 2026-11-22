@@ -92,6 +92,7 @@ export const ACTION_FAILURE: Readonly<Record<Action["kind"], string | null>> = {
   openToolCallDiff: "The diff didn't open",
   openDiagram: "The diagram didn't open",
   openFile: "The file didn't open",
+  openAttachment: "The image didn't open",
   openLink: "The link didn't open",
   addContextRoot: "The folder wasn't added",
   removeContextRoot: "The folder wasn't removed",

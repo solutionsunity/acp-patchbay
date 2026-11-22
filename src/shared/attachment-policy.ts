@@ -51,6 +51,12 @@ export function refusalMessage(name: string, size: number, maxBytes: number): st
   return `${name}: ${mb(size)} MB exceeds the ${mb(maxBytes)} MB attachment limit (Settings → Preferences)`;
 }
 
+/** What an image goes by: its file's name where it came with one, its type
+ * where not — a paste, or a sent prompt's image, which the wire names not. */
+export function imageLabel(mimeType: string, name = ""): string {
+  return name !== "" ? `Image: ${name}` : `Image (${mimeType})`;
+}
+
 /** Where a folder goes instead: the composer takes one only by picking it. */
 export const FOLDER_PICK_HINT = "A folder is attached with + › Attach folder…";
 

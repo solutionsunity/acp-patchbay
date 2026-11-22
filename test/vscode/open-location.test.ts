@@ -2,13 +2,14 @@
 // agent named — cursor on that line's first non-blank character — clamped
 // into the file, and a directory location never opens as a folder.
 import * as assert from "node:assert";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as vscode from "vscode";
 import { Patchbay } from "./patchbay";
 import { focusNote } from "./focus-note";
 import { WINDOW_SETTLE, waitFor } from "../support/wait-for";
 import { tempDir } from "./temp-dir";
+import { ATTACHMENTS_DIR } from "../../src/orchestrator/attachments";
 
 /** Waits for the active editor to show `path` with the cursor at
  * [line, character]. `vscode.open` makes the editor active before it
@@ -30,6 +31,20 @@ async function assertCursor(path: string, line: number, character: number): Prom
     }
     assert.deepStrictEqual(seen, [line, character], `cursor in ${path}`);
   });
+}
+
+/** A 1×1 PNG. */
+const DOT_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+
+/** Whether a tab shows `path` — found by the file its input holds, or by
+ * the active tab's name where VS Code gives an extension no input for the
+ * editor (its image editor, since 1.144). */
+function tabShows(path: string, name: string): boolean {
+  const opened = vscode.window.tabGroups.all
+    .flatMap((g) => g.tabs)
+    .some((t) => (t.input as { uri?: vscode.Uri } | undefined)?.uri?.fsPath === path);
+  const active = vscode.window.tabGroups.activeTabGroup.activeTab;
+  return opened || (active !== undefined && active.input === undefined && active.label === name);
 }
 
 suite("open a tool-call location (issue #41)", () => {
@@ -69,24 +84,25 @@ suite("open a tool-call location (issue #41)", () => {
     // Agents report reads of images with line 1; the line has no text to land in.
     const pb = await Patchbay.open();
     const png = join(dir, "dot.png");
-    await writeFile(
-      png,
-      Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
-        "base64",
-      ),
-    );
+    await writeFile(png, Buffer.from(DOT_PNG, "base64"));
     pb.act({ kind: "openFile", path: png, line: 1 });
-    // The tab, found by the file its input holds — or by the active tab's
-    // name where VS Code gives an extension no input for the editor (its
-    // image editor, since 1.144).
-    await waitFor(() => {
-      const opened = vscode.window.tabGroups.all
-        .flatMap((g) => g.tabs)
-        .some((t) => (t.input as { uri?: vscode.Uri } | undefined)?.uri?.fsPath === png);
-      const active = vscode.window.tabGroups.activeTabGroup.activeTab;
-      return opened || (active !== undefined && active.input === undefined && active.label === "dot.png");
-    }, WINDOW_SETTLE);
+    await waitFor(() => tabShows(png, "dot.png"), WINDOW_SETTLE);
+  });
+
+  // #176: a sent image's token opens the picture whole, by its name in the
+  // stash — the view never knows where the stash is.
+  test("an image of the transcript opens in the editor by its name in the stash", async () => {
+    const pb = await Patchbay.open();
+    await mkdir(ATTACHMENTS_DIR, { recursive: true });
+    const name = `open-attachment-${Date.now()}.png`;
+    const png = join(ATTACHMENTS_DIR, name);
+    await writeFile(png, Buffer.from(DOT_PNG, "base64"));
+    try {
+      pb.act({ kind: "openAttachment", file: name });
+      await waitFor(() => tabShows(png, name), WINDOW_SETTLE);
+    } finally {
+      await rm(png, { force: true });
+    }
   });
 
   // #171: the folder is outside the test window's workspace (it has none),

@@ -104,7 +104,9 @@ primitive layer, not the component styling. So the rule:
   trigger is not React's: a token in the prompt box is the editor's own
   element, so an image token's hover preview anchors its `Tooltip` to a
   stand-in laid over the token, opened while the pointer rests on it —
-  Radix still places, bounds and portals it (2026-11-17, #163).
+  Radix still places, bounds and portals it (2026-11-17, #163). A sent
+  image's token in the bubble is React's, so it is the preview's trigger
+  itself; both render the one preview (2026-11-22, #176).
 
 - **No control keeps its click to itself.** An open popover or dialog reads
   a click whose propagation the page stopped as handled by the page, and

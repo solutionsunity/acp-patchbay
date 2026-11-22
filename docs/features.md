@@ -177,7 +177,9 @@ deliverable.
 - When the agent maintains a task list / plan of more than one task, the
   user can follow it live alongside the chat.
 - User can paste an image and any agent receives it in the best form it supports —
-  paste is never disabled.
+  paste is never disabled. A sent prompt shows the image as a token among its
+  words, as the prompt box did; hovering or focusing the token shows the
+  picture, and clicking it opens the picture whole in the editor *(#176)*.
 - User can attach files by paste, by picker, or by dropping from the OS with
   Shift held (without Shift, VS Code takes the drop for itself). The picker
   links files or a folder from anywhere on disk, where they are — a pick is

@@ -1176,7 +1176,7 @@ body {
 }
 
 /* An image token's hover preview: bounded, whatever the image's size. */
-.chip-preview {
+.image-preview {
   display: block;
   max-width: 100%;
   max-height: 180px;
@@ -1200,17 +1200,6 @@ body {
   color: inherit;
   background: transparent;
   border-color: var(--pb-bubble-rule);
-}
-
-/* Image part: inline preview off the attachments stash — bounded, its own
- * line, never dominating the bubble. */
-.msg-user .user-image {
-  display: block;
-  max-width: 100%;
-  max-height: 220px;
-  margin: 4px 0;
-  border-radius: 4px;
-  border: 1px solid var(--pb-bubble-rule);
 }
 
 /* Context part body: the bounded snapshot, monospace, scrolling past its

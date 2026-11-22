@@ -28,6 +28,11 @@ suite("a failed action", () => {
     await waitFor(() => shown.some((s) => s.startsWith("The file didn't open — ")), WINDOW_SETTLE, "the warning");
   });
 
+  test("an image the stash doesn't hold: says it didn't open", async () => {
+    (await Patchbay.open()).act({ kind: "openAttachment", file: "../outside.png" });
+    await waitFor(() => shown.some((s) => s.startsWith("The image didn't open — ")), WINDOW_SETTLE, "the warning");
+  });
+
   test("a command rule whose save fails: says it wasn't saved, and why", async () => {
     const { orchestrator } = await internals<{ orchestrator: Orchestrator }>();
     const setCommandRules = orchestrator.setCommandRules.bind(orchestrator);

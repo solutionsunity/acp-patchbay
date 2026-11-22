@@ -44,6 +44,7 @@ import {
   type McpFailureView,
 } from "../shared/protocol";
 import { ATTACHMENTS_DIR, chipId, fileChipLabel, imageFileName, readBase64, stashPreview } from "./attachments";
+import { imageLabel } from "../shared/attachment-policy";
 import {
   applyConfigUpdate,
   applyModeUpdate,
@@ -1802,7 +1803,7 @@ export class SessionsStore {
             await this.addContext(patchbaySessionId, {
               id,
               kind: "image",
-              label: `Image (${part.mimeType})`,
+              label: imageLabel(part.mimeType),
               content,
               mimeType: part.mimeType,
             });

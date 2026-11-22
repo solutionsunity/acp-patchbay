@@ -383,6 +383,10 @@ export type Action =
    * files-panel rows (the view never touches fs). `line` is the location's
    * 1-based line — absent opens at the top. */
   | { kind: "openFile"; path: string; line?: number }
+  /** Open an image of the transcript in the editor, by its name in the
+   * attachments stash — the view knows the name, never where the stash
+   * is. */
+  | { kind: "openAttachment"; file: string }
   /** Open a local link in agent text — a path or a file: URI, as the agent
    * wrote it. The host resolves it against where that transcript's agent
    * works (a sub-agent's when `subagentId`), which the view doesn't know. */
