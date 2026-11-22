@@ -1432,7 +1432,8 @@ The differentiator (the PRD's current-release scope), shipped complete:
   cwd with no folder open is not one), the roots added to the session, the
   temp dir, folders the user added. An agent's own edit
   request is judged by every file it names — its locations and each diff's
-  path; one outside asks. The gate
+  path; one outside asks. Its own read request is judged the same way, by
+  its locations: a place a write goes unasked is one a read does too. The gate
   holds its pending slot before it reads the disk, so a turn stopped mid-judge
   still answers the request. Every "no" on the client side — a rejected write
   or command, a turn stopped under an open card, a missing file — is answered
@@ -1759,9 +1760,12 @@ supplies each agent in its own standard — and ACP carries no channel for it
   command rules (workspace rules, then machine rules) and file-write scope.
   A second, differently-scrutinized approval surface is exactly what a malicious
   prompt would target. An agent's own `session/request_permission` is judged only
-  when it is an edit — by the file-write scope over every file it names: the
-  locations it reports and the path of each diff it carries, the write's own
-  target. Command rules apply where the command actually runs
+  when it is an edit or a read — by the file-write scope over every file it
+  names: the locations it reports and the path of each diff it carries, the
+  write's own target (decided 2026-11-22, #177: a read is judged as a write
+  would be — reads are never asked about where writes are not, and never
+  freer than writes elsewhere). Any other kind asks: a delete, a move, a
+  command does more than write where it names. Command rules apply where the command actually runs
   (`terminal/create`). **An agent's own execute request is out of scope in
   ACP v1** (decided 2026-10-17, #95): v1 gives a permission request no
   structure for a command — what an agent sends sits in `rawInput`, whose

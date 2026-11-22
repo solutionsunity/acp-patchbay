@@ -268,8 +268,10 @@ export class PermissionBroker {
    * and, held while the card is open, the full texts of each change it
    * carries (`proposals`), which the diff editor opens. An
    * edit is judged by every file it names — the locations it reports and
-   * the path of each diff it carries, the write's own target; any other kind
-   * carries nothing a rule can judge, so it asks. A rule's allow picks the
+   * the path of each diff it carries, the write's own target. A read is
+   * judged the same way: a place the agent may write without asking it may
+   * read without asking. Any other kind asks — a delete, a move, a command
+   * does more than write where it names. A rule's allow picks the
    * agent's own allow-once option, and the card shows the call settled by
    * the rule; an agent that offers none is asked. An
    * aborted `signal` (the agent withdrew the request) settles the card as
@@ -280,7 +282,7 @@ export class PermissionBroker {
     signal?: AbortSignal,
   ): Promise<{ optionId: string } | { cancelled: true }> {
     const { title, call, options, proposals } = request;
-    const files = call.toolKind === "edit" ? [...new Set([...call.locations.map((l) => l.path), ...Object.keys(call.diffs)])] : [];
+    const files = call.toolKind === "edit" || call.toolKind === "read" ? [...new Set([...call.locations.map((l) => l.path), ...Object.keys(call.diffs)])] : [];
     // The place is held before the judge reads the disk: a turn stopped
     // meanwhile answers this request too, before any card was shown.
     const { id, ending } = this.asks.open(requester, "permission", { tool: title, files });

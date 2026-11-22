@@ -384,7 +384,8 @@ deliverable.
 - File writes are approved without asking in the places the user picks: the
   workspace (on by default), the roots added to a session, the temp dir, and
   any folder they add — each set for this machine and, where one project needs it
-  otherwise, overridden for that workspace alone. Always ask sets every
+  otherwise, overridden for that workspace alone. An agent asking to read
+  a file in one of those places is answered the same way. Always ask sets every
   place aside without forgetting it.
 
 ### Configuration placement

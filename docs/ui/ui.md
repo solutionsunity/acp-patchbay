@@ -545,7 +545,8 @@ import" — with only `Close`.
 ### Edits
 
 Where an agent's file writes — through patchbay's own write gate, or the edit asks it
-sends itself — are approved without asking, in two cards. Each answer shows the
+sends itself — are approved without asking, in two cards; the read asks it sends go
+by the same places. Each answer shows the
 agents it is for — "all agents" unless it names some — on a control that changes
 them (#154); an agent an answer doesn't name goes by the next answer down. *File writes — this
 machine* lists every place, each with its switch — *Always ask* first, then
@@ -566,7 +567,7 @@ every other row is dimmed and kept as set, both `Add folder…` buttons are disa
 and the note says so; `Add exception` stays open — it is how one workspace lifts the
 mute. The note: writes
 surface as diffs regardless, judged by where a write lands; approved places also
-answer an agent's own edit asks over the mode picked for the session, and anywhere
+answer an agent's own edit and read asks over the mode picked for the session, and anywhere
 else each agent's mode decides. The placement statement in green: **this machine's
 list and this workspace's exceptions live in developer-owned storage, never in the
 repo; a cloned repository cannot arrive pre-authorized.**

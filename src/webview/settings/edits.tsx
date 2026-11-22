@@ -123,7 +123,7 @@ function WriteScopeCards(props: {
           the saved roots it started with and any added since. A write is judged by where it lands
           — links and <code>..</code> followed — and surfaces as a diff either way: auto-approve
           only changes who clicks, not what is visible. Approved places also answer an agent&apos;s
-          own edit asks for you, over the mode you picked for the session; anywhere else, each
+          own edit and read asks for you, over the mode you picked for the session; anywhere else, each
           agent&apos;s mode decides when you are asked. An answer applies to every agent unless it
           names the agents it is for: any other agent goes by the next answer down.
         </div>
@@ -223,7 +223,8 @@ export function EditsSection(props: {
       <h1>Edits</h1>
       <div className="sub">
         File writes an agent makes — through patchbay&apos;s own write gate, or the edit asks it
-        sends itself — are approved without asking in the places below; anywhere else they ask.
+        sends itself — are approved without asking in the places below, and so are the reads
+        it asks about there; anywhere else they ask.
         An agent whose own mode decides for itself sends no ask at all, so a write it makes
         that way reaches neither these places nor you — the agent&apos;s mode chooses what it
         asks about. Every write it asks about shows as a diff either way.

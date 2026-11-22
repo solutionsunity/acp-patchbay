@@ -301,7 +301,7 @@ async function cardOf(
   });
 }
 
-describe("PermissionBroker.resolveAgentPermissionRequest — an edit is judged by every file it names", () => {
+describe("PermissionBroker.resolveAgentPermissionRequest — an edit or a read is judged by every file it names", () => {
   const options = [
     { optionId: "y", label: "Allow", kind: "allow_once" as const },
     { optionId: "n", label: "Reject", kind: "reject_once" as const },
@@ -318,7 +318,30 @@ describe("PermissionBroker.resolveAgentPermissionRequest — an edit is judged b
     expect(events.find((e) => e.kind === "permissionResolved")).toMatchObject({ label: "Allowed", auto: true });
   });
 
-  it("only an edit is judged by its locations — any other kind asks, even when every one is inside", async () => {
+  it("a read is judged as a write would be — where writes go unasked, so do reads (#177)", async () => {
+    const { broker, rules, events } = harness();
+    await rules.set({ commandRules: [], writeScope: [{ location: { kind: "temp" }, on: true }] });
+    const inTemp = [join(tmpdir(), "ref801", "MIR - 00801.pdf")];
+    await expect(broker.resolveAgentPermissionRequest({ patchbaySessionId: "s1" as PatchbaySessionId }, request("Read", "read", inTemp, options))).resolves.toEqual({
+      optionId: "y",
+    });
+    expect(events.find((e) => e.kind === "permissionResolved")).toMatchObject({ label: "Allowed", auto: true });
+  });
+
+  it("a read outside every place, or under always ask, asks — reads are never freer than writes", async () => {
+    const outside = harness();
+    const pending = outside.broker.resolveAgentPermissionRequest({ patchbaySessionId: "s1" as PatchbaySessionId }, request("Read", "read", ["/etc/passwd"], options));
+    outside.asks.answerOption((await cardOf(outside.events, pending)).patchbayAskId, "n");
+    await expect(pending).resolves.toEqual({ optionId: "n" });
+
+    const muted = harness();
+    await muted.rules.set({ commandRules: [], writeScope: [{ location: { kind: "alwaysAsk" }, on: true }] });
+    const inside = muted.broker.resolveAgentPermissionRequest({ patchbaySessionId: "s1" as PatchbaySessionId }, request("Read", "read", [join(workspaceRoot, "a.ts")], options));
+    muted.asks.answerOption((await cardOf(muted.events, inside)).patchbayAskId, "n");
+    await expect(inside).resolves.toEqual({ optionId: "n" });
+  });
+
+  it("only an edit or a read is judged by its locations — any other kind asks, even when every one is inside", async () => {
     const { broker, asks, events } = harness();
     const pending = broker.resolveAgentPermissionRequest({ patchbaySessionId: "s1" as PatchbaySessionId }, request("Delete", "delete", [join(workspaceRoot, "a.ts")], options));
     const asked = await cardOf(events, pending);

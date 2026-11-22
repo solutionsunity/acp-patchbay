@@ -182,7 +182,7 @@ block and shows as the card icon's tooltip: the card names the call by its
 | Duty | Verdict | Notes |
 |---|---|---|
 | Respond with `selected` / `cancelled` | ✅ | `broker.ts:resolveAgentPermissionRequest`; dismissal → `{ cancelled: true }`. |
-| The tool call being asked about | ✅ | Read by the one tool-call reader (`readers/permission.ts` → `readers/tool-call.ts`) — the same reading as the session's `tool_call_update` — and shown over what the transcript holds for that `toolCallId`: its files (each diff openable), its content, and its raw input, open while pending. An edit is judged by every location and every diff path it carries. |
+| The tool call being asked about | ✅ | Read by the one tool-call reader (`readers/permission.ts` → `readers/tool-call.ts`) — the same reading as the session's `tool_call_update` — and shown over what the transcript holds for that `toolCallId`: its files (each diff openable), its content, and its raw input, open while pending. An edit is judged by every location and every diff path it carries; a read, by every location. |
 | The agent withdrawing a request (`$/cancel_request`) | ✅ | The card settles as withdrawn and the request is answered `-32800`; a later click answers nothing. |
 | Option kinds inform UI | ✅ | allow/reject × once/always rendered distinctly. |
 | Auto-resolution per user settings (MAY) | ✅ | Broker rules; a request a rule allows still shows its card, settled by the rule; per the capability rule, an auto-*rejection* is patchbay's own gate working and never marks the agent suspect. |
