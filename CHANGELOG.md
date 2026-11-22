@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0.1 — 2026-11-22
+
+A read where writes are auto-approved no longer asks, and a sent image is a
+token that opens whole on click.
+
+- **A read goes unasked wherever writes do.** An agent asking to read a file
+  in a place the File writes settings approve without asking — Temp,
+  Workspace, a session root, a folder you added — used to put a card in
+  front of you anyway. It is now approved like a write there. Anywhere else,
+  and under Always ask, reads still ask; a delete, a move or a command still
+  asks everywhere. (#177)
+- **A sent image is a token, as in the prompt box.** A sent prompt used to
+  show each image as the full picture in its bubble. It now shows the same
+  token as the prompt box: hovering or focusing it shows the picture, and a
+  click (or Enter) opens it whole in an editor tab, where VS Code's image
+  viewer zooms it. (#176)
+
 ## 1.0.0 — 2026-11-20
 
 1.0.0 numbers what Patchbay has been for some time. New: sessions as a list
