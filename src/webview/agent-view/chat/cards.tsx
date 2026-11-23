@@ -31,10 +31,13 @@ export function PermissionCard({
   const send = useActions();
   const pending = block.resolution === null;
   const changes = Object.entries(block.call?.diffs ?? {});
+  // The agent writes these labels, at any length: one wraps rather than
+  // being cut, since what the user grants is read whole before granting it.
   const options = block.options.map((o) => (
     <Button
       key={o.optionId}
       size="sm"
+      className="h-auto min-h-8 max-w-full whitespace-normal py-1.5 text-start"
       variant={o.kind === "allow_once" ? "default" : o.kind.startsWith("reject") ? "destructive" : "outline"}
       onClick={() => send({ kind: "resolvePermission", patchbayAskId: block.id, optionId: o.optionId })}
     >
