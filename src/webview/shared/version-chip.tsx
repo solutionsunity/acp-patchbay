@@ -10,7 +10,10 @@
 import type { VersionChip as VersionChipState } from "./agent-work";
 import { Icon } from "./icon";
 
-const CHIP = "flex-none rounded-full border px-1.5 text-[11px]";
+// a version may run long ("0.36.0 (commit 7c61e5bb)"): every chip is capped —
+// and never wider than its row — its text cut short, whole in the tooltip
+const CHIP = "max-w-[min(10rem,100%)] flex-none rounded-full border px-1.5 text-[11px]";
+const TEXT = "min-w-0 truncate";
 const ACTION = `${CHIP} flex cursor-pointer items-center gap-1 border-warn/40 text-warn hover:bg-muted disabled:cursor-default disabled:hover:bg-transparent`;
 
 export function VersionChip(props: { agentName: string; chip: VersionChipState; onUpgrade(): void }) {
@@ -19,19 +22,21 @@ export function VersionChip(props: { agentName: string; chip: VersionChipState; 
     case "moving":
       return (
         <button type="button" className={ACTION} title={`${agentName}: ${chip.text}`} aria-label={`${agentName} ${chip.text}`} disabled>
-          <Icon name="loading" spin /> {chip.text}
+          <Icon name="loading" spin /> <span className={TEXT}>{chip.text}</span>
         </button>
       );
     case "update":
       return (
         <button type="button" className={ACTION} title={chip.title} aria-label={`Upgrade ${agentName} to ${chip.to}`} onClick={props.onUpgrade}>
-          <Icon name="arrow-circle-up" /> {chip.from} → {chip.to}
+          <Icon name="arrow-circle-up" />
+          <span className={TEXT}>
+            {chip.from} → {chip.to}
+          </span>
         </button>
       );
     case "version":
       return (
-        // a reported version may run long ("0.36.0 (commit 7c61e5bb)"): cut, whole in the tooltip
-        <span className={`${CHIP} max-w-40 truncate border-border text-muted-foreground`} title={chip.title}>
+        <span className={`${CHIP} truncate border-border text-muted-foreground`} title={chip.title}>
           {chip.shown}
         </span>
       );
