@@ -86,7 +86,9 @@ export function SearchPicker(props: {
   const selected = props.entries.find((r) => r.id === props.selectedId);
 
   return (
-    <div className="flex items-center gap-1.5">
+    // never wider than its row: the trigger shrinks from its 18rem, a long
+    // chosen name ending in an ellipsis
+    <div className="flex min-w-0 max-w-full items-center gap-1.5">
       <Popover
         open={open}
         onOpenChange={(next) => {
@@ -100,9 +102,9 @@ export function SearchPicker(props: {
             size="sm"
             role="combobox"
             aria-expanded={open}
-            className="w-72 max-w-full justify-between font-normal"
+            className="w-72 min-w-0 max-w-full justify-between font-normal"
           >
-            {selected !== undefined ? selected.name : props.placeholder}
+            <span className="min-w-0 truncate">{selected !== undefined ? selected.name : props.placeholder}</span>
             <Icon name="chevron-down" />
           </Button>
         </PopoverTrigger>
