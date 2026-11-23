@@ -3404,6 +3404,65 @@ if (runs("narrow")) {
     await p.screenshot({ path: `${OUT}/settings-commands-tester-${width}.png`, fullPage: true });
     await p.close();
   }
+
+  // Every text the user or an agent gives, long at once: the surfaces above
+  // feed long text where it was known to bite; this feeds it everywhere the
+  // fixtures show text, so a surface nobody suspected is checked too.
+  const SHOWN = new Set(["name", "title", "label", "description", "message", "detail", "command", "pattern", "inputHint", "content", "path", "conversationTitle", "hint", "note", "error", "serverName", "unavailableReason", "reported", "pinned", "from", "to"]);
+  const lengthen = (v, key) =>
+    Array.isArray(v)
+      ? v.map((x) => lengthen(x, key))
+      : v !== null && typeof v === "object"
+        ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, lengthen(x, k)]))
+        : typeof v === "string" && SHOWN.has(key) && v !== ""
+          ? `${v} ${LONG}`
+          : v;
+  const longAv = lengthen(agentViewState({ live: true }));
+  for (const width of [260, 340]) {
+    p = await page(browser, theme0, { width, height: 900 });
+    await renderView(p, "agent-view", longAv);
+    await p.waitForSelector(".prompt-editor");
+    // every collapsed thing open, so what it holds is measured too
+    // (a disclosure, not a menu: a popup's own pass opens it below)
+    for (const toggle of await p.$$('.chat [aria-expanded="false"]:not([aria-haspopup])')) await toggle.click().catch(() => {});
+    await sweep(p, `everything long › agent view at ${width}px`);
+    await p.screenshot({ path: `${OUT}/narrow-everything-long-${width}.png`, fullPage: true });
+    for (const [trigger, slot, where] of [
+      [".readout-strip .chip.plan", null, "the plan"],
+      ['button[aria-label="Sessions"]', "sheet-content", "the sessions drawer"],
+      ['button[aria-label="New session"]', "sheet-content", "the agents drawer"],
+      ['button[aria-label^="Other sessions"]', "popover-content", "other sessions"],
+      [".ctx-add", "popover-content", "the context adder"],
+      ['.sess-row button[aria-label="Session actions"]', "dropdown-menu-content", "session actions"],
+    ]) {
+      if (slot === null) {
+        await p.click(trigger, { timeout: 3000 }).catch(() => {});
+        await sweep(p, `everything long › ${where} at ${width}px`);
+      } else {
+        await opened(p, trigger, slot, `everything long › ${where} at ${width}px`);
+      }
+      await p.keyboard.press("Escape");
+    }
+    await p.click(".prompt-editor");
+    await p.keyboard.type("/");
+    await p.waitForSelector(".pop.slash .it", { timeout: 3000 }).catch(() => {});
+    await sweep(p, `everything long › the / menu at ${width}px`);
+    await p.close();
+  }
+  // Settings at the narrow editor width the passes above use
+  p = await page(browser, theme0, { width: 520, height: 900 });
+  await renderView(p, "settings", lengthen(settingsState()));
+  await p.waitForSelector(".section h1");
+  for (const section of await p.$$eval(".nav .it", (items) => items.map((it) => it.textContent.trim()))) {
+    await p.click(`.nav .it:has-text("${section}")`);
+    await p.waitForFunction((name) => document.querySelector(".section h1")?.textContent === name, section, { timeout: 3000 }).catch(() => {});
+    for (const toggle of await p.$$('.section [aria-expanded="false"]:not([aria-haspopup])')) await toggle.click().catch(() => {});
+    await sweep(p, `everything long › settings › ${section}`);
+    // a toggle may have opened a layer that holds the page (a dialog)
+    await p.keyboard.press("Escape");
+    await p.keyboard.press("Escape");
+  }
+  await p.close();
 }
 
 // ── sub-agents (#60): a chip in the read-out strip in the session marks'
