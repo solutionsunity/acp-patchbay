@@ -1364,17 +1364,21 @@ body {
 }
 
 /* the `/` menu: the command's name is what the user scans for, so it and
- * its input hint never shrink or wrap — the description takes what is left
- * of the one line, cut short. Only the selected row shows it in full, on
- * its own line under the name. */
+ * its input hint never wrap, and give way only after the description — which
+ * takes what is left of the one line, cut short — is gone; then they too
+ * end in an ellipsis rather than run past the menu. Only the selected row
+ * shows the description in full, on its own line under the name. */
 .pop.slash .it .d {
   margin-left: 0;
 }
 
 .pop.slash .it b,
 .pop.slash .it .d {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .pop.slash .it .desc {

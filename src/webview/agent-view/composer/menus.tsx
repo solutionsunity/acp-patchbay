@@ -112,8 +112,9 @@ export function SlashMenu(props: {
             onMouseDown={(e) => e.preventDefault() /* keep editor focus */}
             onClick={() => props.onPick(c.name)}
           >
-            <b>/{c.name}</b>
-            {c.inputHint !== undefined && <span className="d">&lt;{c.inputHint}&gt;</span>}
+            {/* whole in the tooltip, where the menu's width cuts it short */}
+            <b title={`/${c.name}`}>/{c.name}</b>
+            {c.inputHint !== undefined && <span className="d" title={`<${c.inputHint}>`}>&lt;{c.inputHint}&gt;</span>}
             {c.description !== undefined && <span className="d desc">{c.description}</span>}
           </div>
         ))}
