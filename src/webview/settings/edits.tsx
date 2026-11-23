@@ -160,7 +160,7 @@ function WriteScopeCards(props: {
         {toAdd !== undefined && (
           <div className="row mt-2.5">
             <Select value={writeLocationKey(toAdd.location)} onValueChange={setPicked}>
-              <SelectTrigger aria-label="Place to make an exception for" className="min-w-0 flex-1">
+              <SelectTrigger aria-label="Place to make an exception for" className="flex-1">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

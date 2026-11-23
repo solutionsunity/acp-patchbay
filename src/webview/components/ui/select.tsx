@@ -10,21 +10,27 @@ import { Icon } from "@/shared/icon";
 
 const Select = SelectPrimitive.Root;
 const SelectGroup = SelectPrimitive.Group;
-const SelectValue = SelectPrimitive.Value;
+/** Radix drops a className given to the value, so the trigger styles it by
+ * this slot. */
+function SelectValue(props: React.ComponentProps<typeof SelectPrimitive.Value>) {
+  return <SelectPrimitive.Value data-slot="select-value" {...props} />;
+}
 
+/** Sized to its value, never past the box it sits in: a value too long for
+ * it is cut short with an ellipsis — the open list shows it whole. */
 function SelectTrigger({ className, children, ...props }: React.ComponentProps<typeof SelectPrimitive.Trigger>) {
   return (
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
       className={cn(
-        "flex h-7 w-fit items-center justify-between gap-1.5 whitespace-nowrap rounded-md border border-input bg-transparent px-2 py-1 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 data-[placeholder]:text-input-placeholder [&>span]:line-clamp-1",
+        "flex h-7 w-fit min-w-0 max-w-full items-center justify-between gap-1.5 whitespace-nowrap rounded-md border border-input bg-transparent px-2 py-1 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 data-[placeholder]:text-input-placeholder *:data-[slot=select-value]:min-w-0 *:data-[slot=select-value]:truncate",
         className,
       )}
       {...props}
     >
       {children}
       <SelectPrimitive.Icon asChild>
-        <span className="text-muted-foreground">
+        <span className="shrink-0 text-muted-foreground">
           <Icon name="chevron-down" />
         </span>
       </SelectPrimitive.Icon>
