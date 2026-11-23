@@ -2616,9 +2616,67 @@ if (runs("narrow")) {
         ...[...overlays].filter(off).map((el) => `overlay ${el.getAttribute("data-slot")}`),
       ];
     });
+  // Inside the panel isn't enough: a box that clips what passes its edge
+  // (a card, a bubble, a popup) hides the end of anything wider than it,
+  // and a text that won't wrap (`nowrap`, a button's label) is the one that
+  // gets wider. What runs past such a box must say so with an ellipsis —
+  // the box's own, or the element's — or be in a scroller, where it can
+  // still be reached.
+  const cutOff = (p) =>
+    p.evaluate(() => {
+      const found = new Set();
+      // what runs past is named once, where it starts — not each thing inside it
+      const past = new Set();
+      for (const el of document.body.querySelectorAll("*")) {
+        if (past.has(el.parentElement)) {
+          past.add(el);
+          continue;
+        }
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+        const own = getComputedStyle(el);
+        // hidden, or clipped away on purpose (text for screen readers only)
+        if (own.visibility === "hidden" || own.clip !== "auto" || own.clipPath !== "none") {
+          past.add(el);
+          continue;
+        }
+        // a fixed box is placed on the window, past every box's clip
+        if (own.position === "fixed") continue;
+        // what an element shows past its own box, where it doesn't clip it —
+        // scaled as its box is (a diagram is drawn shrunk to fit)
+        const scale = el instanceof HTMLElement && el.offsetWidth > 0 ? r.width / el.offsetWidth : 1;
+        const right = own.overflowX === "visible" ? Math.max(r.right, r.left + el.scrollWidth * scale) : r.right;
+        for (let a = el.parentElement; a !== null && a !== document.body; a = a.parentElement) {
+          const s = getComputedStyle(a);
+          if (s.overflowX === "visible") {
+            if (s.position === "fixed") break;
+            continue;
+          }
+          // code and tables scroll sideways by design; anything else that
+          // does — a list, a popup — hides what runs past behind it
+          const scrolls = s.overflowX === "auto" || s.overflowX === "scroll";
+          if (scrolls && (a.tagName === "PRE" || a.querySelector(":scope > table") !== null)) break;
+          // a box clipped away on purpose — text kept for screen readers only
+          if (s.clip !== "auto" || s.clipPath !== "none") break;
+          const box = a.getBoundingClientRect();
+          if ((scrolls || s.textOverflow !== "ellipsis") && (right > box.right + 1 || r.left < box.left - 1)) {
+            const label = (el.getAttribute("aria-label") ?? el.textContent ?? "").trim().slice(0, 40);
+            const cls = (x) => (typeof x.className === "string" && x.className.trim() !== "" ? `.${x.className.trim().split(/\s+/)[0]}` : "");
+            found.add(`${el.tagName.toLowerCase()}${cls(el)} in ${a.tagName.toLowerCase()}${cls(a)}${scrolls ? " (a sideways scroll)" : ""} "${label}" ${Math.round(r.left)}..${Math.round(right)} of ${Math.round(box.left)}..${Math.round(box.right)}`);
+            past.add(el);
+          }
+          break;
+        }
+      }
+      return [...found];
+    });
   const sweep = async (p, where) => {
     const off = await outOfView(p);
     check(`[narrow] ${where}: every control and overlay in view${off.length > 0 ? ` — ${off.join(", ")}` : ""}`, off.length === 0);
+    // a box mid-move (a card sliding in) isn't where it will stay
+    await settled(p);
+    const cut = await cutOff(p);
+    check(`[narrow] ${where}: nothing cut off without an ellipsis${cut.length > 0 ? ` — ${cut.join(", ")}` : ""}`, cut.length === 0);
   };
   const opened = async (p, trigger, slot, where) => {
     // a trigger pushed out of view can't be clicked: that fails the check
@@ -2652,9 +2710,27 @@ if (runs("narrow")) {
       { id: "s1/a", parentId: "s1", title: `Explore ${LONG}`, description: "general-purpose", conversationTitle: null, state: { state: "running" }, lastKnown: { state: "running" }, cancel: true, cwd: longPath, additionalDirectories: [], config: [] },
     ],
   };
+  // long text where nothing wraps it (#178): a question's chosen option, a
+  // permission's option, a sent mention, a command's name and input hint
+  av.commandsBySession = { s1: [...av.commandsBySession.s1, { name: `run-${LONG}`, inputHint: `the ${LONG}`, description: "long" }] };
+  const narrowAsks = [
+    { kind: "user", id: "u-narrow", parts: [{ kind: "text", text: "look at " }, { kind: "mention", name: `${LONG}.ts`, uri: `file:///ws/${LONG}.ts` }] },
+    {
+      kind: "elicitation", id: "q-narrow", message: "Which one?", mode: "form", resolution: null,
+      fields: [{ name: "pick", type: "select", required: true, default: "long", options: [{ value: "long", label: `Option ${LONG}` }, { value: "short", label: "Short" }] }],
+    },
+    {
+      kind: "permission", id: "p-narrow", title: "Run the deploy", detail: "", facts: [], resolution: null,
+      options: [
+        { optionId: "allow", label: `Allow ${LONG} for this session`, kind: "allow_always" },
+        { optionId: "deny", label: "Deny", kind: "reject_once" },
+      ],
+      call: { toolCallId: "narrow-call", toolKind: "execute", locations: [], content: [], diffs: {}, input: null },
+    },
+  ];
   av.transcripts = {
     ...av.transcripts,
-    s1: [...av.transcripts.s1, { kind: "sessionMessage", id: "message:narrow", direction: "to", peer: "s1/a", parts: [{ kind: "text", text: "Explore." }] }],
+    s1: [...av.transcripts.s1, ...narrowAsks, { kind: "sessionMessage", id: "message:narrow", direction: "to", peer: "s1/a", parts: [{ kind: "text", text: "Explore." }] }],
     "s1/a": [{ kind: "sessionMessage", id: "message:narrowin", direction: "from", peer: "s1", parts: [{ kind: "text", text: "Explore." }] }],
   };
   av.sessionKnobs = {
@@ -2743,6 +2819,13 @@ if (runs("narrow")) {
   await p.keyboard.press("Escape");
   await opened(p, ".ctx-add", "popover-content", "context adder");
   await p.keyboard.press("Escape");
+  await p.click(".prompt-editor");
+  await p.keyboard.type("/");
+  await p.waitForSelector(".pop.slash .it", { timeout: 3000 }).catch(() => {});
+  await p.locator(".pop.slash .it").last().scrollIntoViewIfNeeded().catch(() => {});
+  await sweep(p, "the / menu");
+  await p.keyboard.press("Escape");
+  await p.keyboard.press("Backspace");
   await opened(p, '.sess-row button[aria-label="Session actions"]', "dropdown-menu-content", "session actions");
   await p.keyboard.press("Escape");
   await opened(p, 'button[aria-label^="Other sessions"]', "popover-content", "other sessions");
@@ -2769,7 +2852,8 @@ if (runs("narrow")) {
   const st = settingsState();
   st.agents = st.agents.map((a) => ({ ...a, name: `${a.name} ${LONG}`, command: longPath }));
   st.agentConfigs = st.agentConfigs.map((c) => ({ ...c, name: `${c.name} ${LONG}`, command: longPath }));
-  st.commandRules = [{ kind: "command", pattern: `npm run ${LONG}`, verdict: "allow" }];
+  // scoped to agents with long names: the scope's label runs long (#178)
+  st.commandRules = [{ kind: "command", pattern: `npm run ${LONG}`, verdict: "allow", agents: st.agents.map((a) => a.id) }];
   st.savedRoots = {
     entries: [
       { path: longPath, workspaces: ["file:///ws"] },

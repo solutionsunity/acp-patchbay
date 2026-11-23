@@ -33,8 +33,12 @@ the bundler; Tailwind runs alongside it as a CSS build step.
   every webview, so a token with no break opportunity (a URL, an absolute path, a
   connection string) wraps at its box instead of overflowing the panel or forcing
   a dialog wider than it. No surface re-declares it; a surface that must stay one
-  line opts out with `white-space: nowrap` + `text-overflow`. The ui-gate renders
-  the chat at 280px and measures rendered text extents against the viewport.
+  line opts out with `white-space: nowrap` + `text-overflow`, and stays inside the
+  box it sits in — a shared control caps itself there (the select trigger ends its
+  value in an ellipsis). The ui-gate renders the chat at 280px and measures
+  rendered text extents against the viewport; its narrow pass feeds long text to
+  every surface and fails on anything that runs past the box clipping it without
+  an ellipsis, or hides behind a sideways scroll that isn't code or a table.
 - **CSP is authored here, never widened silently.** Radix needs inline `style`
   attributes (already allowed; no inline `<script>`/`eval`); Shiki's default
   engine needs `wasm-unsafe-eval` *or* Streamdown configured with Shiki's JS
