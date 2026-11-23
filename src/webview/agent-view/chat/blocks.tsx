@@ -227,8 +227,10 @@ export function UserMessage({ id, parts }: { id: string; parts: readonly UserPar
         </button>
       </span>
       {/* max-w-full neutralizes .msg-user's own 85% cap (style.css) — the
-          wrapper already carries it; 85% of 85% would double-shrink. */}
-      <div className="msg-user max-w-full">
+          wrapper already carries it; 85% of 85% would double-shrink.
+          min-w-0: the bubble gives way beside the prompt's buttons rather
+          than a long unbroken token pushing it past the row. */}
+      <div className="msg-user min-w-0 max-w-full">
         {parts.map((part, i) => (
           <PartView key={i} part={part} />
         ))}

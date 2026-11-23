@@ -1193,10 +1193,16 @@ body {
  * mention told apart by its @ and its button, not by the page's accent —
  * with a hair of breathing room, so a replay that glued a mention to the
  * next word still reads as two things (agents have been observed dropping
- * the separating space). */
+ * the separating space). One line, never past the bubble: a long name ends
+ * in an ellipsis, whole in its tooltip. */
 .msg-user .prompt-token {
   margin: 0 2px;
   white-space: nowrap;
+  display: inline-block;
+  max-width: calc(100% - 4px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
   color: inherit;
   background: transparent;
   border-color: var(--pb-bubble-rule);
