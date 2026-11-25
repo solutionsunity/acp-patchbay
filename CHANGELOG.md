@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Long text stays inside its box.** A choice in an agent's question whose
+  value was longer than the card ran past its edge, cut off with no sign of
+  the rest. It now ends in an ellipsis inside the card, and the open list
+  shows it whole. The same held for a permission option's label (it now
+  wraps), a mention in a sent prompt, a command or its hint in the `/` menu,
+  the version chip while an upgrade is offered, and the catalog picker on
+  Settings' add cards — each now fits and ends in an ellipsis. (#178)
+
 ## 1.0.1 — 2026-11-22
 
 A read where writes are auto-approved no longer asks, and a sent image is a
