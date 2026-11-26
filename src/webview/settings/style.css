@@ -247,11 +247,48 @@ input:focus {
   align-items: start;
 }
 
+/* A nav item's tooltip repeats its label: shown only where the label
+   isn't (the rail, below). */
+.nav-tip {
+  display: none;
+}
+
 /* A narrow editor stacks the label over its control: the label column
    would leave the control too little room to show itself — and the
    actions and notes that line up under the controls start at the edge
-   with them. */
+   with them. The nav gives way too: a rail of icons, as wide as what it
+   holds, each named by its tooltip — the group names and the footer kept
+   for screen readers, a rule between the groups. */
 @media (max-width: 600px) {
+  .nav {
+    width: auto;
+    padding: 14px 6px;
+  }
+  .nav > div + div {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--pb-border);
+  }
+  .nav .grp,
+  .nav .it .name,
+  .nav .foot {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .nav .it {
+    justify-content: center;
+    padding: 7px 9px;
+  }
+  .nav-tip {
+    display: block;
+  }
+  .main {
+    padding: 16px 14px 60px;
+  }
   .field {
     grid-template-columns: minmax(0, 1fr);
   }

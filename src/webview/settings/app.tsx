@@ -10,6 +10,7 @@ import type { SettingsSectionId, SettingsState } from "../../shared/protocol";
 import { useActions } from "../shared/actions";
 import { ErrorsChip } from "../shared/errors-chip";
 import { Icon } from "../shared/icon";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentsSection } from "./agents";
 import { AuditSection } from "./audit";
 import { DataSection } from "./data";
@@ -67,20 +68,30 @@ export function App({ state }: { state: SettingsState }) {
   return (
     <div className="layout">
       <nav className="nav">
-        {NAV_GROUPS.map((group) => (
-          <div key={group.label}>
-            <div className="grp">{group.label}</div>
-            {group.items.map((s) => (
-              <div
-                key={s.id}
-                className={`it ${section === s.id ? "on" : ""}`}
-                onClick={() => send({ kind: "setSettingsSection", section: s.id })}
-              >
-                <Icon name={s.icon} /> {s.label}
-              </div>
-            ))}
-          </div>
-        ))}
+        {/* In a narrow editor the nav is a rail of icons; each item's
+            tooltip names it there, and only there. */}
+        <TooltipProvider delayDuration={150}>
+          {NAV_GROUPS.map((group) => (
+            <div key={group.label}>
+              <div className="grp">{group.label}</div>
+              {group.items.map((s) => (
+                <Tooltip key={s.id}>
+                  <TooltipTrigger asChild>
+                    <div
+                      className={`it ${section === s.id ? "on" : ""}`}
+                      onClick={() => send({ kind: "setSettingsSection", section: s.id })}
+                    >
+                      <Icon name={s.icon} /> <span className="name">{s.label}</span>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="nav-tip">
+                    {s.label}
+                  </TooltipContent>
+                </Tooltip>
+              ))}
+            </div>
+          ))}
+        </TooltipProvider>
         <ErrorsChip />
         <div className="foot">
           agents &amp; MCP servers: global (this machine)

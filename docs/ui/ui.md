@@ -263,6 +263,10 @@ verb per page, and one subject per rules page — edits and commands are differe
 mechanisms that grow apart). Groups don't collapse: a nav this short doesn't earn the
 interaction.
 Nav footer restates the credential rule: SecretStorage only.
+In a narrow editor (below 600px — the width where each form's label also
+stacks over its control) the nav gives way to a rail of icons, each named by a
+tooltip shown there only; a rule stands between the two groups, whose names and
+the footer stay for screen readers. The page takes the rest of the width.
 
 ### Agents
 

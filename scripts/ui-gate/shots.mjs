@@ -3463,6 +3463,37 @@ if (runs("narrow")) {
     await p.keyboard.press("Escape");
   }
   await p.close();
+
+  // Settings in an editor narrower than its nav was drawn for (#179): at
+  // the narrow width the nav is a rail of icons, each named by a tooltip
+  // there and only there, and every section keeps its controls in view.
+  p = await page(browser, theme0, { width: 360, height: 900 });
+  await renderView(p, "settings", settingsState());
+  await p.waitForSelector(".section h1");
+  const rail = await p.$eval(".nav", (el) => Math.round(el.getBoundingClientRect().width));
+  check(`[narrow] Settings at 360px: the nav is a rail of icons (${rail}px)`, rail <= 60);
+  await p.hover(".nav .it >> nth=0");
+  const named = await p
+    .waitForFunction(() => document.querySelector('[data-slot="tooltip-content"]')?.checkVisibility() === true, null, { timeout: 3000 })
+    .then(() => p.$eval('[data-slot="tooltip-content"]', (el) => el.innerText), () => "");
+  check(`[narrow] Settings at 360px: a rail icon is named by its tooltip (${JSON.stringify(named)})`, named.includes("Agents"));
+  await p.mouse.move(300, 600);
+  for (const section of await p.$$eval(".nav .it", (items) => items.map((it) => it.textContent.trim()))) {
+    await p.click(`.nav .it:has-text("${section}")`);
+    await p.waitForFunction((name) => document.querySelector(".section h1")?.textContent === name, section, { timeout: 3000 }).catch(() => {});
+    await p.mouse.move(300, 600);
+    await sweep(p, `settings at 360px › ${section}`);
+  }
+  await p.screenshot({ path: `${OUT}/settings-rail-360.png` });
+  await p.close();
+  p = await page(browser, theme0, { width: 900, height: 700 });
+  await renderView(p, "settings", settingsState());
+  await p.waitForSelector(".section h1");
+  await p.hover(".nav .it >> nth=0");
+  await p.waitForTimeout(600);
+  const tipWide = await p.$eval('[data-slot="tooltip-content"]', (el) => el.checkVisibility()).catch(() => false);
+  check("[narrow] Settings at full width: the nav shows its labels, and no tooltip repeats one", !tipWide);
+  await p.close();
 }
 
 // ── sub-agents (#60): a chip in the read-out strip in the session marks'

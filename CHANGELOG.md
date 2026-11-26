@@ -24,6 +24,10 @@
   a tar archive". A `.zip` is now read by Patchbay itself on every
   platform, each file keeping the mode it was archived with, so the helpers
   and runtimes an agent bundles stay runnable. (#182)
+- **Settings fits a narrow editor.** In a split, a side panel or a small
+  window, Settings kept its 210px nav and squeezed every page into what
+  was left — buttons ran past the edge. Below 600px the nav is now a rail
+  of icons, each named by a tooltip, and the page takes the rest. (#179)
 
 ## 1.0.1 — 2026-11-22
 
