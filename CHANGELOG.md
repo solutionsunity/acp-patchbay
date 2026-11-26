@@ -17,6 +17,13 @@
   to say. OpenCode's own list still matches the folder by exact spelling
   (anomalyco/opencode#66397); its sessions made elsewhere show once that
   is fixed. (#181)
+- **An agent served as a `.zip` installs on Linux.** The registry serves
+  some Linux builds as `.zip` — Google Antigravity, Junie, Kiro's musl
+  builds — and Patchbay handed every archive to the system `tar`, which on
+  Linux cannot read one: the install stopped with "This does not look like
+  a tar archive". A `.zip` is now read by Patchbay itself on every
+  platform, each file keeping the mode it was archived with, so the helpers
+  and runtimes an agent bundles stay runnable. (#182)
 
 ## 1.0.1 — 2026-11-22
 

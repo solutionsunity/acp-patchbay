@@ -283,6 +283,7 @@
     "shiki": "4.3.1",
     "streamdown": "^2.5.0",
     "tailwind-merge": "^3.6.0",
+    "yauzl": "^3.4.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -293,6 +294,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/vscode": "^1.96.0",
     "@types/vscode-webview": "^1.57.5",
+    "@types/yauzl": "^3.4.0",
     "@vitest/eslint-plugin": "^1.6.21",
     "@vscode/codicons": "^0.0.45",
     "@vscode/test-cli": "^0.0.15",

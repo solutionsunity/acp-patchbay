@@ -15,8 +15,11 @@
 // (distribution, version) behind an explicit, visible user confirmation, and
 // tell the user which of the two it is.
 import { createHash } from "node:crypto";
+import { createWriteStream } from "node:fs";
 import { chmod, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { join, posix } from "node:path";
+import { dirname, join, posix } from "node:path";
+import { pipeline } from "node:stream/promises";
+import { fromBuffer, type Entry, type ZipFile } from "yauzl";
 import { type Logger, nullLogger } from "../logger";
 import { describeNetFailure, readBytes } from "../net";
 import { runToExit } from "../process-tree";
@@ -107,18 +110,17 @@ export function isBinaryInstalled(
   return pathExists(resolvedBinaryPath(cacheRoot, distribution, version, cmd));
 }
 
-/** Which archive tool to run, rather than adding a zip/tar dependency for a
- * format set every platform this extension targets covers natively: GNU tar
- * on Linux, bsdtar on macOS.
+/** Which tar extracts the tar formats — every platform this extension
+ * targets ships one: GNU tar on Linux, bsdtar on macOS and Windows. A .zip
+ * never comes here (`extractZip`): GNU tar cannot read one, and a Linux host
+ * has no zip reader to count on.
  *
  * On Windows the bare name is not enough — it resolves to whichever tar the
  * process that started the editor happened to put first on PATH. A shell
  * like Git Bash puts its own GNU tar there, and GNU tar reads a Windows
  * path's drive letter as a remote host (`Cannot connect to C: resolve
- * failed`, exit 128) and cannot open a .zip at all, which is the format the
- * Windows runtime archives are served as (runtime-resolver.ts). System32's
- * tar is bsdtar — it reads .zip and .tar.gz and takes Windows paths — and
- * Windows 10 1803+ ships it, so name it outright.
+ * failed`, exit 128). System32's tar is bsdtar — it takes Windows paths —
+ * and Windows 10 1803+ ships it, so name it outright.
  *
  * Built with backslashes, not `join`: this names a Windows path whatever
  * host runs the code that asks. */
@@ -131,12 +133,56 @@ export function tarCommand(
   return `${root}\\System32\\tar.exe`;
 }
 
-/** Extracts into the staging dir with `tarCommand`'s tool. */
-async function extractArchive(archivePath: string, destDir: string): Promise<void> {
+/** Extracts a tar archive into the staging dir with `tarCommand`'s tool. */
+async function extractTar(archivePath: string, destDir: string): Promise<void> {
   const tar = tarCommand();
   const answer = await runToExit(tar, ["-xf", archivePath, "-C", destDir], { env: process.env });
   if (answer === null) throw new Error(`${tar} could not be run`);
   if (answer.code !== 0) throw new Error(`tar exited ${answer.code}: ${answer.stderr.trim()}`);
+}
+
+/** Extracts a .zip into the staging dir, in-process, on every platform.
+ * Each entry keeps the mode it was archived with: an agent's zip carries
+ * more executables than its cmd (a bundled runtime, a helper it spawns).
+ * The reader refuses a name outside the dir (absolute, `..`); a symlink is
+ * refused here — none is served today, and one could point anywhere. */
+function extractZip(bytes: Buffer, destDir: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    fromBuffer(bytes, { lazyEntries: true }, (opened, zip) => {
+      if (opened !== null) return reject(opened);
+      zip.on("error", reject);
+      zip.on("end", resolve);
+      zip.on("entry", (entry: Entry) => {
+        writeZipEntry(zip, entry, destDir).then(
+          () => zip.readEntry(),
+          (failed: unknown) => {
+            zip.close();
+            reject(failed);
+          },
+        );
+      });
+      zip.readEntry();
+    });
+  });
+}
+
+async function writeZipEntry(zip: ZipFile, entry: Entry, destDir: string): Promise<void> {
+  const target = join(destDir, entry.fileName);
+  // The mode is the entry's only where a Unix tool made it.
+  const mode = entry.versionMadeBy >> 8 === 3 ? entry.externalFileAttributes >>> 16 : null;
+  if (mode !== null && (mode & 0o170000) === 0o120000) {
+    throw new Error(`archive entry ${entry.fileName} is a symlink — not extracted`);
+  }
+  if (entry.fileName.endsWith("/")) {
+    await mkdir(target, { recursive: true });
+    return;
+  }
+  await mkdir(dirname(target), { recursive: true });
+  const content = await new Promise<NodeJS.ReadableStream>((resolve, reject) =>
+    zip.openReadStream(entry, (failed, stream) => (failed !== null ? reject(failed) : resolve(stream))),
+  );
+  await pipeline(content, createWriteStream(target));
+  if (mode !== null && process.platform !== "win32") await chmod(target, mode & 0o777);
 }
 
 export async function installBinary(
@@ -170,19 +216,26 @@ export async function installBinary(
     await mkdir(staging, { recursive: true });
     const stagedCmd = join(staging, spec.cmd);
     const ext = archiveExtension(spec.archiveUrl);
-    if (ext === null) {
-      // A raw binary — `cmd` names the downloaded file directly, nothing
-      // to extract.
-      await writeFile(stagedCmd, bytes);
-    } else {
-      const archivePath = join(staging, `download${ext}`);
-      await writeFile(archivePath, bytes);
-      await extractArchive(archivePath, staging);
-      await rm(archivePath, { force: true });
-    }
-    if (!(await pathExists(stagedCmd))) {
+    try {
+      if (ext === null) {
+        // A raw binary — `cmd` names the downloaded file directly, nothing
+        // to extract.
+        await writeFile(stagedCmd, bytes);
+      } else if (ext === ".zip") {
+        await extractZip(bytes, staging);
+      } else {
+        const archivePath = join(staging, `download${ext}`);
+        await writeFile(archivePath, bytes);
+        await extractTar(archivePath, staging);
+        await rm(archivePath, { force: true });
+      }
+      if (!(await pathExists(stagedCmd))) {
+        throw new Error(`archive did not contain ${spec.cmd} — the registry's cmd field may be wrong`);
+      }
+    } catch (failed) {
+      // A failed install leaves nothing, staging included.
       await rm(staging, { recursive: true, force: true });
-      throw new Error(`archive did not contain ${spec.cmd} — the registry's cmd field may be wrong`);
+      throw failed;
     }
     if (process.platform !== "win32") await chmod(stagedCmd, 0o755).catch(() => {});
     await rm(destDir, { recursive: true, force: true });
