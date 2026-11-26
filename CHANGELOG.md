@@ -9,6 +9,14 @@
   wraps), a mention in a sent prompt, a command or its hint in the `/` menu,
   the version chip while an upgrade is offered, and the catalog picker on
   Settings' add cards — each now fits and ends in an ellipsis. (#178)
+- **An agent's list of a folder's sessions is taken as it gives it.**
+  Patchbay re-checked each listed session's folder against its own
+  spelling and dropped any that differed — on Windows, a session kept
+  under `C:\…` where VS Code writes `c:\…`, though Windows reads both as
+  one folder. Which sessions belong to the workspace is now the agent's
+  to say. OpenCode's own list still matches the folder by exact spelling
+  (anomalyco/opencode#66397); its sessions made elsewhere show once that
+  is fixed. (#181)
 
 ## 1.0.1 — 2026-11-22
 

@@ -172,8 +172,8 @@ describe("session/list", () => {
       note,
     );
     expect(list.sessions).toEqual([
-      { sessionId: "a", cwd: "/w", title: "ok", updatedAt: "2026-07-19T00:00:00Z" },
-      { sessionId: "b", cwd: "/w" },
+      { sessionId: "a", title: "ok", updatedAt: "2026-07-19T00:00:00Z" },
+      { sessionId: "b" },
     ]);
     expect(list.next).toEqual({ kind: "more", cursor: "p2" });
     expect(said).toHaveLength(2);

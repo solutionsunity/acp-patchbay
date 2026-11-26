@@ -28,11 +28,13 @@ export interface SessionAttachedFact {
   knobs?: NormalizedKnobs;
 }
 
-/** One row of the agent's session list. Identity (sessionId, cwd) is the
- * row; the rest is what the agent said, when it said it. */
+/** One row of the agent's session list: its identity, and what the agent
+ * said of it, when it said it. The row's folder is checked present (the spec
+ * requires it) and not carried — which sessions are the folder's is the
+ * agent's to say, by its own match of the folder asked for (Windows reads
+ * "c:\" and "C:\" as one folder; a spelling compared here would not). */
 export interface ListedSessionFact {
   sessionId: string;
-  cwd: string;
   title?: string;
   updatedAt?: string;
   /** Absent = not reported, which never clears a session's roots. */
@@ -158,7 +160,6 @@ function readListedSession(entry: unknown, note: Note): ListedSessionFact[] {
   return [
     {
       sessionId: e.sessionId,
-      cwd: e.cwd,
       ...(isString(e.title) ? { title: e.title } : {}),
       ...(isString(e.updatedAt) ? { updatedAt: e.updatedAt } : {}),
       ...(additionalDirectories !== undefined ? { additionalDirectories } : {}),

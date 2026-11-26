@@ -1290,8 +1290,6 @@ export class SessionsStore {
       // Rows arrive read (pool's chokepoint): identity-less rows already
       // dropped, bad sort keys degraded.
       for (const info of response.sessions) {
-        // Re-filter defensively: the cwd param is a request, not a contract.
-        if (info.cwd !== cwd) continue;
         seen.add(info.sessionId);
         this.noteListedSession(patchbayAgentId, info);
       }
