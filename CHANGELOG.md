@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.0.2 — 2026-11-27
+
+Bug fixes: agents served as a `.zip` install on Linux, the sessions list keeps
+up with the agents and takes their list as given, and long text and Settings
+fit a narrow editor.
 
 - **Long text stays inside its box.** A choice in an agent's question whose
   value was longer than the card ran past its edge, cut off with no sign of
