@@ -9,7 +9,7 @@
 import { FailuresOfAgent, ReportFailure } from "../shared/report-failure";
 import { crashOf } from "../shared/shown-failures";
 import { restartOffered } from "../shared/agent-work";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { attaching, type AgentViewState, type SubagentView, type UserBlock } from "../../shared/protocol";
 import { elsewhere, sessionMark, waitingOn } from "../../shared/attention";
 import { useActions } from "../shared/actions";
@@ -39,8 +39,11 @@ const NO_SUBAGENTS: readonly SubagentView[] = [];
 export function App({
   state,
   pinnedPatchbaySessionId,
+  surface,
 }: {
   state: AgentViewState;
+  /** The id this page's host gave it — null outside a host. */
+  surface: string | null;
   /** Detached session panel: render exactly this session, ignore the shared
    * active-session pointer, and drop the shell furniture (header, drawers,
    * new-chat) — those belong to the full view. */
@@ -108,11 +111,7 @@ export function App({
   // own panel, which is the chat whatever the view is.
   const layout = state.preferences?.sessionsLayout ?? "chat";
   const listLayout = !pinned && layout === "list";
-  // The list reads the agents' own session/list as it comes on view, as
-  // the drawer does on opening.
-  useEffect(() => {
-    if (listLayout) send({ kind: "syncSessions" });
-  }, [listLayout, send]);
+  const onView = surface !== null && state.screen.shown.includes(surface);
   // The durable draft is empty — the only state a held prompt is taken back
   // into, or an earlier one reused into.
   const composerEmpty = active === null || (state.drafts[active.id] ?? "") === "";
@@ -148,12 +147,7 @@ export function App({
     else setDrawer("agents");
   };
 
-  // Opening the list is a read of the agents' own session/list: another
-  // window's activity is on the rows only if it is re-read now.
-  const openSessions = () => {
-    send({ kind: "syncSessions" });
-    setDrawer("sessions");
-  };
+  const openSessions = () => setDrawer("sessions");
 
   const header = (
     <Header
@@ -193,6 +187,7 @@ export function App({
             markOf={(s) => sessionMark(state, s)}
             detach={detach}
             inTabs
+            onView={onView}
             onNew={newChat}
             onPicked={() => {}}
           />
@@ -326,6 +321,7 @@ export function App({
             activePatchbaySessionId={state.activePatchbaySessionId}
             markOf={(s) => sessionMark(state, s)}
             detach={detach}
+            onView={onView}
             onNew={newChat}
             onDone={() => setDrawer(null)}
           />

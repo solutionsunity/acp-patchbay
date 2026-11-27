@@ -134,7 +134,7 @@ describe("elsewhere — what the header reports", () => {
       created("b"),
       created("c"),
       created("d"),
-      { kind: "screenChanged", pointer: true, pinned: ["c"] },
+      { kind: "screenChanged", pointer: true, pinned: ["c"], shown: [] },
       { kind: "sessionActivated", patchbaySessionId: "a" as PatchbaySessionId },
       question("a" as PatchbaySessionId, "q1"),
       permission("b" as PatchbaySessionId, "p1"),

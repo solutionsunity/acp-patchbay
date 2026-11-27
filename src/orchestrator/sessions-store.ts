@@ -1244,10 +1244,11 @@ export class SessionsStore {
       .catch((err: Error) => this.log.error(`session files reconcile ${patchbayAgentId} — ${agentErrorText(err)}`));
   }
 
-  /** The user is about to read the list (drawer opening, palette pick):
-   * re-read every running agent's own `session/list`, so activity from
-   * another window or another client is on the rows — reality at the
-   * moment of need, never polled. Per-agent failures log and stop nothing:
+  /** The user may be reading the list (it comes on view or back into
+   * view, a search starts, its refresh is pressed, a minute passes on
+   * view; the palette pick): re-read every running agent's own
+   * `session/list`, so activity from another window or another client is
+   * on the rows. Per-agent failures log and stop nothing:
    * one agent's bad page must not hold the others' rows. */
   async syncRunningAgents(): Promise<void> {
     await Promise.all(

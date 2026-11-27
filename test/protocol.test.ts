@@ -370,7 +370,7 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
     stopReason: "end_turn",
     usage: null,
   });
-  const viewShown: AgentViewEvent = { kind: "screenChanged", pointer: true, pinned: [] };
+  const viewShown: AgentViewEvent = { kind: "screenChanged", pointer: true, pinned: [], shown: [] };
   const unseenOf = (s: AgentViewState, id: string) => s.sessions.find((x) => x.id === id)!.unseen;
 
   it("a turn ending on a non-active session marks it unseen; activation on a visible view clears it", () => {
@@ -394,11 +394,11 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
   });
 
   it("a visible pinned panel is seeing its session — no dot, and showing one clears it", () => {
-    const pinnedVisible: AgentViewEvent = { kind: "screenChanged", pointer: false, pinned: ["b"] };
+    const pinnedVisible: AgentViewEvent = { kind: "screenChanged", pointer: false, pinned: ["b"], shown: [] };
     const s = replay(initialAgentViewState, [mk("a"), mk("b"), { kind: "sessionActivated", patchbaySessionId: "a" as PatchbaySessionId }, pinnedVisible, end("b" as PatchbaySessionId)]);
     expect(unseenOf(s, "b")).toBeUndefined();
 
-    const later = replay(s, [{ kind: "screenChanged", pointer: false, pinned: [] }, end("b" as PatchbaySessionId)]);
+    const later = replay(s, [{ kind: "screenChanged", pointer: false, pinned: [], shown: [] }, end("b" as PatchbaySessionId)]);
     expect(unseenOf(later, "b")).toBe(true);
     expect(unseenOf(replay(later, [pinnedVisible]), "b")).toBeUndefined();
   });

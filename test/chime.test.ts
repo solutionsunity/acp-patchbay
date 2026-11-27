@@ -142,3 +142,22 @@ describe("a turn's chime", () => {
     expect(cancelled.chimes).toEqual([]);
   });
 });
+
+// A page is not told by the browser that its view was hidden; the screen
+// fact names the visible surfaces, so each page knows whether it is on view.
+describe("the screen fact", () => {
+  it("names the surfaces on view, by the ids their hosts gave them", async () => {
+    const o = orchestratorHarness(await tempDir("patchbay-screen-")).orchestrator;
+    const shown = () => o.agentView.current.screen.shown;
+    o.noteSurface("sidebar", { visible: true, pinned: null });
+    o.noteSurface("panel", { visible: false, pinned: null });
+    o.noteSurface("tab", { visible: true, pinned: "s1" });
+    expect(shown()).toEqual(["sidebar", "tab"]);
+    o.noteSurface("sidebar", { visible: false, pinned: null });
+    expect(shown()).toEqual(["tab"]);
+    o.noteSurface("panel", { visible: true, pinned: null });
+    expect(shown()).toEqual(["panel", "tab"]);
+    o.noteSurface("tab", null);
+    expect(shown()).toEqual(["panel"]);
+  });
+});

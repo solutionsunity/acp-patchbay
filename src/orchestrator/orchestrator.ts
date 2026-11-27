@@ -1244,12 +1244,15 @@ export class Orchestrator {
   noteSurface(surface: string, report: SurfaceReport | null): void {
     if (report === null) this.surfaces.delete(surface);
     else this.surfaces.set(surface, { activated: this.surfaces.get(surface)?.activated ?? false, ...report });
-    const shows = [...this.surfaces.values()].filter((s) => s.visible).map((s) => s.pinned);
+    const visible = [...this.surfaces].filter(([, s]) => s.visible);
+    const shows = visible.map(([, s]) => s.pinned);
     const pointer = shows.includes(null);
     const pinnedIds = [...new Set(shows.filter((id): id is string => id !== null))].sort();
+    const shown = visible.map(([id]) => id).sort();
     const current = this.agentView.current.screen;
-    if (current.pointer === pointer && current.pinned.join("\n") === pinnedIds.join("\n")) return;
-    this.agentView.emit({ kind: "screenChanged", pointer, pinned: pinnedIds });
+    const same = (a: readonly string[], b: readonly string[]) => a.join("\n") === b.join("\n");
+    if (current.pointer === pointer && same(current.pinned, pinnedIds) && same(current.shown, shown)) return;
+    this.agentView.emit({ kind: "screenChanged", pointer, pinned: pinnedIds, shown });
   }
 
   /** A surface's page says whether the user has touched it since it

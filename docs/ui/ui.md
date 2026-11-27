@@ -198,8 +198,12 @@ connected` / capability one-liner); picking the row starts a chat with it,
 connecting in-pane when it isn't running. Footer: `＋ Add or manage agents —
 Settings…` — adding lives in Settings only; stop/restart are Settings
 troubleshooting controls plus the crash banner's `Restart`. **Sessions drawer** —
-first a find box ("Find by title, or by what was said…") and, with more than one
-agent, an agent filter; under them a line saying what is listed and how many are
+first a find box ("Find by title, or by what was said…"), a refresh (`↻`, "Read
+the sessions again") and, with more than one agent, an agent filter. The rows are
+the agents' own lists as last read: read again as the list comes on view, as the
+user comes back to it, as a search starts (not per keystroke), on the refresh, and
+every minute it stays on view — never while its view is hidden.
+Under them a line saying what is listed and how many are
 loaded ("4 sessions · 2 loaded", "1 of 4 sessions · 2 loaded" while narrowed). A
 session is *loaded* when its conversation is in this window: its row says so, and
 only its conversation can be searched — a match there shows a few words around it

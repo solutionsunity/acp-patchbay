@@ -36,7 +36,7 @@ const pinnedPatchbaySessionId = pinMeta !== null ? (decodeURIComponent(pinMeta) 
 const surface = meta("patchbay-surface");
 const PinnableApp = ({ state }: { state: AgentViewState }) => (
   <ChimeSurface surface={surface} chime={state.chime}>
-    <App state={state} pinnedPatchbaySessionId={pinnedPatchbaySessionId} />
+    <App state={state} pinnedPatchbaySessionId={pinnedPatchbaySessionId} surface={surface} />
   </ChimeSurface>
 );
 mount(channel, PinnableApp, document.getElementById("root")!);

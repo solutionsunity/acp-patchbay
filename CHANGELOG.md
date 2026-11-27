@@ -28,6 +28,14 @@
   window, Settings kept its 210px nav and squeezed every page into what
   was left — buttons ran past the edge. Below 600px the nav is now a rail
   of icons, each named by a tooltip, and the page takes the rest. (#179)
+- **The sessions list keeps up with the agents.** The list was read only
+  as it came on view, so in the list layout — open for hours — a session an
+  agent gained since stayed off it, and a search, which filters the rows
+  held, couldn't find it. The list now reads every running agent's sessions
+  again every minute while it is on view (never while hidden), when you
+  come back to it and when a search starts (not per keystroke), and a
+  refresh button beside the search reads them on demand. The drawer does
+  the same. (#183)
 
 ## 1.0.1 — 2026-11-22
 

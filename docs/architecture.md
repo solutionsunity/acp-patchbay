@@ -445,10 +445,19 @@ flowchart TD
   one fact with one home: the reducer's row stamp (`updatedAt`), moved by
   prompt send, turn end, and the wire's own stamp — newest wins, judged
   there and nowhere else; the sessions-store reports the evidence and
-  keeps no copy. Cross-window freshness is a read, not a push: opening the
-  drawer (or the palette's session pick) re-runs `session/list` on every
-  running agent (`syncRunningAgents`), so another window's activity lands
-  on the rows at the moment they are looked at — never polled. The Settings
+  keeps no copy. Cross-window freshness is a read, not a push: the list
+  (drawer or list layout) re-runs `session/list` on every running agent
+  (`syncRunningAgents`) when it comes on view, when the user comes back to
+  it, when a search starts — a search filters the rows held — on its
+  refresh button, and every minute it stays on view, counted from its last
+  read; the palette's session pick does on opening. The minute is the one
+  poll, by decision (2026-11-27, #183, superseding "never polled"): an
+  agent never says it gained a session — `session/list` has no
+  notification — so a list left open would otherwise show another client's
+  session only when the user acted. It runs only while the list's page is
+  on view, which its host says (the `screen` fact names the visible
+  surfaces): the browser does not tell a hidden view's page. Never per
+  keystroke. The Settings
   "active today" tile is a projection of the same rows (`session-stats.ts`),
   republished from the channel's change hook like the status bar. Switching
   chats never closes anything. The idle

@@ -6,7 +6,7 @@
 // opened them are the shared sheet's; every row is a button, so a drawer
 // is walked and picked from the keyboard. `onDone(toast?)` closes the
 // drawer — drawer visibility and toasts are the shell's local UI state.
-import { useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { AgentSummary, AgentViewState, SessionSummary } from "../../shared/protocol";
 import type { SessionMark } from "../../shared/attention";
 import { listSessions, NO_SESSION_FILTER, type SessionFilter } from "../../shared/session-list";
@@ -98,6 +98,20 @@ export function AgentsDrawer(props: {
   );
 }
 
+const READ_EVERY_MS = 60_000;
+
+/** The page is not hidden by its window — minimized, or behind another
+ * desktop. */
+function usePageShown(): boolean {
+  const [shown, setShown] = useState(document.visibilityState === "visible");
+  useEffect(() => {
+    const follow = () => setShown(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", follow);
+    return () => document.removeEventListener("visibilitychange", follow);
+  }, []);
+  return shown;
+}
+
 /** The sessions, found by what the user remembers of one: a word of its
  * title or — for the ones loaded here, whose conversation is in this
  * window — of what was said in it; narrowed to one agent's. A row says
@@ -116,6 +130,9 @@ export function SessionsList(props: {
   /** The list is the view, and a pick opens the session's tab: a row
    * offers no second way to do that. */
   inTabs?: boolean;
+  /** The page holding the list is on view, as its host says — a hidden
+   * view's page is not told by the browser. */
+  onView: boolean;
   onNew(): void;
   /** A session was picked. */
   onPicked(): void;
@@ -126,6 +143,32 @@ export function SessionsList(props: {
   // independent Radix instances racing to close/open on the same click.
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [filter, setFilter] = useState<SessionFilter>(NO_SESSION_FILTER);
+  // The rows are the agents' own session/list as last read, so the list
+  // reads it again whenever the user may be reading the rows: it comes on
+  // view, the user comes back to it, a search starts — the search filters
+  // the rows held, and a session the agent gained since would be missed —
+  // the user asks, and every minute it stays on view, since an agent never
+  // says it gained one. Off view, nothing reads; never per keystroke.
+  const pageShown = usePageShown();
+  const shown = props.onView && pageShown;
+  const [reads, setReads] = useState(0);
+  const read = useCallback(() => {
+    send({ kind: "syncSessions" });
+    setReads((n) => n + 1);
+  }, [send]);
+  useEffect(() => {
+    if (!shown) return;
+    read();
+    window.addEventListener("focus", read);
+    return () => window.removeEventListener("focus", read);
+  }, [shown, read]);
+  // Each read restarts the minute: a refresh or a search's read is not
+  // followed by a second one straight after.
+  useEffect(() => {
+    if (!shown) return;
+    const next = window.setTimeout(read, READ_EVERY_MS);
+    return () => window.clearTimeout(next);
+  }, [shown, reads, read]);
   // The filter's agent, while that agent is still one of them.
   const of = props.agents.some((a) => a.id === filter.agent) ? filter.agent : "all";
   // Latest activity on top — ordered in the view (session-list.ts), so the
@@ -146,8 +189,15 @@ export function SessionsList(props: {
               placeholder="Find by title, or by what was said…"
               aria-label="Find a session"
               value={filter.text}
-              onInput={(e) => setFilter({ ...filter, text: (e.target as HTMLInputElement).value })}
+              onInput={(e) => {
+                const text = (e.target as HTMLInputElement).value;
+                if (filter.text === "" && text !== "") read();
+                setFilter({ ...filter, text });
+              }}
             />
+            <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" title="Read the sessions again" aria-label="Refresh sessions" onClick={read}>
+              <Icon name="refresh" />
+            </Button>
             {props.agents.length > 1 && (
               <Select value={of} onValueChange={(v) => setFilter({ ...filter, agent: v as SessionFilter["agent"] })}>
                 <SelectTrigger aria-label="Sessions of which agent" className="max-w-[45%]">

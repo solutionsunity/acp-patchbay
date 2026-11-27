@@ -242,7 +242,7 @@ export function agentViewState({ live }) {
     openEditors: [{ file: "/ws/src/app.ts", dirty: false }, { file: "/ws/src/api.ts", dirty: true }],
     workspaceFiles: { query: "", files: [], dirs: [] },
     preferences,
-    screen: { pointer: true, pinned: [] },
+    screen: { pointer: true, pinned: [], shown: ["gate-surface"] },
     chime: null,
   };
 }

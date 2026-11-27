@@ -172,6 +172,7 @@ async function page(browser, themeName, { width, height }) {
     <meta http-equiv="Content-Security-Policy" content="${webviewCsp(ORIGIN, NONCE)}">
     <meta name="patchbay-out-base" content="${ORIGIN}/out/">
     <meta name="patchbay-attachments-base" content="${ORIGIN}/attachments/">
+    <meta name="patchbay-surface" content="gate-surface">
     <style>:root{${THEMES[themeName]}}</style>
     <link rel="stylesheet" href="${ORIGIN}/out/codicons/codicon.css">
   </head><body class="${bodyClass(themeName)}"><div id="root"></div></body></html>`;
@@ -2286,6 +2287,8 @@ if (runs("sessions-drawer")) {
   await renderView(p, "agent-view", agentViewState({ live: false }));
   await p.click('button[aria-label="Sessions"]');
   await p.waitForSelector(".drawer .s-row");
+  const readsOnOpen = await p.evaluate(() => window.__actions.filter((a) => a.kind === "syncSessions").length);
+  check(`[sessions] opening the drawer reads the agents' sessions once (${readsOnOpen})`, readsOnOpen === 1);
   const titles = () => p.$$eval(".drawer .s-row .nm", (els) => els.map((el) => el.textContent));
   const shownLine = () => p.$eval(".drawer .s-shown", (el) => el.textContent.trim());
   const loadedRows = await p.$$eval(".drawer .s-row", (rows) => rows.filter((r) => r.querySelector(".sub")?.textContent.includes("· loaded")).map((r) => r.querySelector(".nm").textContent));
@@ -2387,6 +2390,29 @@ if (runs("layout")) {
     (await p.$('.hdr button[aria-label^="Other sessions:"]')) !== null && (await p.$('.hdr button[aria-label="New session"]')) !== null && (await p.$('.hdr button[aria-label="Sessions"]')) === null,
   );
   check("[layout] the list finds a session as the drawer does", (await p.$('.sessions-home [aria-label="Find a session"]')) !== null && (await p.$eval(".sessions-home .s-shown", (el) => el.textContent.trim())) === "4 sessions · 2 loaded");
+  // the rows are the agents' session/list as last read: read again as the
+  // list comes on view, as the user comes back to it, as a search starts
+  // (not per keystroke) and on its refresh — never otherwise (#183)
+  {
+    const reads = () => p.evaluate(() => window.__actions.filter((a) => a.kind === "syncSessions").length);
+    const onView = await reads();
+    const find = p.locator('.sessions-home [aria-label="Find a session"]');
+    await find.pressSequentially("re");
+    const searched = (await reads()) - onView;
+    await find.fill("");
+    await find.pressSequentially("x");
+    const again = (await reads()) - onView - searched;
+    await find.fill("");
+    const beforeRefresh = await reads();
+    await p.click('.sessions-home button[aria-label="Refresh sessions"]');
+    const refreshed = (await reads()) - beforeRefresh;
+    await p.evaluate(() => window.dispatchEvent(new Event("focus")));
+    const back = (await reads()) - beforeRefresh - refreshed;
+    check(
+      `[layout] the list reads the agents' sessions on view, at a search's start, on refresh and on coming back (${onView}, ${searched}, ${again}, ${refreshed}, ${back})`,
+      onView === 1 && searched === 1 && again === 1 && refreshed === 1 && back === 1,
+    );
+  }
   const row = p.locator(".sessions-home .s-row", { hasText: "refactor bar" });
   await row.locator(".s-row-pick").click();
   const picked = await p.evaluate(() => window.__actions.at(-1));
@@ -2408,6 +2434,39 @@ if (runs("layout")) {
   await p.evaluate((prefs) => window.__patch([{ kind: "preferencesChanged", preferences: { ...prefs, sessionsLayout: "chat" } }]), preferences);
   check("[layout] the chat is back where it was", await p.waitForSelector(".prompt-editor", { timeout: 3000 }).then(() => true, () => false));
   await p.close();
+  // an agent never says it gained a session, so the list reads every minute
+  // it stays on view — counted from its last read — and never while its view
+  // is hidden, as the host says (#183)
+  {
+    const t = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
+    await t.clock.install();
+    await renderView(t, "agent-view", { ...agentViewState({ live: false }), preferences: { ...preferences, sessionsLayout: "list" } });
+    await t.waitForSelector(".sessions-home .s-row");
+    const reads = () => t.evaluate(() => window.__actions.filter((a) => a.kind === "syncSessions").length);
+    const seen = [await reads()];
+    await t.clock.runFor(59_000);
+    seen.push(await reads());
+    await t.clock.runFor(1_000);
+    seen.push(await reads());
+    await t.click('.sessions-home button[aria-label="Refresh sessions"]');
+    await t.clock.runFor(59_000);
+    seen.push(await reads());
+    await t.clock.runFor(1_000);
+    seen.push(await reads());
+    const screen = (shown) => t.evaluate((s) => window.__patch([{ kind: "screenChanged", pointer: s.length > 0, pinned: [], shown: s }]), shown);
+    await screen([]);
+    await t.clock.runFor(180_000);
+    seen.push(await reads());
+    await screen(["gate-surface"]);
+    seen.push(await reads());
+    await t.clock.runFor(60_000);
+    seen.push(await reads());
+    check(
+      `[layout] on view the list reads every minute from its last read, and not at all while hidden (${seen})`,
+      JSON.stringify(seen) === "[1,1,2,3,4,4,5,6]",
+    );
+    await t.close();
+  }
 }
 
 // ── only the view the user is in gives an arriving attachment its token: a

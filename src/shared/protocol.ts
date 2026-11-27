@@ -1999,8 +1999,11 @@ export interface AgentViewState {
   /** What the visible surfaces are rendering right now — the one input to
    * "on screen" (onScreen). `pointer`: a visible surface follows
    * activePatchbaySessionId (the sidebar, the full agent-view panel); `pinned`:
-   * sessions shown by visible panels of their own. Reported by the view
-   * hosts as visibility flips; nothing is visible until one says so. */
+   * sessions shown by visible panels of their own; `shown`: the ids the
+   * hosts gave the visible surfaces, so a page knows whether it is itself
+   * on view — a hidden view's page is not told by the browser. Reported by
+   * the view hosts as visibility flips; nothing is visible until one says
+   * so. */
   screen: ScreenView;
   /** The latest chime and the one surface the orchestrator chose to play
    * it — every surface sees it, only that one plays, and only a chime
@@ -2019,6 +2022,7 @@ export interface ChimeView {
 export interface ScreenView {
   pointer: boolean;
   pinned: readonly string[];
+  shown: readonly string[];
 }
 
 /** The sessions some visible surface is rendering — what "the user can see
@@ -2137,7 +2141,7 @@ export const initialAgentViewState: AgentViewState = {
   openEditors: [],
   workspaceFiles: { query: "", files: [], dirs: [] },
   preferences: DEFAULT_PREFERENCES,
-  screen: { pointer: false, pinned: [] },
+  screen: { pointer: false, pinned: [], shown: [] },
   chime: null,
 };
 
@@ -2700,7 +2704,7 @@ export function reduceAgentView(
         ? markSeen({ ...state, activePatchbaySessionId: event.patchbaySessionId })
         : state;
     case "screenChanged":
-      return markSeen({ ...state, screen: { pointer: event.pointer, pinned: event.pinned } });
+      return markSeen({ ...state, screen: { pointer: event.pointer, pinned: event.pinned, shown: event.shown } });
     case "chimed":
       return { ...state, chime: { seq: (state.chime?.seq ?? 0) + 1, surface: event.surface } };
     case "sessionClosed": {
